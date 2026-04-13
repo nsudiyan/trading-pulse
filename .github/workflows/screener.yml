@@ -33,9 +33,17 @@ jobs:
       - name: Write telegram_config.json from secret
         run: echo '${{ secrets.TELEGRAM_CONFIG }}' > telegram_config.json
 
+      - name: Write channels_config.json from secret
+        run: echo '${{ secrets.CHANNELS_CONFIG }}' > channels_config.json
+        continue-on-error: true   # если секрет не добавлен — пропускаем
+
       - name: Resolve pending outcomes (4h / 24h)
         run: python3 outcome_tracker.py resolve
         continue-on-error: true
+
+      - name: Read Telegram channels → send insights
+        run: python3 channel_reader.py scan
+        continue-on-error: true   # если не настроено — не блокируем скринер
 
       - name: Run screener → sends report to Telegram
         run: python3 screener.py --top-n 50 --min-score 35

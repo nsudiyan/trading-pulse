@@ -1,6 +1,7 @@
 # Секреты — никогда не коммитить
 telegram_config.json
 obsidian_config.json
+channels_config.json
 
 # Кэш
 __pycache__/
