@@ -1,0 +1,21 @@
+# Секреты — никогда не коммитить
+telegram_config.json
+obsidian_config.json
+
+# Кэш
+__pycache__/
+*.pyc
+.DS_Store
+
+# Логи (большие, не нужны в репо)
+screener_auto.log
+screener_error.log
+bot.log
+bot_error.log
+weekly_report.log
+
+# Локальный кэш бота
+last_scan_cache.json
+
+# outcomes/ — КОММИТИМ (данные бэктеста хранятся в репо)
+# !outcomes/

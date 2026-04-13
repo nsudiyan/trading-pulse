@@ -1,0 +1,49 @@
+name: Weekly Report
+
+on:
+  schedule:
+    # Воскресенье 17:00 UTC = 20:00 Москва
+    - cron: '0 17 * * 0'
+  workflow_dispatch:
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write telegram_config.json from secret
+        run: echo '${{ secrets.TELEGRAM_CONFIG }}' > telegram_config.json
+
+      - name: Resolve all pending outcomes
+        run: python3 outcome_tracker.py resolve
+        continue-on-error: true
+
+      - name: Send weekly report → Telegram
+        run: python3 outcome_tracker.py weekly
+
+      - name: Commit updated knowledge_base and outcomes
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+          git add outcomes/ knowledge_base.md
+          git diff --staged --quiet || git commit -m "auto: weekly report $(date -u +'%Y-%m-%d')"
+          git push
+        continue-on-error: true

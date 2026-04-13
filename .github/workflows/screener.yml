@@ -1,0 +1,50 @@
+name: Screener
+
+on:
+  schedule:
+    # Каждые 4 часа: 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC
+    - cron: '0 0,4,8,12,16,20 * * *'
+  workflow_dispatch:
+    # Ручной запуск через кнопку на github.com → Actions → Screener → Run workflow
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: write   # нужно чтобы коммитить outcomes/ обратно в репо
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write telegram_config.json from secret
+        run: echo '${{ secrets.TELEGRAM_CONFIG }}' > telegram_config.json
+
+      - name: Resolve pending outcomes (4h / 24h)
+        run: python3 outcome_tracker.py resolve
+        continue-on-error: true
+
+      - name: Run screener → sends report to Telegram
+        run: python3 screener.py --top-n 50 --min-score 35
+
+      - name: Commit outcome data back to repo
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+          git add outcomes/ knowledge_base.md
+          git diff --staged --quiet || git commit -m "auto: outcomes $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push
+        continue-on-error: true
