@@ -36,11 +36,51 @@ import argparse
 import csv
 import json
 import os
+import socket
+import sqlite3
 import requests
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from pathlib import Path
 from tabulate import tabulate
+
+LIQ_DB_PATH = Path(__file__).parent / "liquidations.db"
+OUTCOMES_CSV = Path(__file__).parent / "outcomes" / "resolved.csv"
+COOLDOWN_PATH = Path(__file__).parent / "cooldown_cache.json"
+
+# ── Quality & time filter constants ──────────────────────────────────────────
+COOLDOWN_HOURS   = 8          # минимум часов между сигналами по одной паре
+MIN_TURNOVER_24H = 50_000_000  # минимальный оборот $50M/сутки
+MAX_MOVE_24H_ABS = 0.50        # исключить пары с |move| > 50% за 24h (памп/дамп)
+
+# Символы с системно низким WR (анализ 2151 сделок, 2026-04-23):
+# WETUSDT=0%, LABUSDT=14%, TONUSDT=15%, ASTERUSDT=18%, ARIAUSDT=22%
+SYMBOL_BLACKLIST = {"WETUSDT", "LABUSDT", "TONUSDT", "ASTERUSDT", "ARIAUSDT"}
+
+# Часы UTC с хорошим историческим WR (> 50%): 05,09,10,20 — лучшие окна
+GOOD_SIGNAL_HOURS = {1, 2, 5, 9, 10, 13, 15, 16, 20, 21}  # убран 14 (WR=36%)
+# Часы UTC с плохим WR (35-40%) — поднимаем порог score для TG
+BAD_SIGNAL_HOURS  = {12, 14, 17, 18, 19, 22, 23, 0}  # +12(38%), +14(36%)
+# Часы UTC с катастрофическим WR (< 30%) — жёсткий блок: не сохранять в pending.json
+HARD_BLOCK_HOURS  = {18, 22}  # 18UTC=18% WR, 22UTC=28.5% WR
+# В плохие часы сигнал идёт в TG только если score >= BAD_HOUR_MIN_SCORE
+BAD_HOUR_MIN_SCORE = 130
+
+# Per-setup Telegram score gates — WR audit 2026-04-24, N=2232 resolved trades.
+# Min score: signals below this are suppressed.
+SETUP_TG_MIN_SCORE = {
+    "squeeze":     80,
+    "bos_fvg":     85,
+    "breakout":    9999,  # dead-zone logic in _passes_setup_tg_filter(); 9999 = fallback block
+    "range_sweep": 9999,  # disabled — real-time detection via sweep_watcher.py (WR=25%)
+    "short_dist":  85,
+}
+
+# Per-setup Telegram score ceiling: signals AT OR ABOVE this threshold are suppressed.
+SETUP_TG_MAX_SCORE = {
+    "short_dist": 150,  # >150 WR collapses to 23.5% at 4h (inverted correlation)
+}
 
 # Obsidian integration (опционально — не ломает скринер если модуль не найден)
 try:
@@ -70,15 +110,87 @@ try:
 except ImportError:
     _BNB_AVAILABLE = False
 
+# Channel reader (опционально)
+try:
+    import channel_reader as _ch
+    _CH_AVAILABLE = True
+except ImportError:
+    _CH_AVAILABLE = False
+
+# Free external data sources: Farside ETF, ForexFactory macro, Deribit options
+try:
+    import free_data as _fd
+    _FD_AVAILABLE = True
+except ImportError:
+    _FD_AVAILABLE = False
+
 BASE = "https://api.bybit.com"
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "BybitFuturesScreener/1.1"})
+
+
+# ─── .env loader ─────────────────────────────────────────────────────────────
+
+def _load_dotenv():
+    """
+    Загружает .env из папки проекта в os.environ (только если переменная ещё не задана).
+    LaunchAgent не наследует shell-окружение → secrets из .env грузим здесь.
+    """
+    dotenv_path = os.path.join(os.path.dirname(__file__), ".env")
+    if not os.path.exists(dotenv_path):
+        return
+    with open(dotenv_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip()
+            if val and val[0] in ('"', "'") and val[-1] == val[0]:
+                val = val[1:-1]
+            os.environ.setdefault(key, val)
+
+
+_load_dotenv()
+
+
+# ─── Network utils ───────────────────────────────────────────────────────────
+
+def check_connectivity(host="api.bybit.com", port=443, timeout=5) -> bool:
+    """Быстрая проверка доступности сети через TCP-соединение."""
+    try:
+        socket.create_connection((host, port), timeout=timeout).close()
+        return True
+    except OSError:
+        return False
+
+
+def wait_for_network(max_wait=600, interval=30) -> bool:
+    """
+    Ждёт доступности сети до max_wait секунд, проверяя каждые interval сек.
+    Возвращает True если сеть поднялась, False если истёк таймаут.
+    """
+    if check_connectivity():
+        return True
+    print(f"[network] Сеть недоступна. Ожидаю до {max_wait//60} мин (каждые {interval}s)...")
+    elapsed = 0
+    while elapsed < max_wait:
+        time.sleep(interval)
+        elapsed += interval
+        if check_connectivity():
+            print(f"[network] Сеть восстановлена (ожидал {elapsed}s)")
+            return True
+        print(f"[network] Ещё нет сети ({elapsed}s / {max_wait}s)...")
+    print(f"[network] ОШИБКА: сеть недоступна после {max_wait}s — завершаю.")
+    return False
 
 SETUP_LABELS = {
     "squeeze":     "СЕТАП 1 — Ликвидационный сквиз",
     "bos_fvg":     "СЕТАП 2 — BOS + FVG / Order Block",
     "range_sweep": "СЕТАП 3 — Рейндж Sweep",
     "breakout":    "СЕТАП 4 — Breakout / Pre-Pump",
+    "short_dist":  "СЕТАП 5 — Дистрибуция / Шорт-давление",
 }
 
 SETUP_SHORT = {
@@ -86,6 +198,7 @@ SETUP_SHORT = {
     "bos_fvg":     "BOS/FVG",
     "range_sweep": "SWEEP",
     "breakout":    "PUMP",
+    "short_dist":  "DIST",
 }
 
 
@@ -289,6 +402,41 @@ def analyze_funding_trend(history):
     return "stable"
 
 
+def detect_funding_extreme(funding_hist):
+    """
+    Экстремальные значения funding rate — исторические максимумы/минимумы
+    за последние 8 периодов (~2.7 дня).
+
+    Экстремально отрицательный funding:
+      < -0.05% → рынок ОЧЕНЬ перегрет шортами → сквиз очень вероятен
+      < -0.08% → исторически редкое событие → сильный сигнал разворота вверх
+
+    Экстремально положительный:
+      > +0.05% → лонги перегреты → риск слива вниз
+      > +0.08% → памп перегрет → не лонговать
+
+    Возвращает: ('extreme_neg', 'high_neg', 'extreme_pos', 'high_pos', 'normal', None)
+    """
+    if not funding_hist:
+        return None
+    current = funding_hist[-1]
+    hist_min = min(funding_hist)
+    hist_max = max(funding_hist)
+
+    if current <= -0.08:
+        return "extreme_neg"    # редчайший сквиз-триггер
+    if current <= -0.05:
+        return "high_neg"       # сильное шорт-давление
+    if current >= 0.08:
+        return "extreme_pos"    # лонги максимально перегреты
+    if current >= 0.05:
+        return "high_pos"       # лонги перегреты
+    # Funding на минимуме за период (даже если не достиг порогов)
+    if current == hist_min and current < -0.01:
+        return "period_min"
+    return "normal"
+
+
 def detect_oi_divergence(oi_hist, closes, lookback=5):
     """
     Дивергенция Open Interest vs Цена за последние N завершённых свечей.
@@ -332,16 +480,43 @@ def detect_oi_divergence(oi_hist, closes, lookback=5):
     return None
 
 
+def calc_oi_velocity(oi_hist: list, recent: int = 6, prior: int = 6) -> float:
+    """
+    OI velocity — ускорение роста открытого интереса.
+
+    Сравнивает скорость изменения OI за последние N периодов vs предыдущие N.
+    Возвращает разницу в процентных пунктах:
+      > +3%:  OI нарастает быстрее (новые деньги входят, импульс усиливается)
+      < -3%:  OI замедляется или разворачивается (позиции исчерпаны, exhaustion)
+      ≈ 0:    равномерный рост или флет
+    """
+    n = len(oi_hist)
+    if n < recent + prior + 2:
+        return 0.0
+    p_start = oi_hist[-(recent + prior + 1)]
+    p_end   = oi_hist[-(recent + 1)]
+    r_start = p_end
+    r_end   = oi_hist[-1]
+    if p_start == 0 or r_start == 0:
+        return 0.0
+    prior_chg  = (p_end  - p_start)  / p_start  * 100
+    recent_chg = (r_end  - r_start)  / r_start  * 100
+    return round(recent_chg - prior_chg, 2)
+
+
 def detect_candle_patterns(opens, highs, lows, closes):
     """
     Последний значимый свечной паттерн на завершённых свечах ([-4] до [-2]).
 
     Паттерны:
-      bull_engulf    — бычье поглощение, тело поглощает предыдущую свечу
-      bear_engulf    — медвежье поглощение
-      hammer         — молот (тело ≤35% диапазона, нижний хвост ≥55%)
-      shooting_star  — падающая звезда (тело ≤35%, верхний хвост ≥55%)
-      inside_bar     — внутренняя свеча (компрессия перед движением)
+      bull_engulf      — бычье поглощение, тело поглощает предыдущую свечу
+      bear_engulf      — медвежье поглощение
+      hammer           — молот (тело ≤35% диапазона, нижний хвост ≥55%)
+      shooting_star    — падающая звезда (тело ≤35%, верхний хвост ≥55%)
+      doji             — доджи (тело ≤8%, хвосты примерно равны)
+      gravestone_doji  — доджи-надгробие (тело у дна, верхний хвост ≥75%)
+      dragonfly_doji   — доджи-стрекоза (тело у верха, нижний хвост ≥75%)
+      inside_bar       — внутренняя свеча ≤70% mother bar (компрессия)
 
     Проверяем 3 последние завершённые свечи, возвращаем самый свежий.
     """
@@ -390,8 +565,26 @@ def detect_candle_patterns(opens, highs, lows, closes):
                 and lower_wick <= rng * 0.20):
             return "shooting_star"
 
-        # Внутренняя свеча
-        if h < ph and l > pl:
+        # Доджи (нерешительность/разворот): тело ≤ 8% диапазона, хвосты примерно равны
+        if rng > 0 and body <= rng * 0.08 and lower_wick >= rng * 0.35 and upper_wick >= rng * 0.35:
+            return "doji"
+
+        # Гравстоун доджи (bearish reversal на хае): тело у дна, длинный верхний хвост
+        if (rng > 0 and body <= rng * 0.08
+                and upper_wick >= rng * 0.75
+                and lower_wick <= rng * 0.05):
+            return "gravestone_doji"
+
+        # Стрекоза доджи (bullish reversal на дне): тело у верха, длинный нижний хвост
+        if (rng > 0 and body <= rng * 0.08
+                and lower_wick >= rng * 0.75
+                and upper_wick <= rng * 0.05):
+            return "dragonfly_doji"
+
+        # Внутренняя свеча (компрессия): baby bar должна быть существенно меньше mother bar
+        prev_rng = ph - pl
+        if (h < ph and l > pl
+                and prev_rng > 0 and rng <= prev_rng * 0.70):  # ≤ 70% размера mother bar
             return "inside_bar"
 
     return None
@@ -662,27 +855,39 @@ def detect_order_blocks(opens, highs, lows, closes, volumes, lookback=40):
     return unique[:5]
 
 
-def detect_sweep(highs, lows, closes, lookback=10):
+def detect_sweep(highs, lows, closes, lookback=7):
     """
-    Sweep на ЗАВЕРШЁННОЙ свече [-2]:
-    Пробила хай/лой предыдущих N свечей, но закрылась обратно.
+    Sweep: одна из трёх последних завершённых свечей [-2], [-3], [-4]
+    пробила хай/лой предыдущих N свечей и закрылась обратно.
+
+    lookback уменьшен до 7 (с 10) — чтобы ловить sweep vs ближайшей структуры.
+    Проверяем три свечи назад: повышает частоту сигнала без потери качества,
+    т.к. sweep отрабатывает в течение нескольких часов после импульса.
     """
-    if len(highs) < lookback + 3:
+    if len(highs) < lookback + 5:
         return None, None
 
-    last_h = highs[-2]
-    last_l = lows[-2]
-    last_c = closes[-2]
-    prev_h = highs[-(lookback + 2):-2]
-    prev_l = lows[-(lookback + 2):-2]
-    if not prev_h:
-        return None, None
+    sweep_up = sweep_down = None
 
-    prev_high = max(prev_h)
-    prev_low  = min(prev_l)
+    for offset in range(2, 5):   # [-2], [-3], [-4]
+        if len(highs) < lookback + offset + 1:
+            break
+        last_h = highs[-offset]
+        last_l = lows[-offset]
+        last_c = closes[-offset]
+        # Предыдущие N свечей ДО проверяемой (не включая её)
+        prev_h = highs[-(lookback + offset):-offset]
+        prev_l = lows[-(lookback + offset):-offset]
+        if not prev_h:
+            break
 
-    sweep_up   = prev_high if (last_h > prev_high and last_c < prev_high) else None
-    sweep_down = prev_low  if (last_l < prev_low  and last_c > prev_low)  else None
+        prev_high = max(prev_h)
+        prev_low  = min(prev_l)
+
+        if sweep_up is None and last_h > prev_high and last_c < prev_high:
+            sweep_up = prev_high
+        if sweep_down is None and last_l < prev_low and last_c > prev_low:
+            sweep_down = prev_low
 
     return sweep_up, sweep_down
 
@@ -758,15 +963,24 @@ def detect_oi_coil(oi_hist, closes, hours=12):
 def calc_rsi(closes, period=14):
     """
     RSI 14 на завершённых свечах (без незакрытой [-1]).
+    Использует сглаживание Уайлдера (SMMA), как в оригинальном RSI.
     > 70 = перекуплен. < 30 = перепродан. Дивергенция = главный сигнал.
+
+    Исправлено: было простое среднее — давало неточные значения RSI.
+    Теперь: экспоненциальное сглаживание по методу Уайлдера.
     """
     c = closes[:-1]
     if len(c) < period + 2:
         return 50.0
     gains  = [max(c[i] - c[i-1], 0) for i in range(1, len(c))]
     losses = [max(c[i-1] - c[i], 0) for i in range(1, len(c))]
-    ag     = sum(gains[-period:])  / period
-    al     = sum(losses[-period:]) / period
+    # Инициализация: первое значение — простое среднее
+    ag = sum(gains[:period]) / period
+    al = sum(losses[:period]) / period
+    # Сглаживание Уайлдера (SMMA): ag = (ag*(period-1) + gain) / period
+    for g, l in zip(gains[period:], losses[period:]):
+        ag = (ag * (period - 1) + g) / period
+        al = (al * (period - 1) + l) / period
     if al == 0:
         return 100.0
     return round(100 - 100 / (1 + ag / al), 2)
@@ -791,12 +1005,17 @@ def detect_rsi_divergence(highs, lows, closes, period=14, lookback=30):
     h = highs[-(n + 1):-1]
     l = lows[-(n + 1):-1]
 
+    # Wilder's SMMA RSI для всего ряда завершённых свечей
+    gains_all  = [max(c[j] - c[j-1], 0) for j in range(1, len(c))]
+    losses_all = [max(c[j-1] - c[j], 0) for j in range(1, len(c))]
+    if len(gains_all) < period:
+        return None
+    ag = sum(gains_all[:period])  / period
+    al = sum(losses_all[:period]) / period
     rsi_vals = []
-    for i in range(period, len(c)):
-        g  = [max(c[j] - c[j-1], 0) for j in range(i - period + 1, i + 1)]
-        ls = [max(c[j-1] - c[j], 0) for j in range(i - period + 1, i + 1)]
-        ag = sum(g)  / period
-        al = sum(ls) / period
+    for g, lv in zip(gains_all[period:], losses_all[period:]):
+        ag = (ag * (period - 1) + g) / period
+        al = (al * (period - 1) + lv) / period
         rsi_vals.append(100.0 if al == 0 else 100 - 100 / (1 + ag / al))
 
     ph = h[period:]
@@ -1156,6 +1375,62 @@ def detect_whale_activity(trades):
     return None, 0.0
 
 
+def detect_absorption(opens, highs, lows, closes, volumes, lookback=10):
+    """
+    Поглощение (Absorption) — статический снимок.
+
+    Признак: объём резко вырос (>2.5× медианы) на свечах, которые
+    практически не двинули цену (тело < 0.4% от цены).
+
+    Bullish absorption: на падающей цене появляется огромный объём
+    с маленьким телом → продавцов поглощают крупные покупатели.
+
+    Bearish absorption: на растущей цене — зеркально.
+
+    Важно: это статический снимок, НЕ реал-тайм наблюдение стакана.
+    Точный absorption виден только в футпринт-чарте или real-time DOM.
+
+    Возвращает: ('bull_absorb' / 'bear_absorb' / None, ratio)
+    """
+    n = min(lookback + 2, len(closes) - 1)
+    if n < 5:
+        return None, 0.0
+
+    o_s = opens[-(n + 1):-1]
+    h_s = highs[-(n + 1):-1]
+    l_s = lows[-(n + 1):-1]
+    c_s = closes[-(n + 1):-1]
+    v_s = volumes[-(n + 1):-1]
+
+    if len(v_s) < 4:
+        return None, 0.0
+
+    sorted_v = sorted(v_s)
+    med_v = sorted_v[len(sorted_v) // 2]
+    if med_v <= 0:
+        return None, 0.0
+
+    # Ищем свечу с аномальным объёмом и маленьким телом
+    for i in range(len(c_s) - 1, max(len(c_s) - 6, 0), -1):
+        vol_ratio = v_s[i] / med_v
+        if vol_ratio < 2.5:
+            continue
+        price_ref = c_s[i] if c_s[i] > 0 else 1.0
+        body_pct = abs(c_s[i] - o_s[i]) / price_ref * 100
+        if body_pct > 1.5:  # в крипто до 1.5% тела на огромном объёме = поглощение
+            continue
+        # Найдена свеча поглощения — определяем направление по контексту
+        # Предыдущие 3 свечи дают направление: если шли вниз = бычье поглощение
+        if i >= 3:
+            prev_dir = c_s[i - 1] - c_s[i - 3]
+            if prev_dir < 0:
+                return "bull_absorb", round(vol_ratio, 1)  # цена падала → бычье погл.
+            elif prev_dir > 0:
+                return "bear_absorb", round(vol_ratio, 1)  # цена росла → медвежье погл.
+
+    return None, 0.0
+
+
 def detect_liq_events(oi_hist, closes, volumes):
     """
     Аппроксимация ликвидаций: OI drop >3% + объём >2× медиану + цена >1%.
@@ -1223,6 +1498,224 @@ def analyze_dom(bids, asks, price):
     }
 
 
+def detect_stacked_walls(bids, asks, price,
+                         max_levels: int = 50,
+                         proximity_pct: float = 1.2,
+                         size_mult: float = 2.5):
+    """
+    Завалы (stacked walls): несколько крупных лимитных ордеров одной
+    стороны, скучкованных рядом по цене ("батарея" вместо одного сайза).
+
+    Эвристика: порог "крупного" = max(median × size_mult, avg × (size_mult-0.5));
+    стенки со стороны считаются в стек, пока они в пределах `proximity_pct`%
+    от первой (ближайшей к цене). Требуется ≥ 2 уровня.
+
+    Возвращает {bid_stack, ask_stack}: список (price, size) от ближайшего
+    к текущей цене до самого дальнего в стеке, либо None.
+    """
+    def _stack(orders, side: str):
+        if not orders:
+            return None
+        if side == "bid":
+            near = sorted(orders, key=lambda x: -x[0])[:max_levels]
+        else:
+            near = sorted(orders, key=lambda x: x[0])[:max_levels]
+        if len(near) < 4:
+            return None
+        sizes = sorted(s for _, s in near)
+        med = sizes[len(sizes) // 2]
+        avg = sum(sizes) / len(sizes)
+        thresh = max(med * size_mult, avg * (size_mult - 0.5))
+        if thresh <= 0:
+            return None
+
+        stack = []
+        for p, s in near:
+            if s < thresh:
+                continue
+            if not stack:
+                stack.append((p, s))
+                continue
+            first_p = stack[0][0]
+            if abs(p - first_p) / price * 100 > proximity_pct:
+                break
+            stack.append((p, s))
+
+        return stack if len(stack) >= 2 else None
+
+    return {
+        "bid_stack": _stack(bids, "bid"),
+        "ask_stack": _stack(asks, "ask"),
+    }
+
+
+# ─── External data readers (liq DB / outcome feedback) ───────────────────────
+
+def fetch_liquidation_stats(window_min: int = 60) -> dict:
+    """
+    Bulk-загрузка ликвидаций из liquidations.db за последние window_min минут.
+    Возвращает {symbol: {long_usd, short_usd, total_usd}} для всех символов
+    с активностью. Пустой dict если БД недоступна.
+    """
+    if not LIQ_DB_PATH.exists():
+        return {}
+    try:
+        con = sqlite3.connect(f"file:{LIQ_DB_PATH}?mode=ro", uri=True, timeout=2)
+        cutoff_ms = int((time.time() - window_min * 60) * 1000)
+        rows = con.execute(
+            "SELECT symbol, "
+            "       SUM(CASE WHEN side='long_liq'  THEN usd ELSE 0 END), "
+            "       SUM(CASE WHEN side='short_liq' THEN usd ELSE 0 END) "
+            "FROM liquidations WHERE ts >= ? GROUP BY symbol",
+            (cutoff_ms,),
+        ).fetchall()
+        con.close()
+        return {
+            sym: {"long_usd": float(lu or 0), "short_usd": float(su or 0),
+                  "total_usd": float((lu or 0) + (su or 0))}
+            for sym, lu, su in rows
+        }
+    except Exception:
+        return {}
+
+
+def fetch_btc_4h_change() -> float:
+    """BTC 4h price change (%). Для BTC-velocity фильтра."""
+    try:
+        o, h, l, c, v = fetch_klines("BTCUSDT", "240", 2)
+        if len(c) >= 2 and c[-2] > 0:
+            return (c[-1] - c[-2]) / c[-2] * 100
+    except Exception:
+        pass
+    return 0.0
+
+
+def fetch_btc_4h_ema_position() -> str:
+    """BTC 4h цена относительно EMA20 и EMA50. Возвращает: above / below / between / unknown."""
+    try:
+        _, _, _, cl, _ = fetch_klines("BTCUSDT", "240", 60)
+        if len(cl) < 52:
+            return "unknown"
+        def _ema(prices, n):
+            k = 2 / (n + 1)
+            val = float(prices[0])
+            for p in prices[1:]:
+                val = float(p) * k + val * (1 - k)
+            return val
+        price = float(cl[-1])
+        e20   = _ema(cl, 20)
+        e50   = _ema(cl, 50)
+        if price > e20 and price > e50:
+            return "above"
+        elif price < e20 and price < e50:
+            return "below"
+        else:
+            return "between"
+    except Exception:
+        return "unknown"
+
+
+def load_score_weights(min_samples: int = 20) -> dict:
+    """
+    Читает outcomes/resolved.csv и строит множитель score по бакету
+    (setup × grade) на основе историческго WR (TP1/WIN vs STOP/LOSS).
+    Возвращает dict {(setup, grade): multiplier in [0.5, 1.5]}.
+    Бакеты с выборкой < min_samples получают 1.0.
+
+    Также загружает calibration/signal_weights.json (если существует) и добавляет
+    под ключом "__signal_weights__" — аддитивные поправки к score по сигнальным флагам.
+    """
+    if not OUTCOMES_CSV.exists():
+        return {}
+    buckets: dict = {}
+    try:
+        with open(OUTCOMES_CSV, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                setup = row.get("setup", "")
+                grade = row.get("grade", "")
+                outcome = row.get("outcome_24h") or row.get("outcome_4h") or ""
+                if not setup or not grade or not outcome:
+                    continue
+                key = (setup, grade)
+                b = buckets.setdefault(key, {"wins": 0, "losses": 0})
+                if outcome in ("TP1", "WIN"):
+                    b["wins"] += 1
+                elif outcome in ("STOP", "LOSS"):
+                    b["losses"] += 1
+    except Exception:
+        return {}
+    out = {}
+    for key, b in buckets.items():
+        total = b["wins"] + b["losses"]
+        if total < min_samples:
+            continue
+        wr = b["wins"] / total
+        # WR 50% → 1.0; WR 70% → 1.4; WR 30% → 0.6. Зажато в [0.5, 1.5].
+        mult = max(0.5, min(1.5, wr / 0.5))
+        out[key] = round(mult, 3)
+
+    # Load per-signal additive adjustments from logistic regression calibration.
+    sig_w_path = Path(__file__).parent / "calibration" / "signal_weights.json"
+    if sig_w_path.exists():
+        try:
+            import json as _json
+            with open(sig_w_path, "r", encoding="utf-8") as _f:
+                out["__signal_weights__"] = _json.load(_f)
+        except Exception:
+            pass
+
+    return out
+
+
+def detect_lvn_zones(highs, lows, volumes, closes,
+                     lookback: int = 48, num_buckets: int = 24,
+                     threshold: float = 0.30) -> list:
+    """
+    Low-Volume Nodes: ценовые бакеты с объёмом < threshold × POC bucket.
+    Цена проходит LVN быстро — это зоны ускорения.
+    Возвращает list[(lo, hi)] — ценовые диапазоны LVN.
+    """
+    n = min(lookback, len(closes) - 1)
+    hs = highs[-(n + 1):-1]
+    ls = lows[-(n + 1):-1]
+    vs = volumes[-(n + 1):-1]
+    if not hs:
+        return []
+    p_min = min(ls); p_max = max(hs); rng = p_max - p_min
+    if rng == 0:
+        return []
+    bsz = rng / num_buckets
+    bkt = [0.0] * num_buckets
+    for h, l, v in zip(hs, ls, vs):
+        cr = h - l
+        if cr == 0:
+            b = min(int((h - p_min) / bsz), num_buckets - 1)
+            bkt[b] += v
+            continue
+        for b in range(num_buckets):
+            ov = max(0.0, min(h, p_min + (b + 1) * bsz) - max(l, p_min + b * bsz))
+            if ov > 0:
+                bkt[b] += v * ov / cr
+    max_v = max(bkt) if bkt else 0
+    if max_v == 0:
+        return []
+    thresh = max_v * threshold
+    lvns = []
+    i = 0
+    while i < num_buckets:
+        if 0 < bkt[i] < thresh:
+            j = i
+            while j + 1 < num_buckets and 0 < bkt[j + 1] < thresh:
+                j += 1
+            lvns.append((round(p_min + i * bsz, 8),
+                         round(p_min + (j + 1) * bsz, 8)))
+            i = j + 1
+        else:
+            i += 1
+    return lvns
+
+
 # ─── Scoring ─────────────────────────────────────────────────────────────────
 
 def score_symbol(symbol, ticker, oi_hist,
@@ -1230,7 +1723,9 @@ def score_symbol(symbol, ticker, oi_hist,
                  op4h, hi4h, lo4h, cl4h, vol4h,
                  opD,  hiD,  loD,  clD,  volD,
                  ls_ratio, trades, bids, asks,
-                 funding_hist, btc_chg_24h):
+                 funding_hist, btc_chg_24h,
+                 liq_stats=None, btc_chg_4h=0.0, score_weights=None,
+                 global_ctx=None):
 
     # ── Цена (mark price — точнее last price) ──
     price = float(ticker.get("markPrice", cl1h[-1]))
@@ -1304,6 +1799,23 @@ def score_symbol(symbol, ticker, oi_hist,
     atr_pct       = calc_atr(hi1h, lo1h, cl1h, period=14)
     poc_price, poc_dist = calc_poc(hi1h, lo1h, vol1h, cl1h, lookback=48)
     fund_trend    = analyze_funding_trend(funding_hist)
+    fund_extreme  = detect_funding_extreme(funding_hist)
+
+    # ── Funding streak: подряд идущие отрицательные/положительные периоды ─────
+    # funding_hist: новые справа. Считаем длину текущей серии одного знака.
+    neg_streak = 0
+    pos_streak = 0
+    for fv in reversed(funding_hist or []):
+        try:
+            rate = float(fv.get("fundingRate", 0)) if isinstance(fv, dict) else float(fv)
+        except (TypeError, ValueError):
+            break
+        if rate < 0 and pos_streak == 0:
+            neg_streak += 1
+        elif rate > 0 and neg_streak == 0:
+            pos_streak += 1
+        else:
+            break
 
     # ── Pre-Pump метрики ──────────────────────────────────────────────────────
     atr_compression = detect_atr_compression(hi1h, lo1h, cl1h)
@@ -1337,6 +1849,21 @@ def score_symbol(symbol, ticker, oi_hist,
     poc_full, vah, val_vp, poc_dist_f, vah_dist, val_dist = \
         calc_volume_profile_full(hi1h, lo1h, vol1h, cl1h, lookback=48)
 
+    # Low-Volume Nodes — зоны быстрого проскальзывания (потенциал магнитов)
+    lvn_zones = detect_lvn_zones(hi1h, lo1h, vol1h, cl1h, lookback=48)
+    # Ближайшая LVN и расстояние от цены
+    lvn_nearest = None
+    lvn_nearest_dist = None
+    if lvn_zones:
+        ref_price = float(ticker.get("markPrice", cl1h[-1]))
+        def _lvn_dist(z):
+            lo, hi = z
+            if lo <= ref_price <= hi:
+                return 0.0
+            return min(abs(ref_price - lo), abs(ref_price - hi)) / ref_price * 100
+        lvn_nearest = min(lvn_zones, key=_lvn_dist)
+        lvn_nearest_dist = _lvn_dist(lvn_nearest)
+
     choch_1h = detect_choch(hi1h, lo1h, cl1h, lookback=30)
     choch_4h = detect_choch(hi4h, lo4h, cl4h, lookback=20)
 
@@ -1365,8 +1892,10 @@ def score_symbol(symbol, ticker, oi_hist,
 
     # ── Sweep, ликвидации, DOM ──
     sweep_up, sweep_down = detect_sweep(hi1h, lo1h, cl1h, lookback=10)
-    liq_events = detect_liq_events(oi_hist, cl1h, vol1h)
-    dom        = analyze_dom(bids, asks, price)
+    liq_events    = detect_liq_events(oi_hist, cl1h, vol1h)
+    dom           = analyze_dom(bids, asks, price)
+    stacks        = detect_stacked_walls(bids, asks, price)
+    absorb_dir, absorb_ratio = detect_absorption(op1h, hi1h, lo1h, cl1h, vol1h, lookback=10)
 
     # Разбивка по типу
     bull_fvg_1h = [f for f in fvgs_1h if f["type"] == "bull"]
@@ -1382,9 +1911,48 @@ def score_symbol(symbol, ticker, oi_hist,
     long_liq  = any(e["side"] == "long_liq"  for e in liq_events)
     short_liq = any(e["side"] == "short_liq" for e in liq_events)
 
+    # ── Локальные ликвидации из БД (liquidation_tracker 60мин окно) ──
+    liq_row      = (liq_stats or {}).get(symbol, {}) if liq_stats else {}
+    liq_long_usd  = float(liq_row.get("long_usd",  0.0))
+    liq_short_usd = float(liq_row.get("short_usd", 0.0))
+    liq_total_usd = float(liq_row.get("total_usd", 0.0))
+
     # Свечные паттерны по направлению
-    bullish_pattern = candle_pat in ("bull_engulf", "hammer")
-    bearish_pattern = candle_pat in ("bear_engulf", "shooting_star")
+    bullish_pattern = candle_pat in ("bull_engulf", "hammer", "dragonfly_doji")
+    bearish_pattern = candle_pat in ("bear_engulf", "shooting_star", "gravestone_doji")
+
+    # ── Stacked walls: извлекаем ДО scoring чтобы использовать в s1/s4/s5 ──
+    bid_stack_sc = stacks.get("bid_stack") or []
+    ask_stack_sc = stacks.get("ask_stack") or []
+    # Дистанции до ближайшей стенки
+    bid_wall_d = abs(price - bid_stack_sc[0][0]) / price * 100 if bid_stack_sc else 99.0
+    ask_wall_d = abs(ask_stack_sc[0][0] - price) / price * 100 if ask_stack_sc else 99.0
+
+    # ── OI velocity: ускорение роста OI ──
+    oi_velocity = calc_oi_velocity(oi_hist)
+
+    # ── Global context (perp/spot ratio, BTC dominance, listing age, BTC EMA pos) ──
+    _ctx            = global_ctx or {}
+    perp_spot_ratio = _ctx.get("perp_spot_ratio")   # None или float
+    btc_dominance   = _ctx.get("btc_dominance")      # None или float 0-100
+    btc_ema_pos     = _ctx.get("btc_ema_pos", "unknown")  # above/below/between
+
+    # Возраст листинга в днях (из batch instruments-info, переданного через global_ctx)
+    _lt_ms = (_ctx.get("listing_ts_map") or {}).get(symbol)
+    listing_age_days = round((time.time() * 1000 - _lt_ms) / 86_400_000) if _lt_ms else None
+
+    # Социальный сентимент (CryptoPanic + LunarCrush) — пре-загружен в run_screener
+    _base_sym = symbol.upper().replace("USDT", "").replace("PERP", "")
+    _social   = (_ctx.get("social_ctx") or {}).get(_base_sym, {})
+    _cp       = _social.get("cryptopanic", {})    # {score, hot, titles}
+    _lc       = _social.get("lunarcrush", {})     # {galaxy_score, alt_rank, sentiment}
+
+    # Средний объём за 7 завершённых дней (USD)
+    avg_vol_7d_usd = None
+    if len(volD) >= 8 and len(clD) >= 8:
+        avg_vol_7d_usd = round(
+            sum(float(v) * float(c) for v, c in zip(volD[-8:-1], clD[-8:-1])) / 7
+        )
 
     scores, notes = {}, {}
 
@@ -1401,11 +1969,27 @@ def score_symbol(symbol, ticker, oi_hist,
     elif funding < 0.005:
         s1 += 8;  n1.append("fund≈0")
 
+    # Экстремальный funding — мощный дополнительный триггер сквиза
+    if fund_extreme == "extreme_neg":
+        s1 += 25; n1.append("FUND_EXTREME!")   # < -0.08% — редкое событие
+    elif fund_extreme == "high_neg":
+        s1 += 14; n1.append("fund_high_neg")   # < -0.05% — сильное давление
+    elif fund_extreme == "period_min":
+        s1 += 8;  n1.append("fund_period_min") # минимум за ~3 дня
+    elif fund_extreme in ("extreme_pos", "high_pos"):
+        s1 -= 15; n1.append("fund_перегрет!")  # лонги перегреты = не время для сквиза
+
     # Funding trend: нарастающее давление
     if fund_trend == "declining":
         s1 += 15; n1.append("fund↓нараст")
     elif fund_trend == "normalizing" and funding < -0.01:
         s1 -= 8;  n1.append("fund норм-ся")
+
+    # Серия отрицательного funding = устойчивое давление шортов
+    if neg_streak >= 5:
+        s1 += 12; n1.append(f"fund−×{neg_streak}!")
+    elif neg_streak >= 3:
+        s1 += 6;  n1.append(f"fund−×{neg_streak}")
 
     # Цена у поддержки
     if price_pos < 0.15:
@@ -1432,6 +2016,14 @@ def score_symbol(symbol, ticker, oi_hist,
     # Подтверждения
     if long_liq:
         s1 += 12; n1.append("лонг-лики")
+
+    # Локальная БД: шорты ликвидировались крупно → топливо для сквиза вверх
+    if liq_short_usd >= 1_000_000:
+        s1 += 22; n1.append(f"LIQ_short ${liq_short_usd/1e6:.1f}M!")
+    elif liq_short_usd >= 300_000:
+        s1 += 12; n1.append(f"LIQ_short ${liq_short_usd/1e3:.0f}K")
+    elif liq_short_usd >= 100_000:
+        s1 += 6
 
     # HTF: согласованность Daily + 4H
     if trend_bull_aligned:
@@ -1478,6 +2070,12 @@ def score_symbol(symbol, ticker, oi_hist,
     elif kl_cvd_pct > 0 and price_pos < 0.35:
         s1 += 5
 
+    # Поглощение: крупный объём без движения цены = крупный игрок набирает позицию
+    if absorb_dir == "bull_absorb":
+        s1 += 16; n1.append(f"ABSORB↑×{absorb_ratio:.1f}")
+    elif absorb_dir == "bear_absorb" and price_pos < 0.25:
+        s1 -= 8  # медвежье поглощение у дна = плохо для сквиза
+
     # DOM
     if dom["imbalance"] > 30:
         s1 += 8;  n1.append(f"DOM+{dom['imbalance']:.0f}%")
@@ -1491,6 +2089,29 @@ def score_symbol(symbol, ticker, oi_hist,
     # RS vs BTC: опережение при дне
     if rs_btc is not None and rs_btc > 1.3 and price_pos < 0.40:
         s1 += 6; n1.append(f"RS{rs_btc:.1f}x")
+
+    # Стенка ставок НИЖЕ цены = покупатели держат поддержку → топливо сквиза
+    if len(bid_stack_sc) >= 2 and bid_wall_d <= 2.5:
+        wall_pts = min(len(bid_stack_sc) * 5, 18)
+        s1 += wall_pts; n1.append(f"bid_стек×{len(bid_stack_sc)}")
+
+    # Perp/Spot ratio: высокое = много шортов с плечом = больше топлива
+    if perp_spot_ratio is not None:
+        if perp_spot_ratio > 5.0:
+            s1 += 14; n1.append(f"P/S={perp_spot_ratio:.1f}x!")
+        elif perp_spot_ratio > 3.0:
+            s1 += 7;  n1.append(f"P/S={perp_spot_ratio:.1f}x")
+
+    # BTC Dominance: alt season усиливает, BTC season ослабляет сквиз
+    if btc_dominance is not None:
+        if btc_dominance < 47:
+            s1 += 8;  n1.append(f"BTC.d={btc_dominance:.0f}%↓alt")
+        elif btc_dominance > 52:
+            s1 -= 8;  n1.append(f"BTC.d={btc_dominance:.0f}%↑btc")
+
+    # CHoCH↑_1H: смена структуры на 1H — сильнейший предиктор (WR=55.3%, +14.3pp vs baseline)
+    if choch_1h == "bull_choch":
+        s1 += 25; n1.append("CHoCH↑1H!")
 
     scores["squeeze"] = s1
     notes["squeeze"]  = ", ".join(n1) or "—"
@@ -1575,66 +2196,97 @@ def score_symbol(symbol, ticker, oi_hist,
     if rs_btc is not None and rs_btc > 1.5:
         s2 += 8; n2.append(f"RS{rs_btc:.1f}x")
 
+    # CHoCH_1H: смена структуры подтверждает структурный пробой (WR=55.3%, +14.3pp)
+    if choch_1h == "bull_choch":
+        s2 += 20; n2.append("CHoCH↑1H!")
+    elif choch_1h == "bear_choch":
+        s2 += 20; n2.append("CHoCH↓1H!")
+
     scores["bos_fvg"] = s2
     notes["bos_fvg"]  = ", ".join(n2) or "—"
 
     # ═══════════════════════════════════════════════════════════════════════════
     # СЕТАП 3 — РЕЙНДЖ SWEEP
+    # sweep↓ = bullish reversal (лонг); sweep↑ = bearish reversal (шорт)
+    # Считаем раздельно, берём доминирующее направление.
     # ═══════════════════════════════════════════════════════════════════════════
-    s3, n3 = 0, []
+    s3_long, n3_long   = 0, []  # sweep↓ → разворот вверх
+    s3_short, n3_short = 0, []  # sweep↑ → разворот вниз
 
     if sweep_down is not None:
-        s3 += 55; n3.append(f"sweep↓{sweep_down:.4g}")
+        s3_long  += 55; n3_long.append(f"sweep↓{sweep_down:.4g}")
     if sweep_up is not None:
-        s3 += 55; n3.append(f"sweep↑{sweep_up:.4g}")
+        s3_short += 55; n3_short.append(f"sweep↑{sweep_up:.4g}")
 
-    if price_pos < 0.12 or price_pos > 0.88:
-        s3 += 18; n3.append(f"граница {price_pos:.0%}")
+    # Price near range floor → bullish; near ceiling → bearish
+    if price_pos < 0.12:
+        s3_long  += 18; n3_long.append(f"дно {price_pos:.0%}")
+    elif price_pos > 0.88:
+        s3_short += 18; n3_short.append(f"вершина {price_pos:.0%}")
 
     # Funding vs позиция
     if funding > 0.01 and price_pos < 0.35:
-        s3 += 14; n3.append(f"fund+{funding:.3f}% при дне")
+        s3_long  += 14; n3_long.append(f"fund+{funding:.3f}% при дне")
     elif funding < -0.01 and price_pos > 0.65:
-        s3 += 14; n3.append(f"fund{funding:.3f}% при вершине")
+        s3_short += 14; n3_short.append(f"fund{funding:.3f}% при вершине")
 
     # Funding trend усиливает несоответствие
     if fund_trend == "rising" and price_pos < 0.35:
-        s3 += 8; n3.append("fund↑нараст")
+        s3_long  += 8; n3_long.append("fund↑нараст")
     elif fund_trend == "declining" and price_pos > 0.65:
-        s3 += 8; n3.append("fund↓нараст")
+        s3_short += 8; n3_short.append("fund↓нараст")
 
     # Ликвидации после sweep
     if long_liq  and sweep_down is not None:
-        s3 += 15; n3.append("лонг-лики")
+        s3_long  += 15; n3_long.append("лонг-лики")
     if short_liq and sweep_up is not None:
-        s3 += 15; n3.append("шорт-лики")
+        s3_short += 15; n3_short.append("шорт-лики")
+
+    # Локальная БД: реальный $ объём ликвидаций подтверждает sweep-разворот
+    # sweep↓ забрал лонговую ликвидность → лонги ликвидируются → разворот вверх
+    if sweep_down is not None and liq_long_usd >= 500_000:
+        s3_long += 18; n3_long.append(f"LIQ_long ${liq_long_usd/1e3:.0f}K!")
+    elif sweep_down is not None and liq_long_usd >= 150_000:
+        s3_long += 9
+    # sweep↑ забрал шортовую ликвидность → шорты ликвидируются → разворот вниз
+    if sweep_up is not None and liq_short_usd >= 500_000:
+        s3_short += 18; n3_short.append(f"LIQ_short ${liq_short_usd/1e3:.0f}K!")
+    elif sweep_up is not None and liq_short_usd >= 150_000:
+        s3_short += 9
 
     # Свечной паттерн разворота после sweep
     if bullish_pattern and sweep_down is not None:
-        s3 += 14; n3.append(f"{candle_pat} после sweep↓")
+        s3_long  += 14; n3_long.append(f"{candle_pat} после sweep↓")
     if bearish_pattern and sweep_up is not None:
-        s3 += 14; n3.append(f"{candle_pat} после sweep↑")
+        s3_short += 14; n3_short.append(f"{candle_pat} после sweep↑")
 
     # MTF зона в точке разворота
     if in_bull_fvg and sweep_down is not None:
-        s3 += 12; n3.append("В FVG↑ после sweep↓")
+        s3_long  += 12; n3_long.append("В FVG↑ после sweep↓")
     if in_bear_fvg and sweep_up is not None:
-        s3 += 12; n3.append("В FVG↓ после sweep↑")
+        s3_short += 12; n3_short.append("В FVG↓ после sweep↑")
 
     # DOM
     if dom["imbalance"] > 25 and sweep_down is not None:
-        s3 += 10; n3.append(f"DOM+{dom['imbalance']:.0f}%")
+        s3_long  += 10; n3_long.append(f"DOM+{dom['imbalance']:.0f}%")
     if dom["imbalance"] < -25 and sweep_up is not None:
-        s3 += 10; n3.append(f"DOM{dom['imbalance']:.0f}%")
+        s3_short += 10; n3_short.append(f"DOM{dom['imbalance']:.0f}%")
 
     # OI Divergence после sweep подтверждает разворот
     if oi_div == "bull_div" and sweep_down is not None:
-        s3 += 12; n3.append("OI_div↑ после sweep↓")
+        s3_long  += 12; n3_long.append("OI_div↑ после sweep↓")
     if oi_div == "bear_div" and sweep_up is not None:
-        s3 += 12; n3.append("OI_div↓ после sweep↑")
+        s3_short += 12; n3_short.append("OI_div↓ после sweep↑")
 
-    scores["range_sweep"] = s3
-    notes["range_sweep"]  = ", ".join(n3) or "—"
+    # Доминирующее направление sweep-сетапа
+    if s3_long >= s3_short:
+        scores["range_sweep"] = s3_long
+        notes["range_sweep"]  = ", ".join(n3_long) or "—"
+        sweep_dir_3 = "long"
+    else:
+        scores["range_sweep"] = s3_short
+        notes["range_sweep"]  = ", ".join(n3_short) or "—"
+        sweep_dir_3 = "short"
 
     # ═══════════════════════════════════════════════════════════════════════════
     # СЕТАП 4 — BREAKOUT / PRE-PUMP
@@ -1685,6 +2337,12 @@ def score_symbol(symbol, ticker, oi_hist,
     elif whale_side == "Sell":
         s4 -= 12; n4.append(f"кит_SELL×{whale_mult:.0f}")
 
+    # 5b. Поглощение — крупный игрок тихо набирает (раньше видно чем кит в ленте)
+    if absorb_dir == "bull_absorb":
+        s4 += 18; n4.append(f"ABSORB↑×{absorb_ratio:.1f}")
+    elif absorb_dir == "bear_absorb":
+        s4 -= 14; n4.append(f"ABSORB↓×{absorb_ratio:.1f}")
+
     # 6. Объём выше нормы (текущая свеча)
     if vol_ratio > 2.5:
         s4 += 18; n4.append(f"vol×{vol_ratio:.1f}")
@@ -1720,6 +2378,14 @@ def score_symbol(symbol, ticker, oi_hist,
         s4 += 8; n4.append("fund≈0")
     elif funding > 0.025:
         s4 -= 8  # лонги перегреты = памп уже был
+
+    # Экстремальный funding как дополнительный катализатор
+    if fund_extreme == "extreme_neg":
+        s4 += 18; n4.append("FUND_EXT!")  # сквиз + памп = двойной движок
+    elif fund_extreme == "high_neg":
+        s4 += 10; n4.append("fund_HN")
+    elif fund_extreme in ("extreme_pos", "high_pos"):
+        s4 -= 12  # перегрев = высокий риск
 
     # 11. MTF Confluence: структурная поддержка для роста
     if bull_mtf >= 3:
@@ -1784,9 +2450,17 @@ def score_symbol(symbol, ticker, oi_hist,
     if val_dist is not None and val_dist < -2.0:
         s4 += 10; n4.append(f"belowVAL{val_dist:.1f}%")
 
-    # 21. Equal Lows под ценой = магниты ликвидности (рынок придёт забрать)
-    if eq_highs:
-        s4 += 6; n4.append(f"EQH@{format_price(eq_highs[0])}")
+    # 21. Equal Highs/Lows = ликвидность
+    # EQH над ценой → магниты роста (цель для пампа)
+    if len(eq_highs) >= 2:
+        s4 += 12; n4.append(f"EQH×{len(eq_highs)}@{format_price(eq_highs[0])}")
+    elif eq_highs:
+        s4 += 6;  n4.append(f"EQH@{format_price(eq_highs[0])}")
+    # EQL под ценой → опасность: рынок может сначала сходить забрать ликвидность вниз
+    if len(eq_lows) >= 2:
+        s4 -= 10; n4.append(f"EQL×{len(eq_lows)}⚠")  # двойное дно = ликвидность манит
+    elif eq_lows:
+        s4 -= 4;  n4.append(f"EQL@{format_price(eq_lows[0])}")
 
     # 22. MTF Extended (1H+4H+1D)
     if bull_mtf_ext > bull_mtf:
@@ -1796,12 +2470,379 @@ def score_symbol(symbol, ticker, oi_hist,
     if choch_1h == "bear_choch" or choch_4h == "bear_choch":
         s4 -= 12
 
+    # 24. Ask wall ВЫШЕ цены = памп заблокирован стеной заявок
+    if len(ask_stack_sc) >= 2 and ask_wall_d <= 2.5:
+        wall_pen = min(len(ask_stack_sc) * 7, 24)
+        s4 -= wall_pen; n4.append(f"ask_стек⚠×{len(ask_stack_sc)}")
+    # Bid wall НИЖЕ = поддержка аккумуляции
+    if len(bid_stack_sc) >= 2 and bid_wall_d <= 2.5:
+        s4 += min(len(bid_stack_sc) * 4, 14); n4.append(f"bid_стек↓{len(bid_stack_sc)}")
+
+    # 25. OI velocity: ускорение = нарастающий импульс, замедление = exhaust
+    if oi_velocity > 3.0:
+        s4 += 14; n4.append(f"OI_accel+{oi_velocity:.1f}%")
+    elif oi_velocity > 1.5:
+        s4 += 7;  n4.append(f"OI_accel+{oi_velocity:.1f}%")
+    elif oi_velocity < -3.0:
+        s4 -= 12; n4.append(f"OI_exhaust{oi_velocity:.1f}%")
+    elif oi_velocity < -1.5:
+        s4 -= 6
+
+    # 26. Perp/Spot ratio: органичный spot demand vs пузырь плеч
+    if perp_spot_ratio is not None:
+        if perp_spot_ratio > 5.0:
+            s4 -= 16; n4.append(f"P/S={perp_spot_ratio:.1f}x пузырь!")
+        elif perp_spot_ratio > 3.5:
+            s4 -= 8;  n4.append(f"P/S={perp_spot_ratio:.1f}x перегрет")
+        elif perp_spot_ratio < 1.5:
+            s4 += 12; n4.append(f"P/S={perp_spot_ratio:.1f}x spot↑")
+        elif perp_spot_ratio < 2.5:
+            s4 += 6
+
+    # 27. BTC Dominance
+    if btc_dominance is not None:
+        if btc_dominance < 47:
+            s4 += 8;  n4.append(f"BTC.d={btc_dominance:.0f}%↓alt")
+        elif btc_dominance > 52:
+            s4 -= 10; n4.append(f"BTC.d={btc_dominance:.0f}%↑btc")
+
+    # 28. Ликвидации шортов = топливо для брейкаута (сквиз поднимает вверх)
+    if liq_short_usd >= 1_000_000:
+        s4 += 20; n4.append(f"LIQ_short ${liq_short_usd/1e6:.1f}M!")
+    elif liq_short_usd >= 300_000:
+        s4 += 10; n4.append(f"LIQ_short ${liq_short_usd/1e3:.0f}K")
+
     scores["breakout"] = s4
     notes["breakout"]  = ", ".join(n4) or "—"
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # СЕТАП 5 — ДИСТРИБУЦИЯ / ШОРТ-ДАВЛЕНИЕ
+    #
+    # Зеркало сетапа 1: лонги перегреты → фиксация / шорт-ликвидация.
+    # Условия: положительный funding + цена у вершины 48h диапазона +
+    #          OI снижается + медвежьи структурные сигналы.
+    # ═══════════════════════════════════════════════════════════════════════════
+    s5, n5 = 0, []
+
+    # Funding (главное топливо распродажи)
+    if funding > 0.01:
+        s5 += 35; n5.append(f"fund={funding:.3f}%")
+    elif funding > 0:
+        s5 += 22; n5.append(f"fund={funding:.3f}%")
+    elif funding > -0.005:
+        s5 += 8;  n5.append("fund≈0")
+
+    # Экстремально положительный funding
+    if fund_extreme == "extreme_pos":
+        s5 += 25; n5.append("FUND_EXTREME!")
+    elif fund_extreme == "high_pos":
+        s5 += 14; n5.append("fund_high_pos")
+    elif fund_extreme in ("extreme_neg", "high_neg"):
+        s5 -= 15; n5.append("fund_neg!")  # шорты перегреты = плохо для шорта
+
+    # Funding trend: нарастающий перегрев лонгов
+    if fund_trend == "rising":
+        s5 += 15; n5.append("fund↑нараст")
+    elif fund_trend == "normalizing" and funding > 0.01:
+        s5 -= 8;  n5.append("fund норм-ся")
+
+    # Серия положительного funding = устойчивый перегрев лонгов
+    if pos_streak >= 5:
+        s5 += 12; n5.append(f"fund+×{pos_streak}!")
+    elif pos_streak >= 3:
+        s5 += 6;  n5.append(f"fund+×{pos_streak}")
+
+    # Цена у сопротивления (вершина 48h диапазона)
+    if price_pos > 0.85:
+        s5 += 28; n5.append(f"вершина {price_pos:.0%}")
+    elif price_pos > 0.70:
+        s5 += 16; n5.append(f"верхн {price_pos:.0%}")
+    elif price_pos > 0.60:
+        s5 += 6
+
+    # OI упал = лонги ликвидируются
+    if oi_change < -10:
+        s5 += 25; n5.append(f"OI{oi_change:.1f}%")
+    elif oi_change < -5:
+        s5 += 14; n5.append(f"OI{oi_change:.1f}%")
+
+    # OI Divergence: лонги закрываются у хая → разворот вниз
+    if oi_div == "bear_div":
+        s5 += 18; n5.append("OI_div↓")
+    elif oi_div == "strong_bear":
+        s5 += 8;  n5.append("OI_bear")
+    elif oi_div == "bull_div":
+        s5 -= 10
+
+    # Подтверждения (лонги ликвидируются — медвежий сигнал)
+    if long_liq:
+        s5 += 12; n5.append("лонг-лики")
+
+    # Локальная БД: крупные лонг-ликвидации за 60мин → давление вниз
+    if liq_long_usd >= 1_000_000:
+        s5 += 22; n5.append(f"LIQ_long ${liq_long_usd/1e6:.1f}M!")
+    elif liq_long_usd >= 300_000:
+        s5 += 12; n5.append(f"LIQ_long ${liq_long_usd/1e3:.0f}K")
+    elif liq_long_usd >= 100_000:
+        s5 += 6
+
+    # HTF: согласованность Daily + 4H вниз
+    if trend_bear_aligned:
+        s5 += 15; n5.append("D+4H↓")
+    elif daily_trend == "bear" or h4_trend == "bear":
+        s5 += 8;  n5.append("HTF↓")
+
+    # MTF медвежьи зоны (КЛЮЧЕВОЙ СИГНАЛ)
+    if bear_mtf >= 3:
+        s5 += 25; n5.append(f"MTF{bear_mtf}↓!")
+    elif bear_mtf >= 2:
+        s5 += 18; n5.append(f"MTF{bear_mtf}↓")
+    elif bear_mtf == 1:
+        s5 += 10; n5.append("MTF1↓")
+
+    # Цена В медвежьем FVG/OB прямо сейчас
+    if in_bear_fvg:
+        s5 += 18; n5.append("В FVG↓!")
+    elif bear_fvg_1h and bear_fvg_1h[0]["dist_pct"] < 1.5:
+        s5 += 10; n5.append(f"FVG↓{bear_fvg_1h[0]['dist_pct']:.1f}%")
+    elif bear_fvg_1h and bear_fvg_1h[0]["dist_pct"] < 3.0:
+        s5 += 5
+
+    if in_bear_ob:
+        s5 += 18; n5.append("В OB↓!")
+    elif bear_ob_1h and bear_ob_1h[0]["dist_pct"] < 1.5:
+        s5 += 10; n5.append(f"OB↓{bear_ob_1h[0]['dist_pct']:.1f}%")
+    elif bear_ob_1h and bear_ob_1h[0]["dist_pct"] < 3.0:
+        s5 += 5
+
+    # Свечной паттерн подтверждает разворот вниз
+    if bearish_pattern:
+        s5 += 12; n5.append(f"{candle_pat}")
+    elif candle_pat == "inside_bar":
+        s5 += 6;  n5.append("inside_bar")
+
+    # CVD медвежий
+    if cvd_bear_aligned:
+        s5 += 15; n5.append("CVD↓")
+    elif kl_cvd_pct < -10:
+        s5 += 8;  n5.append(f"CVD↓{kl_cvd_pct:.0f}%")
+
+    # Sweep вверх перед распродажей (захват ликвидности выше перед обвалом)
+    if sweep_up is not None:
+        s5 += 12; n5.append(f"sweep↑{sweep_up:.4g}")
+
+    # CHoCH медвежий = ранний слом восходящего тренда
+    if choch_1h == "bear_choch":
+        s5 += 14; n5.append("CHoCH↓1H!")
+    elif choch_4h == "bear_choch":
+        s5 += 12; n5.append("CHoCH↓4H!")
+
+    # RSI перекупленность / медвежья дивергенция
+    if rsi_1h > 70:
+        s5 += 10; n5.append(f"RSI{rsi_1h:.0f}(OB)")
+    if rsi_div_1h == "bear_div":
+        s5 += 14; n5.append("RSI_div↓!")
+    elif rsi_div_1h == "hidden_bear":
+        s5 += 10; n5.append("RSI_hid↓")
+
+    # EMA Structure — медвежий порядок
+    if ema_1h.get("ema_bear"):
+        s5 += 12; n5.append("EMA_bear1H")
+    elif ema_1h.get("death_cross"):
+        s5 += 16; n5.append("DeathX!")
+    if ema_4h.get("ema_bear"):
+        s5 += 10; n5.append("EMA_bear4H")
+
+    # VWAP: цена выше VWAP — переоценена, потенциал снижения
+    if vwap_dev is not None:
+        if vwap_dev > 3.0:
+            s5 += 14; n5.append(f"VWAP+{vwap_dev:.1f}%")
+        elif vwap_dev > 1.0:
+            s5 += 8;  n5.append(f"VWAP+{vwap_dev:.1f}%")
+
+    # MTF Extended (1H+4H+1D медвежьи)
+    if bear_mtf_ext > bear_mtf:
+        s5 += 8; n5.append(f"MTF_1D{bear_mtf_ext}↓")
+
+    # Штраф: бычьи сигналы говорят против шорта
+    if trend_bull_aligned:
+        s5 -= 12
+    if cvd_bull_aligned:
+        s5 -= 8
+
+    # Стенка заявок ВЫШЕ цены = сопротивление подтверждает дистрибуцию
+    if len(ask_stack_sc) >= 2 and ask_wall_d <= 2.5:
+        wall_pts = min(len(ask_stack_sc) * 5, 18)
+        s5 += wall_pts; n5.append(f"ask_стек×{len(ask_stack_sc)}")
+
+    # Perp/Spot: высокое = много лонгов с плечом = топливо для слива
+    if perp_spot_ratio is not None:
+        if perp_spot_ratio > 5.0:
+            s5 += 14; n5.append(f"P/S={perp_spot_ratio:.1f}x!")
+        elif perp_spot_ratio > 3.0:
+            s5 += 7
+
+    # BTC Dominance: BTC season = давление на альты = boost шорт
+    if btc_dominance is not None:
+        if btc_dominance > 52:
+            s5 += 8;  n5.append(f"BTC.d={btc_dominance:.0f}%↑btc")
+        elif btc_dominance < 47:
+            s5 -= 8
+
+    scores["short_dist"] = s5
+    notes["short_dist"]  = ", ".join(n5) or "—"
 
     # ── Лучший сетап ──
     best  = max(scores, key=scores.get)
     score = scores[best]
+
+    # ── Социальный сентимент (CryptoPanic + LunarCrush) ──────────────────────
+    # Применяем ДО hard-filters: +10/-10 если сигналы совпадают с направлением.
+    _cp_score  = int(_cp.get("score", 0) or 0)
+    _lc_sent   = _lc.get("sentiment")   # 0-100, >70 бычий, <30 медвежий
+    _lc_galaxy = _lc.get("galaxy_score")
+
+    # Лучший сетап определяем предварительно для оценки направления
+    _pre_best = max(scores, key=scores.get)
+    _bull_setup = _pre_best in ("squeeze", "breakout")
+    _bear_setup = _pre_best in ("short_dist",)
+
+    _social_bonus = 0
+    _social_note  = ""
+    if _cp_score >= 5 and (_bull_setup or not _bear_setup):
+        _social_bonus += 8; _social_note += f"CP+{_cp_score}"
+    elif _cp_score <= -5 and (_bear_setup or not _bull_setup):
+        _social_bonus += 8; _social_note += f"CP{_cp_score}"
+    elif abs(_cp_score) >= 3:
+        _social_bonus += 4
+    if _cp.get("hot") and _bull_setup:
+        _social_bonus += 5; _social_note += "+HOT"
+    if _lc_sent is not None:
+        if _lc_sent >= 70 and _bull_setup:
+            _social_bonus += 6; _social_note += f" LC_sent{_lc_sent:.0f}"
+        elif _lc_sent <= 30 and _bear_setup:
+            _social_bonus += 6; _social_note += f" LC_sent{_lc_sent:.0f}"
+        elif (_lc_sent >= 70 and _bear_setup) or (_lc_sent <= 30 and _bull_setup):
+            _social_bonus -= 6  # контра-сигнал
+    if _lc_galaxy is not None and _lc_galaxy >= 70 and _bull_setup:
+        _social_bonus += 5; _social_note += f" galaxy{_lc_galaxy:.0f}"
+    if _social_bonus != 0:
+        scores[_pre_best] = max(0, scores[_pre_best] + _social_bonus)
+
+    # ── Направление best-сетапа ──
+    #   squeeze/breakout → ЛОНГ; short_dist → ШОРТ;
+    #   range_sweep → sweep_dir_3; bos_fvg → по HTF.
+    if best == "squeeze" or best == "breakout":
+        setup_dir = "long"
+    elif best == "short_dist":
+        setup_dir = "short"
+    elif best == "range_sweep":
+        setup_dir = sweep_dir_3
+    else:  # bos_fvg
+        setup_dir = ("long" if trend_bull_aligned else
+                     "short" if trend_bear_aligned else "none")
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # HARD-SKIP ФИЛЬТРЫ (откалиброваны на 24ч данных: breakout WR 12%, squeeze 18.5%)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    # Filter 1: BTC velocity hard-skip при резком движении ±1.0%
+    # Наблюдение: лонги на дампящем BTC получают в среднем MFE+4% затем разворот.
+    # 4h не хватает дойти до TP, цена закрывается в минус.
+    if setup_dir == "long" and btc_chg_4h <= -1.0:
+        return None
+    if setup_dir == "short" and btc_chg_4h >= 1.0:
+        return None
+
+    # Filter 5: BTC bull-EMA-режим → все ШОРТ-сетапы против тренда
+    # Аудит 2026-04-21: при btc_ema_pos='above' стоп-рейт ШОРТ = 61% (22/36),
+    # ЛОНГ = 14% (5/35). BTC выше EMA20+EMA50 на 4h = структурный аптренд,
+    # alt_breadth обычно >80% — весь рынок движется вверх вслед за BTC.
+    if setup_dir == "short" and btc_ema_pos == "above":
+        return None
+
+    # Filter 6: short_dist ШОРТ — только при явном медвежьем BTC-режиме
+    # short_dist = самый агрессивный контртрендовый шорт (55% стоп-рейт, аудит 2026-04-21).
+    # Разрешён только когда BTC явно ниже обоих EMA20+EMA50 ('below').
+    # При 'between' Fix 2 даёт -30, но short_dist требует жёсткого блока.
+    if best == "short_dist" and setup_dir == "short" and btc_ema_pos != "below":
+        return None
+
+    # Filter 2: Breakout в strong bear regime — смерть (WR 12%, MISS 46%)
+    # Пробой вверх при Daily+4H bear = false breakout в 85%+ случаев.
+    if best == "breakout" and daily_trend == "bear" and h4_trend == "bear":
+        return None
+
+    # Filter 3: Squeeze в bear regime требует глубокой перепроданности
+    # "Отскок от поддержки" при медвежьем HTF без price_pos<0.30 — ловушка.
+    if (best == "squeeze"
+        and daily_trend == "bear" and h4_trend == "bear"
+        and price_pos > 0.30):
+        return None
+
+    # Filter 4: BOS/FVG лонг при медвежьем Daily — требует высокого score
+    # d_htf=bear + h4_htf=bull → bos_fvg может ещё быть "long", но Daily против.
+    # Без высокой убеждённости (score≥80) это контртрендовый вход.
+    if (best == "bos_fvg" and setup_dir == "long"
+            and daily_trend == "bear" and score < 80):
+        return None
+
+    # ── BTC-velocity soft-penalty: для умеренных движений (-1.0..-0.8%, +0.8..+1.0%) ──
+    btc_penalty = 0
+    if setup_dir == "long" and btc_chg_4h <= -0.8:
+        btc_penalty = -10
+    elif setup_dir == "short" and btc_chg_4h >= 0.8:
+        btc_penalty = -10
+    if btc_penalty:
+        score = max(0, score + btc_penalty)
+        scores[best] = score
+        notes[best] = (notes[best] + f", BTC4h{btc_chg_4h:+.1f}%{btc_penalty:+d}").lstrip(", ")
+
+    # ── Fix 2: BTC в переходном режиме (между EMA20 и EMA50) → шорты штрафуются
+    # 'between' = BTC восстанавливается или в переходе; шортить против momentum рискованно.
+    # -30 к score: пограничные шорты (score ~35-80) вылетят ниже min_score порога.
+    if setup_dir == "short" and btc_ema_pos == "between":
+        score = max(0, score - 30)
+        scores[best] = score
+        notes[best] = (notes[best] + ", BTCbtw-30").lstrip(", ")
+
+    # ── Outcome-weighted multiplier: историческая WR по бакету (setup × grade) ──
+    # Grade считаем по сырому score + MTF; затем применяем мультипликатор [0.5, 1.5].
+    if score_weights:
+        raw_grade = composite_grade({
+            "score":  score,
+            "mtf_b":  bull_mtf, "mtf_s":  bear_mtf,
+            "bull_mtf_ext": bull_mtf_ext, "bear_mtf_ext": bear_mtf_ext,
+            "d_htf":  daily_trend, "h4_htf": h4_trend,
+            "cvd_k%": kl_cvd_pct,
+        })
+        mult = score_weights.get((best, raw_grade))
+        if mult and mult != 1.0:
+            score = int(round(score * mult))
+            scores[best] = score
+            notes[best] = (notes[best] + f", w×{mult:.2f}").lstrip(", ")
+
+    # ── Signal-level additive adjustments from logistic regression calibration ──
+    # Applies only to LONG setups (weights trained on ЛОНГ decisive trades).
+    # Corrects for signals over/under-rewarded by hand-tuned scoring:
+    #   OI rising penalized (empirical -9.3pp WR), CVD kline bull penalized (-3.5pp),
+    #   CHoCH↑1H / OI falling / RSI<40 boosted.
+    _sw = score_weights.get("__signal_weights__") if score_weights else None
+    if _sw and setup_dir == "long":
+        _sw_adj = 0.0
+        _sw_adj += _sw.get("choch_bull_1h",   0.0) * int(choch_1h == "bull_choch")
+        _sw_adj += _sw.get("oi_falling_5",    0.0) * int(oi_change < -5)
+        _sw_adj += _sw.get("rsi_lt40",        0.0) * int(rsi_1h < 40)
+        _sw_adj += _sw.get("funding_neg",     0.0) * int(funding < 0)
+        _sw_adj += _sw.get("oi_rising_5",     0.0) * int(oi_change > 5)
+        _sw_adj += _sw.get("cvd_kline_bull",  0.0) * int(kl_cvd_pct > 15)
+        _sw_adj += _sw.get("ema_bull_1h",     0.0) * int(ema_1h.get("ema_bull", False))
+        _sw_adj += _sw.get("ema_bull_4h",     0.0) * int(ema_4h.get("ema_bull", False))
+        _sw_adj += _sw.get("mtf_bull_ge3",    0.0) * int(bull_mtf >= 3)
+        if _sw_adj != 0.0:
+            score = max(0, score + int(round(_sw_adj)))
+            scores[best] = score
+            notes[best] = (notes[best] + f", sw{_sw_adj:+.0f}").lstrip(", ")
 
     # ── Структурные уровни для торгового плана ──────────────────────────────
     # Ближайшие FVG/OB зоны (top, bottom, dist_pct), None если зоны нет
@@ -1819,6 +2860,8 @@ def score_symbol(symbol, ticker, oi_hist,
 
     bid_wall_px = dom["bid_wall"][0] if dom["bid_wall"] else None
     ask_wall_px = dom["ask_wall"][0] if dom["ask_wall"] else None
+    bid_stack   = stacks.get("bid_stack")
+    ask_stack   = stacks.get("ask_stack")
 
     # ── Flags: быстрый взгляд на ключевые сигналы ──
     flags = []
@@ -1841,6 +2884,15 @@ def score_symbol(symbol, ticker, oi_hist,
     if cvd_div and "bull" in cvd_div:          flags.append("⊕CVDdiv")
     if vol_accel_dir == "bull_accel":          flags.append(f"⊕vol×{vol_accel_ratio:.1f}")
     if whale_side == "Buy":                    flags.append(f"⊕кит×{whale_mult:.0f}")
+    # Завалы (stacked walls) — серия крупных лимиток одной стороны
+    if bid_stack and len(bid_stack) >= 2:
+        d_pct = abs(price - bid_stack[0][0]) / price * 100
+        if d_pct <= 2.5:
+            flags.append(f"завал↓×{len(bid_stack)}")
+    if ask_stack and len(ask_stack) >= 2:
+        d_pct = abs(ask_stack[0][0] - price) / price * 100
+        if d_pct <= 2.5:
+            flags.append(f"завал↑×{len(ask_stack)}")
 
     return {
         "symbol":    symbol,
@@ -1863,6 +2915,7 @@ def score_symbol(symbol, ticker, oi_hist,
         "poc_%":     round(poc_dist, 1) if poc_dist is not None else None,
         "rs_btc":    round(rs_btc, 2) if rs_btc is not None else None,
         "sweep":          ("↓" if sweep_down else "") + ("↑" if sweep_up else "") or "—",
+        "sweep_dir":      sweep_dir_3,
         "liq":            ("L" if long_liq else "") + ("S" if short_liq else "") or "—",
         "oi_div":         oi_div or "—",
         "fund_tr":        fund_trend,
@@ -1876,6 +2929,19 @@ def score_symbol(symbol, ticker, oi_hist,
         "oi_coil_%":      oi_coil_chg,
         "oi_coil_rng%":   oi_coil_rng,
         "oi_coiling":     oi_coiling,
+        "oi_velocity":    oi_velocity,
+        "perp_spot_x":    round(perp_spot_ratio, 1) if perp_spot_ratio is not None else None,
+        "btc_dom_%":      round(btc_dominance, 1) if btc_dominance is not None else None,
+        # ── Контекстные фичи для регрессии ──────────────────────────────────
+        "btc_ema_pos":        btc_ema_pos,
+        "listing_age_days":   listing_age_days,
+        "avg_vol_7d_usd":     avg_vol_7d_usd,
+        # Компоненты скора по каждому сетапу (сырые, до финального отбора)
+        "sc_squeeze":     scores.get("squeeze", 0),
+        "sc_bos_fvg":     scores.get("bos_fvg", 0),
+        "sc_range_sweep": scores.get("range_sweep", 0),
+        "sc_breakout":    scores.get("breakout", 0),
+        "sc_short_dist":  scores.get("short_dist", 0),
         "cvd_div":        cvd_div or "—",
         "vol_accel":      vol_accel_dir or "—",
         "vol_accel_x":    vol_accel_ratio,
@@ -1891,6 +2957,8 @@ def score_symbol(symbol, ticker, oi_hist,
         "lvl_lo48":  lo48,                           # 48h low
         "lvl_bid":   bid_wall_px,                    # DOM bid wall price
         "lvl_ask":   ask_wall_px,                    # DOM ask wall price
+        "lvl_bid_stack": bid_stack,                  # завал ниже: [(price,size),...]
+        "lvl_ask_stack": ask_stack,                  # завал выше: [(price,size),...]
         "lvl_swpdn": sweep_down,                     # sweep down price level
         "lvl_swpup": sweep_up,                       # sweep up price level
         "in_bfvg":   in_bull_fvg,
@@ -1912,10 +2980,26 @@ def score_symbol(symbol, ticker, oi_hist,
         "val_dist":      val_dist,
         "choch_1h":      choch_1h or "—",
         "choch_4h":      choch_4h or "—",
+        "choch_conviction": (choch_1h == "bull_choch"),
         "eq_highs":      eq_highs,
         "eq_lows":       eq_lows,
         "bull_mtf_ext":  bull_mtf_ext,
         "bear_mtf_ext":  bear_mtf_ext,
+        # Low-Volume Nodes (зоны ускорения)
+        "lvn_zones":       lvn_zones,
+        "lvn_nearest":     lvn_nearest,
+        "lvn_near_dist_%": round(lvn_nearest_dist, 2) if lvn_nearest_dist is not None else None,
+        # Полные списки зон FVG/OB (для chart_analyzer overlay)
+        "fvg_1h": [{"high": z["top"], "low": z["bottom"], "type": z["type"]} for z in fvgs_1h],
+        "ob_1h":  [{"high": z["top"], "low": z["bottom"], "type": z["type"]} for z in obs_1h],
+        # Ликвидации (USD за 60мин) — для _conviction_score и алертов
+        "liq_long_usd":  liq_long_usd,
+        "liq_short_usd": liq_short_usd,
+        # Социальный сентимент
+        "social_note":   _social_note or "—",
+        "cp_score":      _cp_score,
+        "lc_sentiment":  _lc_sent,
+        "lc_galaxy":     _lc_galaxy,
     }
 
 
@@ -1974,13 +3058,31 @@ def interpret_signals(r):
             "Funding стабилен — нет дополнительной информации о направлении")
 
     # ── OI Change 24h ─────────────────────────────────────────────────────────
-    oi = r["oi24h_%"]
+    # Интерпретация зависит от ПОЗИЦИИ ЦЕНЫ в диапазоне:
+    # OI падает у ДНА → шорты ликвидированы → ЛОНГ
+    # OI падает у ВЕРШИНЫ → лонги ликвидированы → ШОРТ
+    oi      = r["oi24h_%"]
+    pos_pct = r["pos_%"]   # 0-100
     if oi < -10:
-        add("OI 24h", f"{oi:+.1f}%", "ЛОНГ",
-            "Сильное падение OI → крупные ликвидации прошли, позиции расчищены → дно близко")
+        if pos_pct <= 30:
+            add("OI 24h", f"{oi:+.1f}%", "ЛОНГ",
+                "OI сильно упал у ДНА → шорты ликвидированы, позиции расчищены → разворот вверх")
+        elif pos_pct >= 70:
+            add("OI 24h", f"{oi:+.1f}%", "ШОРТ",
+                "OI сильно упал у ВЕРШИНЫ → лонги ликвидированы → продолжение вниз или разворот")
+        else:
+            add("OI 24h", f"{oi:+.1f}%", "ЖДАТЬ",
+                "Сильное падение OI в середине диапазона — направление определяй по HTF и CVD")
     elif oi < -5:
-        add("OI 24h", f"{oi:+.1f}%", "ЛОНГ",
-            "OI упал → ликвидации состоялись, меньше давления со стороны лонгов")
+        if pos_pct <= 35:
+            add("OI 24h", f"{oi:+.1f}%", "ЛОНГ",
+                "OI упал у поддержки → ликвидации состоялись, меньше шортового давления")
+        elif pos_pct >= 65:
+            add("OI 24h", f"{oi:+.1f}%", "ШОРТ",
+                "OI упал у сопротивления → лонги фиксируют или их сдувают → осторожно с лонгом")
+        else:
+            add("OI 24h", f"{oi:+.1f}%", "ЖДАТЬ",
+                "OI слегка упал в середине диапазона — нет чёткого сигнала")
     elif oi > 15:
         add("OI 24h", f"{oi:+.1f}%", "ИНФО",
             "OI сильно вырос — рынок набирает позиции. Смотри направление через HTF и CVD")
@@ -2683,6 +3785,22 @@ def build_trade_plan(r):
     else:
         side = "wait"
 
+    # Resolve setup-verdict conflict: high-confidence setups override the verdict.
+    # A score-95 squeeze with ШОРТ verdict should never build a short plan.
+    setup = r.get("setup", "")
+    score_val = r.get("score", 0)
+    if score_val >= 60:
+        if setup in ("squeeze", "breakout"):
+            side = "long"
+        elif setup == "short_dist":
+            side = "short"
+        elif setup == "range_sweep":
+            sweep_dir = r.get("sweep_dir")
+            if sweep_dir == "long":
+                side = "long"
+            elif sweep_dir == "short":
+                side = "short"
+
     price   = r["price"]
     atr_pct = r["atr_%"] if r["atr_%"] and r["atr_%"] > 0 else 1.0
     atr_abs = price * atr_pct / 100
@@ -2700,6 +3818,8 @@ def build_trade_plan(r):
     lo48     = r.get("lvl_lo48")
     bid_wall = r.get("lvl_bid")
     ask_wall = r.get("lvl_ask")
+    bid_stack = r.get("lvl_bid_stack") or []
+    ask_stack = r.get("lvl_ask_stack") or []
     swp_dn   = r.get("lvl_swpdn")
     swp_up   = r.get("lvl_swpup")
     in_bfvg  = r.get("in_bfvg", False)
@@ -2718,17 +3838,19 @@ def build_trade_plan(r):
 
         # ── Шаг 1: точка входа + стоп ────────────────────────────────────
         if in_bfvg and bfvg_bot is not None:
-            entry_low  = bfvg_bot
-            entry_high = bfvg_top or price
+            # Цена УЖЕ внутри зоны → вход по рынку сейчас, стоп ниже дна зоны
+            entry_low  = price
+            entry_high = price
             stop       = max(bfvg_bot - buf, 0)
-            entry_note = f"в FVG↑  {format_price(bfvg_bot)} .. {format_price(bfvg_top)}"
+            entry_note = f"СЕЙЧАС {format_price(price)} (FVG↑ {format_price(bfvg_bot)}..{format_price(bfvg_top)})"
             stop_note  = f"↓FVG↑ дно  {format_price(bfvg_bot)}"
 
         elif in_bob and bob_bot is not None:
-            entry_low  = bob_bot
-            entry_high = bob_top or price
+            # Цена УЖЕ внутри OB → вход по рынку сейчас, стоп ниже дна OB
+            entry_low  = price
+            entry_high = price
             stop       = max(bob_bot - buf, 0)
-            entry_note = f"в OB↑   {format_price(bob_bot)} .. {format_price(bob_top)}"
+            entry_note = f"СЕЙЧАС {format_price(price)} (OB↑ {format_price(bob_bot)}..{format_price(bob_top)})"
             stop_note  = f"↓OB↑ дно   {format_price(bob_bot)}"
 
         elif bfvg_bot is not None and bfvg_d is not None and bfvg_d < 2.5:
@@ -2759,6 +3881,19 @@ def build_trade_plan(r):
             entry_note = f"sweep↓     {format_price(swp_dn)}"
             stop_note  = f"↓sweep      {format_price(swp_dn)}"
 
+        elif (len(bid_stack) >= 2
+              and bid_stack[0][0] < price
+              and (price - bid_stack[0][0]) / price * 100 <= 2.5):
+            # Завал ниже цены: вход за 0.2-0.5% до первой стены, стоп за 2-ю пачку.
+            # Логика PDF: если первую съели, 2-3-4-5 уходят с вероятностью 90%.
+            first_p  = bid_stack[0][0]
+            second_p = bid_stack[1][0]
+            entry_low  = first_p * 1.002
+            entry_high = min(first_p * 1.005, price)
+            stop       = max(second_p - buf, 0)
+            entry_note = f"завал↓ ×{len(bid_stack)} {format_price(first_p)}"
+            stop_note  = f"↓завал 2-я {format_price(second_p)}"
+
         elif bid_wall is not None and bid_wall < price and _near(bid_wall, 2.0):
             # bid wall строго НИЖЕ цены = реальная поддержка покупателей
             entry_low  = bid_wall
@@ -2786,16 +3921,16 @@ def build_trade_plan(r):
         if tp1_opts:
             tp1, tp1_note = min(tp1_opts, key=lambda x: x[0])
         else:
-            tp1 = price + atr_abs * 1.5
-            tp1_note = f"ATR×1.5   {format_price(tp1)}"
+            tp1 = price + atr_abs * 2.7   # R:R = 2.7/1.8 = 1.5
+            tp1_note = f"ATR×2.7   {format_price(tp1)}"
 
         # ── Шаг 3: TP2 = 48h high или дальняя цель ───────────────────────
         if hi48 is not None and hi48 > tp1:
             tp2 = hi48
             tp2_note = f"48h high  {format_price(hi48)}"
         else:
-            tp2 = price + atr_abs * 2.5
-            tp2_note = f"ATR×2.5   {format_price(tp2)}"
+            tp2 = price + atr_abs * 4.0
+            tp2_note = f"ATR×4.0   {format_price(tp2)}"
 
         # Sanity-check: stop должен быть НИЖЕ entry для лонга
         if stop >= entry_low:
@@ -2808,17 +3943,19 @@ def build_trade_plan(r):
 
         # ── Шаг 1: точка входа + стоп ────────────────────────────────────
         if in_sfvg and sfvg_top is not None:
-            entry_low  = sfvg_bot or price
-            entry_high = sfvg_top
+            # Цена УЖЕ внутри зоны → вход по рынку сейчас, стоп выше крыши зоны
+            entry_low  = price
+            entry_high = price
             stop       = sfvg_top + buf
-            entry_note = f"в FVG↓  {format_price(sfvg_bot)} .. {format_price(sfvg_top)}"
+            entry_note = f"СЕЙЧАС {format_price(price)} (FVG↓ {format_price(sfvg_bot)}..{format_price(sfvg_top)})"
             stop_note  = f"↑FVG↓ крыша {format_price(sfvg_top)}"
 
         elif in_sob and sob_top is not None:
-            entry_low  = sob_bot or price
-            entry_high = sob_top
+            # Цена УЖЕ внутри OB → вход по рынку сейчас, стоп выше крыши OB
+            entry_low  = price
+            entry_high = price
             stop       = sob_top + buf
-            entry_note = f"в OB↓   {format_price(sob_bot)} .. {format_price(sob_top)}"
+            entry_note = f"СЕЙЧАС {format_price(price)} (OB↓ {format_price(sob_bot)}..{format_price(sob_top)})"
             stop_note  = f"↑OB↓ крыша  {format_price(sob_top)}"
 
         elif sfvg_top is not None and sfvg_d is not None and sfvg_d < 2.5:
@@ -2849,6 +3986,18 @@ def build_trade_plan(r):
             entry_note = f"sweep↑     {format_price(swp_up)}"
             stop_note  = f"↑sweep      {format_price(swp_up)}"
 
+        elif (len(ask_stack) >= 2
+              and ask_stack[0][0] > price
+              and (ask_stack[0][0] - price) / price * 100 <= 2.5):
+            # Завал выше цены: вход за 0.2-0.5% до первой стены, стоп за 2-ю пачку.
+            first_p  = ask_stack[0][0]
+            second_p = ask_stack[1][0]
+            entry_low  = max(first_p * 0.995, price)
+            entry_high = first_p * 0.998
+            stop       = second_p + buf
+            entry_note = f"завал↑ ×{len(ask_stack)} {format_price(first_p)}"
+            stop_note  = f"↑завал 2-я {format_price(second_p)}"
+
         elif ask_wall is not None and ask_wall > price and _near(ask_wall, 2.0):
             # ask wall строго ВЫШЕ цены = реальное сопротивление
             entry_low  = price
@@ -2876,16 +4025,16 @@ def build_trade_plan(r):
         if tp1_opts:
             tp1, tp1_note = max(tp1_opts, key=lambda x: x[0])  # ближайшая снизу
         else:
-            tp1 = max(price - atr_abs * 1.5, 0)
-            tp1_note = f"ATR×1.5   {format_price(tp1)}"
+            tp1 = max(price - atr_abs * 2.7, 0)   # R:R = 2.7/1.8 = 1.5
+            tp1_note = f"ATR×2.7   {format_price(tp1)}"
 
         # ── Шаг 3: TP2 = 48h low ─────────────────────────────────────────
         if lo48 is not None and lo48 < tp1:
             tp2 = lo48
             tp2_note = f"48h low   {format_price(lo48)}"
         else:
-            tp2 = max(price - atr_abs * 2.5, 0)
-            tp2_note = f"ATR×2.5   {format_price(tp2)}"
+            tp2 = max(price - atr_abs * 4.0, 0)
+            tp2_note = f"ATR×4.0   {format_price(tp2)}"
 
         # Sanity-check: stop должен быть ВЫШЕ entry для шорта
         if stop <= entry_high:
@@ -2907,6 +4056,16 @@ def build_trade_plan(r):
     else:
         conviction = "Низкая"
 
+    # LVN на пути до TP — цена проскочит быстро, считай магнитом движения
+    lvn_note = ""
+    lvn_nearest = r.get("lvn_nearest")
+    if lvn_nearest and side in ("long", "short"):
+        lo_lvn, hi_lvn = lvn_nearest
+        if side == "long" and lo_lvn > price and lo_lvn < tp2:
+            lvn_note = f"LVN {format_price(lo_lvn)}..{format_price(hi_lvn)} (ускорение вверх)"
+        elif side == "short" and hi_lvn < price and hi_lvn > tp2:
+            lvn_note = f"LVN {format_price(lo_lvn)}..{format_price(hi_lvn)} (ускорение вниз)"
+
     return {
         "side":        side,
         "verdict":     verdict,
@@ -2924,7 +4083,9 @@ def build_trade_plan(r):
         "tp2":         tp2,
         "tp2_note":    tp2_note,
         "rr":          rr,
+        "low_rr":      (side in ("long", "short") and 0 < rr < 2.0),
         "invalidation": invalidation,
+        "lvn_note":    lvn_note,
     }
 
 
@@ -2940,6 +4101,96 @@ def split_trade_watchlists(rows):
         else:
             waits.append(item)
     return longs, shorts, waits
+
+
+def _print_external_context():
+    """
+    Выводит блок с внешними бесплатными источниками:
+      - BTC/ETH spot ETF потоки (Farside, днём раньше)
+      - Макро-окно: ближайшее High-impact US событие и окно опасности
+      - Deribit: Max Pain, Put/Call Ratio по ближайшей экспирации
+    Любой источник может быть None — тогда строка пропускается.
+    """
+    print()
+
+    # ETF потоки
+    try:
+        etf = _fd.get_etf_flows()
+    except Exception:
+        etf = {}
+    lines = []
+    for sym in ("btc", "eth"):
+        row = etf.get(sym)
+        if not row:
+            continue
+        flow = row["net_flow_m"]
+        arrow = "▲" if flow > 0 else ("▼" if flow < 0 else "·")
+        lines.append(f"{sym.upper()} {arrow}{flow:+.0f}M$")
+    if lines:
+        print(f"  ETF потоки ({etf.get('btc', {}).get('date', '?')}): "
+              + "  |  ".join(lines))
+
+    # Макро-календарь
+    try:
+        events = _fd.get_macro_calendar(impact_min="High", countries=("USD",))
+        window  = _fd.next_macro_window(minutes_before=60, minutes_after=30)
+    except Exception:
+        events, window = [], None
+    if window:
+        mu = window["minutes_until"]
+        when = (f"через {mu:.0f} мин" if mu > 0 else f"{-mu:.0f} мин назад")
+        print(f"  ⚠ Макро-окно: {window['title']} ({when})  "
+              f"— не входить за 30 мин до релиза")
+    elif events:
+        nxt = events[0]
+        try:
+            dt = datetime.fromisoformat(nxt["date"])
+            from datetime import timezone as _tz
+            now = datetime.now(_tz.utc)
+            hours = (dt - now).total_seconds() / 3600
+            if 0 < hours <= 72:
+                print(f"  Макро ближайшее: {nxt['title']}  "
+                      f"(через {hours:.1f}ч, f:{nxt['forecast'] or '—'} "
+                      f"p:{nxt['previous'] or '—'})")
+        except Exception:
+            pass
+
+    # Deribit опционы
+    for cur in ("BTC", "ETH"):
+        try:
+            opt = _fd.get_options_context(cur)
+        except Exception:
+            opt = None
+        if not opt or opt.get("max_pain") is None:
+            continue
+        px = opt.get("index_price") or 0
+        mp = opt["max_pain"]
+        pcr = opt.get("pcr")
+        diff_pct = ((mp - px) / px * 100) if px else 0
+        pcr_str = (f"PCR {pcr}" if pcr is not None else "PCR —")
+        hint = ("бычий" if pcr and pcr < 0.7 else
+                "медвежий" if pcr and pcr > 1.2 else
+                "нейтральный")
+        print(f"  Opt {cur} [{opt['expiry']}]: MaxPain {mp:.0f} "
+              f"({diff_pct:+.1f}% к цене)  |  {pcr_str} → {hint}")
+
+    # CoinGecko trending — хайп / нарративы
+    try:
+        trend = _fd.get_trending(limit_coins=7, limit_categories=3)
+    except Exception:
+        trend = {}
+    coins = trend.get("coins", [])
+    if coins:
+        names = "  ".join(f"{c['symbol']}" for c in coins)
+        print(f"  🔥 Trending: {names}")
+    cats = trend.get("categories", [])
+    if cats:
+        top = "  |  ".join(
+            f"{c['name']} {c['change_1h_pct']:+.1f}%"
+            for c in cats[:3] if c.get("name")
+        )
+        if top:
+            print(f"  Секторы (1h): {top}")
 
 
 def print_market_snapshot(results, filtered, btc_chg_24h,
@@ -2984,6 +4235,10 @@ def print_market_snapshot(results, filtered, btc_chg_24h,
     print(f"  Лидер: {leader['symbol']}  |  "
           f"grade {composite_grade(leader)}  |  "
           f"{SETUP_SHORT[leader['setup']]}  |  score {leader['score']}")
+
+    # ─── Внешний контекст: ETF потоки, макро, опционы ─────────────────────
+    if _FD_AVAILABLE:
+        _print_external_context()
 
     if pump_candidates:
         print(f"\n  ⊕ PRE-PUMP РАДАР (pump_score ≥ 40):")
@@ -3035,6 +4290,9 @@ def print_directional_watchlists(filtered, limit=5):
                 elif n.startswith("sweep"):       return "swp"
                 elif n.startswith("bid wall"):    return "wall"
                 elif n.startswith("ask wall"):    return "wall"
+                elif n.startswith("завал"):       return "завал"
+                elif n.startswith("↓завал"):      return "завал"
+                elif n.startswith("↑завал"):      return "завал"
                 else:                             return "ATR"
 
             e_type  = _lvl_short(plan["entry_note"])
@@ -3054,7 +4312,7 @@ def print_directional_watchlists(filtered, limit=5):
                 stop_str,
                 format_price(plan["tp1"]),
                 format_price(plan["tp2"]),
-                f"{plan['rr']:.1f}",
+                (f"⚠{plan['rr']:.1f}" if plan.get("low_rr") else f"{plan['rr']:.1f}"),
                 plan["risk"],
                 plan["conviction"],
                 r["score"],
@@ -3417,20 +4675,72 @@ def export_results(rows, json_path=None, csv_path=None):
 
 # ─── Main ────────────────────────────────────────────────────────────────────
 
-def _fetch_and_score(sym, tickers, btc_chg_24h, bnb_map=None):
+def _fetch_symbol_data_parallel(sym: str) -> dict:
+    """
+    Параллельная загрузка всех 8 источников данных для одного символа.
+    Использует мини-пул из 8 потоков — каждый запрос независим.
+    При ошибке конкретного запроса возвращает None/[] для него (не падает весь воркер).
+    Ускорение: 8 серийных запросов (~1.2s) → 8 параллельных (~0.3s).
+    """
+    tasks = {
+        "oi":     lambda: fetch_oi_history(sym, limit=50),
+        "k1h":    lambda: fetch_klines(sym, "60",  212),
+        "k4h":    lambda: fetch_klines(sym, "240", 212),
+        "kD":     lambda: fetch_klines(sym, "D",    52),
+        "fund":   lambda: fetch_funding_history(sym, limit=8),
+        "ls":     lambda: fetch_ls_ratio(sym),
+        "trades": lambda: fetch_recent_trades(sym, 1000),
+        "book":   lambda: fetch_orderbook(sym, 50),
+    }
+    _empty_klines = ([], [], [], [], [])
+    defaults = {
+        "oi": [], "k1h": _empty_klines, "k4h": _empty_klines,
+        "kD": _empty_klines, "fund": [], "ls": None,
+        "trades": [], "book": ([], []),
+    }
+    out = dict(defaults)
+    with ThreadPoolExecutor(max_workers=8) as _pool:
+        fmap = {_pool.submit(fn): name for name, fn in tasks.items()}
+        for fut in as_completed(fmap):
+            name = fmap[fut]
+            try:
+                out[name] = fut.result()
+            except Exception:
+                pass  # defaults already set
+    return out
+
+
+def _fetch_and_score(sym, tickers, btc_chg_24h, bnb_map=None,
+                     liq_stats=None, btc_chg_4h=0.0, score_weights=None,
+                     global_ctx=None):
     """
     Воркер для параллельного выполнения.
     Делает все 8 API-запросов для одного символа и возвращает scored row.
     bnb_map: кросс-биржевые данные Binance {sym: {funding, oi_change, ...}} (опционально).
+    liq_stats: ликвидации из local DB {sym: {long_usd, short_usd, total_usd}}.
+    btc_chg_4h: 4h% BTC для velocity-фильтра.
+    score_weights: {(setup, grade): multiplier} из outcome CSV.
+    global_ctx: макро-данные {spot_vol: dict, btc_dominance: float}.
     """
-    oi_hist      = fetch_oi_history(sym, limit=50)
-    op1h, hi1h, lo1h, cl1h, vol1h = fetch_klines(sym, "60",  212)
-    op4h, hi4h, lo4h, cl4h, vol4h = fetch_klines(sym, "240", 212)
-    opD,  hiD,  loD,  clD,  volD  = fetch_klines(sym, "D",    52)
-    funding_hist = fetch_funding_history(sym, limit=8)
-    ls_ratio     = fetch_ls_ratio(sym)
-    trades       = fetch_recent_trades(sym, 1000)   # реальный CVD: 1000 сделок
-    bids, asks   = fetch_orderbook(sym, 50)
+    _d = _fetch_symbol_data_parallel(sym)
+    oi_hist                        = _d["oi"]
+    op1h, hi1h, lo1h, cl1h, vol1h = _d["k1h"]
+    op4h, hi4h, lo4h, cl4h, vol4h = _d["k4h"]
+    opD,  hiD,  loD,  clD,  volD  = _d["kD"]
+    funding_hist                   = _d["fund"]
+    ls_ratio                       = _d["ls"]
+    trades                         = _d["trades"]
+    bids, asks                     = _d["book"]
+
+    # Perp/Spot volume ratio: вычисляем из spot_vol_map переданного через global_ctx
+    _gctx = global_ctx or {}
+    spot_vol_map = _gctx.get("spot_vol", {})
+    perp_turnover = float(tickers[sym].get("turnover24h", 0) or 0)
+    spot_turnover = spot_vol_map.get(sym, 0)
+    perp_spot_ratio = perp_turnover / spot_turnover if spot_turnover > 0 else None
+
+    # Передаём в score_symbol через расширенный контекст
+    sym_ctx = {**_gctx, "perp_spot_ratio": perp_spot_ratio}
 
     result = score_symbol(
         sym, tickers[sym], oi_hist,
@@ -3439,6 +4749,8 @@ def _fetch_and_score(sym, tickers, btc_chg_24h, bnb_map=None):
         opD,  hiD,  loD,  clD,  volD,
         ls_ratio, trades, bids, asks,
         funding_hist, btc_chg_24h,
+        liq_stats=liq_stats, btc_chg_4h=btc_chg_4h, score_weights=score_weights,
+        global_ctx=sym_ctx,
     )
 
     # Кросс-биржевое подтверждение (Binance)
@@ -3448,24 +4760,127 @@ def _fetch_and_score(sym, tickers, btc_chg_24h, bnb_map=None):
     return result
 
 
+def _load_cooldown() -> dict:
+    try:
+        with open(COOLDOWN_PATH) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_cooldown(cache: dict):
+    now_ts = time.time()
+    clean = {k: v for k, v in cache.items() if now_ts - v < 48 * 3600}
+    with open(COOLDOWN_PATH, "w") as f:
+        json.dump(clean, f)
+
+
+def _apply_cooldown(rows: list) -> tuple:
+    """Разделяет сигналы на прошедшие и заблокированные кулдауном.
+    Возвращает (passed, blocked)."""
+    cache    = _load_cooldown()
+    now_ts   = time.time()
+    threshold = COOLDOWN_HOURS * 3600
+    passed, blocked = [], []
+    for r in rows:
+        last_ts = cache.get(r["symbol"], 0)
+        if now_ts - last_ts >= threshold:
+            passed.append(r)
+        else:
+            hrs_left = (threshold - (now_ts - last_ts)) / 3600
+            blocked.append((r, hrs_left))
+    return passed, blocked
+
+
+def _record_cooldown(symbols: list):
+    cache = _load_cooldown()
+    now_ts = time.time()
+    for sym in symbols:
+        cache[sym] = now_ts
+    _save_cooldown(cache)
+
+
+def _passes_setup_tg_filter(r: dict) -> bool:
+    """Per-setup Telegram eligibility — WR audit 2026-04-24, N=2232 trades."""
+    setup = r.get("setup", "")
+    score = r["score"]
+
+    if setup == "range_sweep":
+        # Disabled: WR=25%, avg loss −21.89%, and sweep events expire before batch cron fires.
+        # sweep_watcher.py handles real-time detection.
+        return False
+
+    if setup == "breakout":
+        # Score correlation is inverted at 4h (100–150 is the dead zone):
+        # <100  → 39.2% WR  |  100-150 → 27.9% WR  |  >150 → 46.5% WR (24h hold)
+        return score < 100 or score > 150
+
+    min_sc = SETUP_TG_MIN_SCORE.get(setup, 80)
+    if r.get("choch_conviction"):
+        min_sc = max(60, min_sc - 30)
+    max_sc = SETUP_TG_MAX_SCORE.get(setup)
+    if score < min_sc:
+        return False
+    if max_sc is not None and score >= max_sc:
+        return False
+    return True
+
+
 def run_screener(top_n=50, min_score=35,
                  watchlist_size=5, deep_dive_size=3,
                  export_json=None, export_csv=None,
-                 obsidian=False):
+                 obsidian=False, send_channels=False,
+                 bypass_cooldown=False):
     print(f"\n{'='*72}")
     print(f"  Bybit Futures Screener  |  {datetime.now().strftime('%H:%M:%S  %d.%m.%Y')}")
     print(f"{'='*72}")
 
+    # Ждём сеть перед любыми API-запросами (защита от DNS-краша при запуске)
+    if not wait_for_network():
+        print("[ERROR] Нет сети — скан пропущен.")
+        return []
+
     print("Загружаю тикеры Bybit...")
     tickers = fetch_all_tickers()
-    symbols = sorted(
+    all_sorted = sorted(
         tickers.keys(),
         key=lambda s: float(tickers[s].get("turnover24h", 0)),
         reverse=True,
-    )[:top_n]
+    )
+    # Quality filter: исключаем памп/дамп (>50% за 24h) и низколиквидные (<$50M)
+    _before_qf = len(all_sorted)
+    symbols = [
+        s for s in all_sorted
+        if float(tickers[s].get("turnover24h", 0)) >= MIN_TURNOVER_24H
+        and abs(float(tickers[s].get("price24hPcnt", 0))) <= MAX_MOVE_24H_ABS
+        and s not in SYMBOL_BLACKLIST
+    ][:top_n]
+    _qf_removed = _before_qf - len(symbols) - max(0, len(all_sorted) - top_n - (_before_qf - len(symbols) - max(0, _before_qf - top_n, 0)), 0)
+    _extreme_move = [
+        s for s in all_sorted[:top_n * 2]
+        if abs(float(tickers[s].get("price24hPcnt", 0))) > MAX_MOVE_24H_ABS
+    ]
+    if _extreme_move:
+        print(f"[QF] Исключено {len(_extreme_move)} пар с |move|>50%: {', '.join(_extreme_move[:5])}{'…' if len(_extreme_move)>5 else ''}")
 
     # BTC 24h change для Relative Strength
     btc_chg_24h = float(tickers.get("BTCUSDT", {}).get("price24hPcnt", 0)) * 100
+
+    # BTC 4h velocity-фильтр + EMA позиция (для записи в resolved.csv)
+    btc_chg_4h = fetch_btc_4h_change()
+    btc_ema_pos = fetch_btc_4h_ema_position()
+    if abs(btc_chg_4h) > 0.1:
+        print(f"BTC 4h velocity: {btc_chg_4h:+.2f}%  EMA pos: {btc_ema_pos}")
+
+    # Ликвидации за последний час из локальной БД (liquidation_tracker пишет)
+    liq_stats = fetch_liquidation_stats(window_min=60)
+    if liq_stats:
+        print(f"Liquidation DB: {len(liq_stats)} символов с активностью за 60мин")
+
+    # Веса скоринга из исторических outcome'ов
+    score_weights = load_score_weights(min_samples=20)
+    if score_weights:
+        print(f"Score weights из outcomes: {len(score_weights)} бакетов")
 
     # Fear & Greed (одиночный запрос, не зависит от пар)
     fg_value, fg_label = fetch_fear_greed()
@@ -3479,6 +4894,62 @@ def run_screener(top_n=50, min_score=35,
         print(f"Лучшее время для: {'  '.join(session_info['best_for'])}")
 
     print(f"Анализирую {len(symbols)} пар | BTC 24h: {btc_chg_24h:+.2f}%\n")
+
+    # Spot volume map для perp/spot ratio (один запрос, не параллельный)
+    spot_vol_map: dict = {}
+    try:
+        spot_result = get(f"{BASE}/v5/market/tickers", {"category": "spot"})
+        for t in (spot_result.get("list") or []):
+            s = t.get("symbol", "")
+            if s.endswith("USDT"):
+                spot_vol_map[s] = float(t.get("turnover24h", 0) or 0)
+        print(f"Spot volume: {len(spot_vol_map)} пар")
+    except Exception as _e:
+        print(f"[spot vol] Пропущен: {_e}")
+
+    # BTC Dominance (CoinGecko global, кэш 15 мин)
+    btc_dominance = None
+    if _FD_AVAILABLE:
+        try:
+            btc_dominance = _fd.get_btc_dominance()
+            if btc_dominance is not None:
+                season = "BTC season" if btc_dominance > 52 else ("Alt season" if btc_dominance < 47 else "нейтр")
+                print(f"BTC Dominance: {btc_dominance:.1f}%  [{season}]")
+        except Exception:
+            pass
+
+    # Instruments-info batch: возраст листинга каждого символа (один HTTP-запрос)
+    listing_ts_map: dict = {}
+    try:
+        _inst_resp = get(f"{BASE}/v5/market/instruments-info",
+                         {"category": "linear", "limit": 1000})
+        for _inst in (_inst_resp.get("list") or []):
+            _s = _inst.get("symbol", "")
+            _lt = _inst.get("launchTime")
+            if _s and _lt:
+                listing_ts_map[_s] = int(_lt)
+        print(f"Instruments info: {len(listing_ts_map)} символов (возраст листинга)")
+    except Exception as _e:
+        print(f"[instruments-info] Пропущен: {_e}")
+
+    # Социальный сентимент: CryptoPanic + LunarCrush (если есть ключи)
+    social_ctx: dict = {}
+    if _FD_AVAILABLE:
+        try:
+            social_ctx = _fd.get_social_context(symbols)
+            if social_ctx:
+                print(f"Социальный сентимент: {len(social_ctx)} монет (CryptoPanic/LunarCrush)")
+        except Exception as _e:
+            print(f"[social] Пропущен: {_e}")
+
+    # Единый контейнер глобального контекста → передаётся в каждый воркер
+    global_ctx = {
+        "spot_vol":       spot_vol_map,
+        "btc_dominance":  btc_dominance,
+        "btc_ema_pos":    btc_ema_pos,
+        "listing_ts_map": listing_ts_map,
+        "social_ctx":     social_ctx,
+    }
 
     # Binance кросс-подтверждение (один bulk-запрос + parallel OI)
     bnb_map = {}
@@ -3499,7 +4970,8 @@ def run_screener(top_n=50, min_score=35,
     completed = 0
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         futures = {
-            pool.submit(_fetch_and_score, sym, tickers, btc_chg_24h, bnb_map): sym
+            pool.submit(_fetch_and_score, sym, tickers, btc_chg_24h, bnb_map,
+                        liq_stats, btc_chg_4h, score_weights, global_ctx): sym
             for sym in symbols
         }
         for future in as_completed(futures):
@@ -3518,6 +4990,32 @@ def run_screener(top_n=50, min_score=35,
     print()  # новая строка после \r-прогресса
     if errors:
         print(f"⚠  Пропущено: {errors} пар")
+
+    # Alt breadth: % символов с бычьим D или 4H трендом (рыночный контекст)
+    if results:
+        _bull_count = sum(
+            1 for r in results
+            if r.get("d_htf") == "bull" or r.get("h4_htf") == "bull"
+        )
+        alt_breadth_pct = round(_bull_count / len(results) * 100, 1)
+        for r in results:
+            r["alt_breadth_pct"] = alt_breadth_pct
+        print(f"Alt breadth: {alt_breadth_pct}%  ({_bull_count}/{len(results)} в аптренде)")
+
+    # Помечаем монеты из CoinGecko trending (социальный хайп / нарратив)
+    if _FD_AVAILABLE:
+        try:
+            trend = _fd.get_trending(limit_coins=10)
+            trending_set = {c["symbol"] for c in trend.get("coins", [])}
+        except Exception:
+            trending_set = set()
+        for r in results:
+            base = r["symbol"].upper().replace("USDT", "").replace("PERP", "")
+            r["trending"] = base in trending_set
+            if r["trending"] and r.get("flags", "—") != "—":
+                r["flags"] = r["flags"] + " 🔥"
+            elif r["trending"]:
+                r["flags"] = "🔥"
 
     filtered = sorted(
         [r for r in results if r["score"] >= min_score],
@@ -3708,22 +5206,125 @@ def run_screener(top_n=50, min_score=35,
     elif obsidian and not _OBS_AVAILABLE:
         print("[Obsidian] Модуль obsidian_bridge.py не найден рядом со screener.py")
 
+    # ── Channel signal enrichment ─────────────────────────────────────────────
+    if _CH_AVAILABLE:
+        _ch.enrich_with_channel_signals(filtered)
+        _ch.enrich_with_news_impact(filtered)
+
+        # Hard-skip: критические новости против направления сетапа
+        blocked = [r for r in filtered if r.get("news_hard_block")]
+        if blocked:
+            for r in blocked:
+                print(f"[News-Block] {r['symbol']:10s} {r.get('setup','?'):10s} "
+                      f"причина: {r.get('news_hard_reason','')}")
+            filtered = [r for r in filtered if not r.get("news_hard_block")]
+            print(f"[News-Block] Отфильтровано: {len(blocked)} сетапов по критическим новостям")
+
+    # ── Setup quarantine: per-setup score gates from WR audit (2026-04-24) ──────
+    _tg_candidates = []
+    _quarantine_blocked = []
+    for _r in filtered:
+        if _passes_setup_tg_filter(_r):
+            _tg_candidates.append(_r)
+        else:
+            _quarantine_blocked.append(_r)
+
+    # Tag BOS/FVG signals with score >150: 24h WR=61.1% vs 36.6% baseline.
+    for _r in _tg_candidates:
+        if _r.get("setup") == "bos_fvg" and _r["score"] > 150:
+            _r["tg_24h_hold"] = True
+
+    if _quarantine_blocked:
+        print(f"[Quarantine] Заблокировано: {len(_quarantine_blocked)} сигналов по setup-score фильтру")
+        for _r in _quarantine_blocked:
+            print(f"  🚫 {_r['symbol']:12s} {_r.get('setup','?'):12s} score={_r['score']}")
+
+    # ── Time gate: фильтр плохих часов ────────────────────────────────────────
+    _utc_hour = datetime.utcnow().hour
+    if bypass_cooldown:
+        print(f"[TimeGate] bypass_cooldown=True — временной фильтр пропущен")
+    elif _utc_hour in BAD_SIGNAL_HOURS:
+        _before_tg = len(_tg_candidates)
+        _tg_candidates = [r for r in _tg_candidates if r["score"] >= BAD_HOUR_MIN_SCORE]
+        _tg_blocked_time = _before_tg - len(_tg_candidates)
+        if _tg_blocked_time:
+            print(f"[TimeGate] UTC {_utc_hour:02d}:xx — плохой час. "
+                  f"Заблокировано: {_tg_blocked_time} (score < {BAD_HOUR_MIN_SCORE}). "
+                  f"Осталось: {len(_tg_candidates)}")
+        else:
+            print(f"[TimeGate] UTC {_utc_hour:02d}:xx — плохой час, но все {len(_tg_candidates)} выше порога.")
+    elif _utc_hour in GOOD_SIGNAL_HOURS:
+        print(f"[TimeGate] UTC {_utc_hour:02d}:xx — хороший час ✓")
+
+    # ── Cooldown фильтр: 8h между сигналами по одной паре ─────────────────────
+    if bypass_cooldown:
+        _cd_blocked = []
+        print("[Cooldown] bypass_cooldown=True — фильтр пропущен (ручной запрос)")
+    else:
+        _tg_candidates, _cd_blocked = _apply_cooldown(_tg_candidates)
+        if _cd_blocked:
+            print(f"[Cooldown] Заблокировано: {len(_cd_blocked)} пар (< {COOLDOWN_HOURS}h с последнего сигнала)")
+            for _r, _hrs in _cd_blocked:
+                print(f"  ⏸ {_r['symbol']:12s}  score={_r['score']}  (через {_hrs:.1f}h)")
+
     # ── Telegram alerts ────────────────────────────────────────────────────────
     if _TG_AVAILABLE:
         tg_cfg = _tg.load_config()
         if tg_cfg.get("enabled") and tg_cfg.get("bot_token") and tg_cfg.get("chat_id"):
-            print("[TG] Отправляю отчёт в Telegram...")
-            _tg.send_report(
-                results=results,
-                filtered=filtered,
-                btc_chg_24h=btc_chg_24h,
-                session_info=session_info,
-                fg_value=fg_value,
-                fg_label=fg_label,
-                deep_dive_data=deep_dive_data,
-                cfg=tg_cfg,
+            if _tg_candidates:
+                print(f"[TG] Отправляю отчёт в Telegram ({len(_tg_candidates)} сигналов)...")
+                _tg.send_report(
+                    results=results,
+                    filtered=_tg_candidates,
+                    btc_chg_24h=btc_chg_24h,
+                    session_info=session_info,
+                    fg_value=fg_value,
+                    fg_label=fg_label,
+                    deep_dive_data=[d for d in deep_dive_data
+                                    if d[0]["symbol"] in {r["symbol"] for r in _tg_candidates}],
+                    cfg=tg_cfg,
+                )
+                _record_cooldown([r["symbol"] for r in _tg_candidates])
+                print("[TG] Готово.")
+            else:
+                print("[TG] Нет сигналов после фильтрации — пропускаем.")
+
+    # ── Bundled channel insights (свежий скан вместе с сетапами) ──────────────
+    if send_channels and _CH_AVAILABLE:
+        try:
+            print("[TG] Скан Telegram-каналов для инсайтов...")
+            ch_cfg = _ch.load_cfg()
+            if ch_cfg.get("api_id"):
+                import asyncio
+                channel_results = asyncio.run(_ch.scan_channels_async(ch_cfg))
+                _ch.save_cache(channel_results)
+                verified = _ch.cross_verify(channel_results)
+                _ch.send_insights(verified)
+                print("[TG] Инсайты каналов отправлены.")
+            else:
+                print("[TG] channel_reader не настроен — пропускаем.")
+        except Exception as _e:
+            print(f"[TG] Ошибка скана каналов: {_e}")
+
+    # ── AI Chart Analysis (Claude Vision + метрики скринера) ──────────────────
+    try:
+        import chart_analyzer as _ca
+        _ca_tg_cfg = _tg.load_config() if _TG_AVAILABLE else {}
+        _ca_token  = _ca_tg_cfg.get("bot_token")
+        _ca_cid    = _ca_tg_cfg.get("chat_id")
+        if _ca_token and _ca_cid and _tg_candidates:
+            # Сохраняем торговый план в кандидате для использования в анализе
+            for _r, _sigs, _verd, _bull, _bear, _plan in deep_dive_data:
+                _r["_trade_plan"] = _plan
+            print(f"[ChartAI] Запускаю AI Chart Analysis для топ-3...")
+            _ca.run_and_send(
+                candidates=_tg_candidates,
+                token=_ca_token,
+                chat_id=str(_ca_cid),
+                top_n=3,
             )
-            print("[TG] Готово.")
+    except Exception as _ca_err:
+        print(f"[ChartAI] Пропущен: {_ca_err}")
 
     # ── Outcome tracker ────────────────────────────────────────────────────────
     if _OT_AVAILABLE:
@@ -3731,10 +5332,14 @@ def run_screener(top_n=50, min_score=35,
         resolved = _ot.check_and_resolve(silent=True)
         if resolved:
             print(f"[Tracker] Закрыто исходов: {resolved} → outcome_tracker.py stats")
-        # Сохраняем текущие сигналы как pending
-        saved = _ot.save_pending(filtered, results)
-        if saved:
-            print(f"[Tracker] Сохранено {saved} сигналов для бэктеста")
+        # Сохраняем текущие сигналы как pending (кроме HARD_BLOCK часов — WR < 30%)
+        if _utc_hour in HARD_BLOCK_HOURS:
+            print(f"[HARD BLOCK] UTC {_utc_hour:02d}:xx — WR={'18' if _utc_hour==18 else '28'}% < 30%."
+                  f" Сигналы не сохранены в pending (не торговать этот час).")
+        else:
+            saved = _ot.save_pending(filtered, results)
+            if saved:
+                print(f"[Tracker] Сохранено {saved} сигналов для бэктеста")
 
     print(f"\nКандидатов: {len(filtered)} из {len(results)}  |  "
           f"min score: {min_score}  |  {datetime.now().strftime('%H:%M:%S')}\n")
@@ -3782,6 +5387,13 @@ def parse_args():
         default=False,
         help="Запустить мастер настройки Telegram и выйти.",
     )
+    parser.add_argument(
+        "--send-channels",
+        action="store_true",
+        default=False,
+        help="После отчёта запустить свежий скан Telegram-каналов и отправить "
+             "инсайты. Используется в авто-режиме раз в 4 часа.",
+    )
     return parser.parse_args()
 
 
@@ -3812,6 +5424,7 @@ def main():
         export_json=args.export_json,
         export_csv=args.export_csv,
         obsidian=args.obsidian,
+        send_channels=args.send_channels,
     )
 
 

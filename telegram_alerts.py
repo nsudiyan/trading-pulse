@@ -14,6 +14,7 @@ CLI:
 """
 
 import json
+import os
 import sys
 import time
 from datetime import datetime
@@ -22,11 +23,39 @@ from typing import Optional
 
 import requests
 
+try:
+    import free_data as _fd
+    _FD_AVAILABLE = True
+except ImportError:
+    _FD_AVAILABLE = False
+
 # ─────────────────────────────────────────────────────────────
 # Конфигурация
 # ─────────────────────────────────────────────────────────────
 
 CONFIG_PATH = Path(__file__).parent / "telegram_config.json"
+
+
+# ─── .env loader ─────────────────────────────────────────────────────────────
+
+def _load_dotenv():
+    dotenv_path = Path(__file__).parent / ".env"
+    if not dotenv_path.exists():
+        return
+    with open(dotenv_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip(); val = val.strip()
+            if val and val[0] in ('"', "'") and val[-1] == val[0]:
+                val = val[1:-1]
+            os.environ.setdefault(key, val)
+
+
+_load_dotenv()
+
 
 DEFAULT_CONFIG = {
     "bot_token": None,
@@ -44,19 +73,28 @@ DEFAULT_CONFIG = {
     "min_score_alert":  50,     # Только сигналы с score >= этого значения
     "min_pump_alert":   80,     # Только пампы с pump_score >= этого значения
     "max_symbols_tg":   5,      # Максимум символов в одном сообщении watchlist
+    "deposit_usd":      None,   # Депозит в USD для расчёта размера позиции (None = выкл)
+    "risk_per_trade":   0.01,   # Риск на сделку (1% по умолчанию)
 }
 
 TG_BASE = "https://api.telegram.org"
 
 
 def load_config() -> dict:
+    cfg = dict(DEFAULT_CONFIG)
     if CONFIG_PATH.exists():
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-        for k, v in DEFAULT_CONFIG.items():
-            cfg.setdefault(k, v)
-        return cfg
-    return dict(DEFAULT_CONFIG)
+            file_cfg = json.load(f)
+        cfg.update(file_cfg)
+    # Переменные окружения имеют приоритет над JSON-файлом
+    env_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    env_chat  = os.environ.get("TELEGRAM_CHAT_ID")
+    if env_token:
+        cfg["bot_token"] = env_token
+        cfg["enabled"]   = True
+    if env_chat:
+        cfg["chat_id"] = env_chat
+    return cfg
 
 
 def save_config(cfg: dict):
@@ -178,6 +216,70 @@ def format_snapshot(results: list, filtered: list, btc_chg_24h: float,
         lines.append(f"F&amp;G: {fg_emoji} <b>{fg_value}/100</b> [{fg_label}]  {fg_bar}")
     lines += [
         f"Funding avg: <b>{avg_fund:+.3f}%</b>  |  OI avg: <b>{avg_oi:+.1f}%</b>",
+    ]
+
+    # ── Внешние бесплатные источники ────────────────────────────────────
+    if _FD_AVAILABLE:
+        try:
+            etf = _fd.get_etf_flows()
+        except Exception:
+            etf = {}
+        etf_parts = []
+        for sym in ("btc", "eth"):
+            row = (etf or {}).get(sym)
+            if not row:
+                continue
+            flow = row["net_flow_m"]
+            arrow = "▲" if flow > 0 else ("▼" if flow < 0 else "·")
+            etf_parts.append(f"{sym.upper()} {arrow}{flow:+.0f}M$")
+        if etf_parts:
+            lines.append("ETF: " + "  ".join(etf_parts))
+
+        try:
+            opt_btc = _fd.get_options_context("BTC")
+        except Exception:
+            opt_btc = None
+        if opt_btc and opt_btc.get("max_pain") is not None:
+            mp = opt_btc["max_pain"]
+            pcr = opt_btc.get("pcr")
+            px = opt_btc.get("index_price") or 0
+            diff = ((mp - px) / px * 100) if px else 0
+            pcr_txt = f"PCR {pcr}" if pcr is not None else "PCR —"
+            lines.append(
+                f"BTC Opt: MaxPain <b>{mp:.0f}</b> ({diff:+.1f}%)  |  {pcr_txt}"
+            )
+
+        try:
+            trend = _fd.get_trending(limit_coins=7)
+        except Exception:
+            trend = {}
+        coins = trend.get("coins", [])
+        if coins:
+            names = " ".join(c["symbol"] for c in coins[:7])
+            lines.append(f"🔥 Trending: {names}")
+
+        try:
+            window = _fd.next_macro_window(minutes_before=60, minutes_after=30)
+        except Exception:
+            window = None
+        if window:
+            mu = window["minutes_until"]
+            when = f"через {mu:.0f} мин" if mu > 0 else f"{-mu:.0f} мин назад"
+            lines.append(
+                f"⚠ <b>МАКРО-ОКНО</b>: {window['title']} ({when}) — "
+                f"избегать входов"
+            )
+
+        try:
+            btc_dom = _fd.get_btc_dominance()
+        except Exception:
+            btc_dom = None
+        if btc_dom is not None:
+            dom_icon = "🔵" if btc_dom > 52 else ("🟢" if btc_dom < 47 else "⚪")
+            dom_label = "BTC season" if btc_dom > 52 else ("Alt season" if btc_dom < 47 else "нейтр")
+            lines.append(f"{dom_icon} BTC.d: <b>{btc_dom:.1f}%</b> [{dom_label}]")
+
+    lines += [
         f"",
         f"<b>Сигналы</b>  {len(filtered)} из {len(results)} пар",
         f"🟢 Лонг: {longs}  🔴 Шорт: {shorts}",
@@ -186,7 +288,9 @@ def format_snapshot(results: list, filtered: list, btc_chg_24h: float,
 
 
 def format_watchlist(filtered: list, max_symbols: int = 5,
-                     min_score: int = 50, direction: str = "long") -> str:
+                     min_score: int = 50, direction: str = "long",
+                     deposit_usd: Optional[float] = None,
+                     risk_per_trade: float = 0.01) -> str:
     """LONG или SHORT watchlist."""
     if direction == "long":
         candidates = [r for r in filtered
@@ -225,15 +329,19 @@ def format_watchlist(filtered: list, max_symbols: int = 5,
             entry_h = bfvg[0] or r["price"]
             stop    = entry_l - atr_abs * 0.65
             tp1     = r["price"] + atr_abs * 1.5
+            tp2     = r["price"] + atr_abs * 3.0
         else:
             sfvg = r.get("lvl_sfvg") or (None, None, None)
             entry_h = sfvg[0] or r["price"]
             entry_l = sfvg[1] or r["price"]
             stop    = entry_h + atr_abs * 0.65
             tp1     = r["price"] - atr_abs * 1.5
+            tp2     = max(r["price"] - atr_abs * 3.0, 0)
 
+        h24_tag   = "  📅<b>[24H HIGH CONVICTION]</b>" if r.get("tg_24h_hold") else ""
+        choch_tag = "  🔷<b>[CHoCH CONFIRMED]</b>" if r.get("choch_conviction") else ""
         lines.append(
-            f"{setu}{gem} <b>{sym}</b>  score={score}  [{grade}]"
+            f"{setu}{gem} <b>{sym}</b>  score={score}  [{grade}]{h24_tag}{choch_tag}"
         )
         lines.append(
             f"   Цена: <code>{price}</code>  |  "
@@ -243,11 +351,28 @@ def format_watchlist(filtered: list, max_symbols: int = 5,
             f"   Fund: <b>{fund:+.3f}%</b>  OI24h: {oi:+.1f}%"
             + (f"  RSI: {rsi:.0f}" if rsi else "")
         )
+        risk_pct = abs(entry_l - stop) / entry_l * 100 if entry_l > 0 else 0
         lines.append(
             f"   Entry: <code>{_fmt_price(entry_l)}</code>"
             f"  Stop: <code>{_fmt_price(stop)}</code>"
-            f"  TP1: <code>{_fmt_price(tp1)}</code>"
+            f"  ({risk_pct:.2f}%)"
         )
+        lines.append(
+            f"   TP1: <code>{_fmt_price(tp1)}</code>"
+            f"  TP2: <code>{_fmt_price(tp2)}</code>"
+        )
+
+        # Размер позиции (1% риска от депозита)
+        if deposit_usd and r["price"] > 0:
+            risk_usd   = deposit_usd * risk_per_trade
+            sl_dist    = abs(entry_l - stop) if abs(entry_l - stop) > 0 else atr_abs * 0.65
+            qty        = risk_usd / sl_dist if sl_dist > 0 else 0
+            pos_size   = qty * r["price"]
+            lev_approx = round(pos_size / deposit_usd, 1)
+            lines.append(
+                f"   💰 Размер: <b>{qty:.4g}</b> конт  "
+                f"(≈ ${pos_size:.0f}  |  ~{lev_approx}×)"
+            )
 
         # Ключевые флаги
         flags = []
@@ -265,6 +390,30 @@ def format_watchlist(filtered: list, max_symbols: int = 5,
         if whale != "—": flags.append(f"🐳{whale}")
         if flags:
             lines.append(f"   {' | '.join(flags)}")
+
+        # Подтверждение из Telegram каналов
+        conf     = r.get("channel_conf", [])
+        conflict = r.get("channel_conflict", [])
+        if conf:
+            src = "  ".join(f"@{c}" for c in conf[:3])
+            lines.append(f"   📡 <b>Канал:</b> {_esc(src)}")
+        elif conflict:
+            src = "  ".join(f"@{c}" for c in conflict[:2])
+            lines.append(f"   📡 <i>Против: {_esc(src)}</i>")
+
+        # Влияние новостей на сетап
+        news_conf  = r.get("news_confirms", [])
+        news_risk  = r.get("news_risks", [])
+        delta      = r.get("news_score_delta", 0)
+        if news_conf:
+            best = news_conf[0]
+            lines.append(f"   {best['icon']} <b>{_esc(best['label'])}:</b> <i>{_esc(best['reason'][:65])}</i>")
+        if news_risk:
+            lines.append(f"   ⚠️ <i>Риск: {_esc(news_risk[0]['reason'][:65])}</i>")
+        if delta != 0:
+            sign = "+" if delta > 0 else ""
+            lines.append(f"   📰 score {sign}{delta} от новостей")
+
         lines.append("")
 
     return "\n".join(lines)
@@ -330,13 +479,23 @@ def format_pump_section(results: list, min_pump_score: int = 80,
 def format_sector_rotation(results: list) -> str:
     """Ротация секторов (краткая)."""
     SECTOR_MAP = {
-        "L1":     ["SOLUSDT","AVAXUSDT","TONUSDT","NEARUSDT","APTUSDT","SUIUSDT","SEIUSDT"],
-        "DeFi":   ["AAVEUSDT","CRVUSDT","MKRUSDT","UNIUSDT","SNXUSDT","COMPUSDT"],
-        "AI":     ["FETUSDT","RENDERUSDT","WLDUSDT","AGIXUSDT","TAOBYBIT","TAOUSDT"],
-        "Meme":   ["DOGEUSDT","SHIBUSDT","PEPEUSDT","FLOKIUSDT","BONKUSDT","1000PEPEUSDT","SHIB1000USDT"],
-        "L2":     ["ARBUSDT","OPUSDT","MATICUSDT","STRKUSDT","SCROLLUSDT"],
-        "RWA":    ["ONDOUSDT","CFGUSDT","POLIXUSDT","REALUSDT"],
-        "GameFi": ["AXSUSDT","SANDUSDT","GALAUSDT","IMXUSDT","BEAMUSDT"],
+        "L1":     ["SOLUSDT","AVAXUSDT","TONUSDT","NEARUSDT","APTUSDT","SUIUSDT","SEIUSDT",
+                   "MOVEUSDT","BERAAUSDT","MONADUSDT"],
+        "DeFi":   ["AAVEUSDT","CRVUSDT","MKRUSDT","UNIUSDT","SNXUSDT","COMPUSDT",
+                   "JUPUSDT","PENDLEUSDT","EIGENUSDT"],
+        "AI":     ["FETUSDT","RENDERUSDT","WLDUSDT","AGIXUSDT","TAOBYBIT","TAOUSDT",
+                   "AIUSDT","VIRTUSDT","ACTUSDT","CHESHIREUSDT"],
+        "Meme":   ["DOGEUSDT","SHIBUSDT","PEPEUSDT","FLOKIUSDT","BONKUSDT",
+                   "1000PEPEUSDT","SHIB1000USDT","WIFUSDT","POPCATUSDT",
+                   "MOODENGUSDT","GOATUSDT","BRETTUSDT","NEIROCTOBYBIT"],
+        "L2":     ["ARBUSDT","OPUSDT","MATICUSDT","STRKUSDT","SCROLLUSDT",
+                   "ZKUSDT","WUSDT","PYTHUSD"],
+        "RWA":    ["ONDOUSDT","CFGUSDT","POLIXUSDT","REALUSDT",
+                   "OPENUSDT","POLYXUSDT"],
+        "DePIN":  ["IOUSDT","HIVEUSDT","ALUSDT","XNETUSDT"],
+        "Perp":   ["HYPEUSDT","DYDXUSDT","GMXUSDT","SNSUSDT"],
+        "LST":    ["ENAUSDT","ETHFIUSDT","RETHUSDT","SFRXETHUSDT"],
+        "GameFi": ["AXSUSDT","SANDUSDT","GALAUSDT","IMXUSDT","BEAMUSDT","RONUSDT"],
         "ETH":    ["ETHUSDT","STETHUSDT"],
         "BTC":    ["BTCUSDT"],
     }
@@ -381,7 +540,9 @@ def format_sector_rotation(results: list) -> str:
 
 
 def format_deep_dive(r: dict, signals: list, verdict: str,
-                     bull: int, bear: int, plan: dict) -> str:
+                     bull: int, bear: int, plan: dict,
+                     deposit_usd: Optional[float] = None,
+                     risk_per_trade: float = 0.01) -> str:
     """Deep dive по одному символу."""
     sym   = r["symbol"]
     score = r["score"]
@@ -400,20 +561,38 @@ def format_deep_dive(r: dict, signals: list, verdict: str,
 
     # Торговый план
     if plan.get("side") != "wait":
-        el = _fmt_price(plan.get("entry_low", 0))
-        eh = _fmt_price(plan.get("entry_high", 0))
-        st = _fmt_price(plan.get("stop", 0))
-        t1 = _fmt_price(plan.get("tp1", 0))
-        t2 = _fmt_price(plan.get("tp2", 0))
-        rr = plan.get("rr", 0)
-        lines += [
+        el  = plan.get("entry_low",  0)
+        eh  = plan.get("entry_high", 0)
+        st  = _fmt_price(plan.get("stop", 0))
+        t1  = _fmt_price(plan.get("tp1", 0))
+        t2  = _fmt_price(plan.get("tp2", 0))
+        rr  = plan.get("rr", 0)
+        # Если вход точечный (цена уже в зоне) — показываем "СЕЙЧАС", иначе диапазон
+        if abs(el - eh) / max(eh, 1e-9) < 0.001:
+            entry_str = f"СЕЙЧАС  <code>{_fmt_price(eh)}</code>"
+        else:
+            entry_str = f"<code>{_fmt_price(el)} .. {_fmt_price(eh)}</code>"
+        plan_lines = [
             f"📌 <b>ПЛАН</b>",
-            f"   Entry: <code>{el} .. {eh}</code>",
+            f"   Entry: {entry_str}",
             f"   Stop:  <code>{st}</code>",
             f"   TP1:   <code>{t1}</code>  TP2: <code>{t2}</code>",
             f"   R:R: <b>{rr:.2f}</b>",
-            "",
         ]
+        # Размер позиции (1% риска)
+        if deposit_usd and r.get("price", 0) > 0:
+            sl_dist = abs(plan.get("entry_low", r["price"]) - plan.get("stop", r["price"]))
+            if sl_dist > 0:
+                risk_usd  = deposit_usd * risk_per_trade
+                qty       = risk_usd / sl_dist
+                pos_size  = qty * r["price"]
+                lev_approx = round(pos_size / deposit_usd, 1)
+                plan_lines.append(
+                    f"   💰 Размер: <b>{qty:.4g}</b> конт  "
+                    f"(≈ ${pos_size:.0f}  |  ~{lev_approx}×)"
+                )
+        plan_lines.append("")
+        lines += plan_lines
 
     # Топ сигналы
     LONG_SIGNALS  = [s for s in signals if s[2] == "ЛОНГ"][:5]
@@ -433,6 +612,29 @@ def format_deep_dive(r: dict, signals: list, verdict: str,
             short_expl = expl[:70] + "…" if len(expl) > 70 else expl
             lines.append(f"  ▼ <b>{_esc(metric)}</b>: {_esc(val)}")
             lines.append(f"    <i>{_esc(short_expl)}</i>")
+
+    # Подтверждение из Telegram каналов
+    conf     = r.get("channel_conf", [])
+    conflict = r.get("channel_conflict", [])
+    if conf:
+        src = "  ".join(f"@{c}" for c in conf[:3])
+        lines.append(f"📡 Канал подтверждает: <b>{_esc(src)}</b>")
+    elif conflict:
+        src = "  ".join(f"@{c}" for c in conflict[:2])
+        lines.append(f"📡 <i>Канал против: {_esc(src)}</i>")
+
+    # Влияние новостей на сетап
+    news_conf  = r.get("news_confirms", [])
+    news_risk  = r.get("news_risks", [])
+    delta      = r.get("news_score_delta", 0)
+    if news_conf:
+        best = news_conf[0]
+        lines.append(f"📰 <b>{_esc(best['icon'])} {_esc(best['label'])}:</b> <i>{_esc(best['reason'])}</i>")
+    if news_risk:
+        lines.append(f"⚠️ <b>Риск от новостей:</b> <i>{_esc(news_risk[0]['reason'])}</i>")
+    if delta != 0:
+        sign = "+" if delta > 0 else ""
+        lines.append(f"📰 <b>Score скорректирован:</b> {sign}{delta} (от новостей)")
 
     lines.append("")
     lines.append(f"⛔ Инвалидация: <i>{plan.get('invalidation', '—')}</i>")
@@ -611,8 +813,20 @@ def _conviction_score(r: dict, fg_value: Optional[int]) -> tuple:
         elif not bull_side and fg_value >= 60:
             pts += 5
 
+    # ── 12. Ликвидации (подтверждение давления) ──────────────── max 8
+    liq_short = r.get("liq_short_usd", 0) or 0
+    liq_long  = r.get("liq_long_usd",  0) or 0
+    if bull_side and liq_short >= 500_000:
+        pts += 8; reasons.append(f"LIQ${liq_short/1e3:.0f}K↑")
+    elif bull_side and liq_short >= 150_000:
+        pts += 4
+    elif not bull_side and liq_long >= 500_000:
+        pts += 8; reasons.append(f"LIQ${liq_long/1e3:.0f}K↓")
+    elif not bull_side and liq_long >= 150_000:
+        pts += 4
+
     # Нормализация 0-95 (100% не существует в трейдинге)
-    MAX_PTS = 15 + 18 + 12 + 12 + 13 + 8 + 7 + 7 + 8 + 16 + 10   # = 126
+    MAX_PTS = 15 + 18 + 12 + 12 + 13 + 8 + 7 + 7 + 8 + 16 + 10 + 8   # = 134
     pct = min(int(pts / MAX_PTS * 100), 95)
 
     return pct, reasons[:5]
@@ -674,6 +888,7 @@ def format_top_setups(
             stop  = max(entry - buf, 0)
             sfvg_top, sfvg_bot, _ = r.get("lvl_sfvg") or (None, None, None)
             tp1   = sfvg_top if (sfvg_top and sfvg_top > price) else price + atr_abs * 1.8
+            tp2   = entry + 2 * (tp1 - entry)
             side_icon = "🟢"; side_txt = "ЛОНГ"
         else:
             sfvg_top, sfvg_bot, _ = r.get("lvl_sfvg") or (None, None, None)
@@ -681,24 +896,32 @@ def format_top_setups(
             stop  = entry + buf
             bfvg_top, bfvg_bot, _ = r.get("lvl_bfvg") or (None, None, None)
             tp1   = bfvg_bot if (bfvg_bot and bfvg_bot < price) else price - atr_abs * 1.8
+            tp2   = max(entry - 2 * (entry - tp1), 0)
             side_icon = "🔴"; side_txt = "ШОРТ"
 
-        if stop != entry:
-            rr = abs(tp1 - entry) / abs(stop - entry)
+        risk_dist = abs(entry - stop)
+        if risk_dist > 0:
+            rr       = abs(tp1 - entry) / risk_dist
+            risk_pct = risk_dist / entry * 100 if entry > 0 else 0
         else:
-            rr = 0.0
+            rr       = 0.0
+            risk_pct = 0.0
 
         se       = SETUP_ICON.get(setup, "📊")
         sn       = SETUP_NAME.get(setup, setup)
-        in_zone  = (r.get("in_bfvg") or r.get("in_bob")) if bull else (r.get("in_sfvg") or r.get("in_sob"))
-        now_tag  = "  ⚡<b>СЕЙЧАС</b>" if in_zone else ""
+        in_zone   = (r.get("in_bfvg") or r.get("in_bob")) if bull else (r.get("in_sfvg") or r.get("in_sob"))
+        now_tag   = "  ⚡<b>СЕЙЧАС</b>" if in_zone else ""
+        h24_tag   = "  📅<b>[24H HIGH CONVICTION]</b>" if r.get("tg_24h_hold") else ""
+        choch_tag = "  🔷<b>[CHoCH CONFIRMED]</b>" if r.get("choch_conviction") else ""
 
         lines += [
-            f"{i}. {se}{side_icon} <b>{_esc(sym)}</b>  [{sn}]  score={score}{now_tag}",
+            f"{i}. {se}{side_icon} <b>{_esc(sym)}</b>  [{sn}]  score={score}{now_tag}{h24_tag}{choch_tag}",
             f"   Убеждённость: <b>{conv}%</b>  {bar}",
             f"   Entry <code>{_fmt_price(entry)}</code>"
             f"  Stop <code>{_fmt_price(stop)}</code>"
-            f"  TP1 <code>{_fmt_price(tp1)}</code>"
+            f"  ({risk_pct:.2f}%)",
+            f"   TP1 <code>{_fmt_price(tp1)}</code>"
+            f"  TP2 <code>{_fmt_price(tp2)}</code>"
             f"  R:R <b>{rr:.1f}</b>",
         ]
         if reasons:
@@ -736,10 +959,23 @@ def send_report(
     if not cfg.get("enabled") or not cfg.get("bot_token") or not cfg.get("chat_id"):
         return
 
-    token   = cfg["bot_token"]
-    min_sc  = cfg.get("min_score_alert", 50)
-    min_ps  = cfg.get("min_pump_alert", 80)
-    max_sym = cfg.get("max_symbols_tg", 5)
+    token        = cfg["bot_token"]
+    min_sc       = cfg.get("min_score_alert", 50)
+    min_ps       = cfg.get("min_pump_alert", 80)
+    max_sym      = cfg.get("max_symbols_tg", 5)
+    deposit_usd  = cfg.get("deposit_usd") or None
+    risk_per_tr  = float(cfg.get("risk_per_trade", 0.01))
+
+    # Макро-фильтр: если в окне [event-30min ; event+15min] — только snapshot
+    # с предупреждением, без watchlist/deep-dive/pump. Управляется alert_macro_blackout.
+    in_macro_blackout = False
+    if _FD_AVAILABLE and cfg.get("alert_macro_blackout", True):
+        try:
+            win = _fd.next_macro_window(minutes_before=30, minutes_after=15)
+        except Exception:
+            win = None
+        if win:
+            in_macro_blackout = True
 
     # Все получатели: основной + дополнительные (группы и т.д.)
     all_targets: list[str] = [str(cfg["chat_id"])]
@@ -755,29 +991,33 @@ def send_report(
         m = format_snapshot(results, filtered, btc_chg_24h, session_info, fg_value, fg_label)
         if m: messages.append(m)
 
-    if cfg.get("send_sector"):
+    if cfg.get("send_sector") and not in_macro_blackout:
         m = format_sector_rotation(results)
         if m: messages.append(m)
 
-    if cfg.get("send_watchlist"):
-        m = format_watchlist(filtered, max_sym, min_sc, "long")
+    if cfg.get("send_watchlist") and not in_macro_blackout:
+        m = format_watchlist(filtered, max_sym, min_sc, "long",
+                             deposit_usd=deposit_usd, risk_per_trade=risk_per_tr)
         if m: messages.append(m)
-        m = format_watchlist(filtered, max_sym, min_sc, "short")
+        m = format_watchlist(filtered, max_sym, min_sc, "short",
+                             deposit_usd=deposit_usd, risk_per_trade=risk_per_tr)
         if m: messages.append(m)
 
-    if cfg.get("send_deep_dive") and deep_dive_data:
+    if cfg.get("send_deep_dive") and deep_dive_data and not in_macro_blackout:
         for r, signals, verdict, bull, bear, plan in deep_dive_data:
             if r.get("score", 0) >= min_sc:
-                m = format_deep_dive(r, signals, verdict, bull, bear, plan)
+                m = format_deep_dive(r, signals, verdict, bull, bear, plan,
+                                     deposit_usd=deposit_usd, risk_per_trade=risk_per_tr)
                 if m: messages.append(m)
 
-    if cfg.get("send_pump"):
+    if cfg.get("send_pump") and not in_macro_blackout:
         m = format_pump_section(results, min_ps, max_sym)
         if m: messages.append(m)
 
-    # Топ сетапов по убеждённости — итоговый блок
-    m = format_top_setups(filtered, fg_value, top_n=5)
-    if m: messages.append(m)
+    # Топ сетапов — тоже не шлём в макро-окне (соблазн войти прямо перед релизом)
+    if not in_macro_blackout:
+        m = format_top_setups(filtered, fg_value, top_n=5)
+        if m: messages.append(m)
 
     messages.append(f"✅ <b>Готово</b>  {datetime.now().strftime('%H:%M:%S')}")
 
