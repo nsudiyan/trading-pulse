@@ -1947,6 +1947,9 @@ def score_symbol(symbol, ticker, oi_hist,
     _cp       = _social.get("cryptopanic", {})    # {score, hot, titles}
     _lc       = _social.get("lunarcrush", {})     # {galaxy_score, alt_rank, sentiment}
 
+    # CoinGecko trending — пре-загружен в run_screener (бесплатно, без API-ключа)
+    _is_trending = _base_sym in (_ctx.get("trending_symbols") or set())
+
     # Средний объём за 7 завершённых дней (USD)
     avg_vol_7d_usd = None
     if len(volD) >= 8 and len(clD) >= 8:
@@ -2005,9 +2008,11 @@ def score_symbol(symbol, ticker, oi_hist,
     elif oi_change < -5:
         s1 += 14; n1.append(f"OI{oi_change:.1f}%")
 
-    # OI Divergence: шорты закрываются у дна = разворот вверх
-    if oi_div == "bull_div":
+    # OI Divergence: шорты закрываются у дна = разворот вверх (только у дна)
+    if oi_div == "bull_div" and price_pos < 0.35:
         s1 += 18; n1.append("OI_div↑")
+    elif oi_div == "bull_div":
+        s1 += 8;  n1.append("OI_div↑")  # вне дна — слабее
     elif oi_div == "strong_bull":
         s1 += 8;  n1.append("OI_bull")
     elif oi_div == "bear_div":
@@ -2039,16 +2044,20 @@ def score_symbol(symbol, ticker, oi_hist,
     elif bull_mtf == 1:
         s1 += 10; n1.append("MTF1")
 
-    # Цена В FVG/OB прямо сейчас
-    if in_bull_fvg:
+    # Цена В FVG/OB прямо сейчас — полный бонус только у дна (price_pos < 0.40)
+    if in_bull_fvg and price_pos < 0.40:
         s1 += 18; n1.append("В FVG↑!")
+    elif in_bull_fvg:
+        s1 += 9;  n1.append("В FVG↑(mid)")  # зона, но не у дна
     elif bull_fvg_1h and bull_fvg_1h[0]["dist_pct"] < 1.5:
         s1 += 10; n1.append(f"FVG↑{bull_fvg_1h[0]['dist_pct']:.1f}%")
     elif bull_fvg_1h and bull_fvg_1h[0]["dist_pct"] < 3.0:
         s1 += 5
 
-    if in_bull_ob:
+    if in_bull_ob and price_pos < 0.40:
         s1 += 18; n1.append("В OB↑!")
+    elif in_bull_ob:
+        s1 += 9;  n1.append("В OB↑(mid)")  # зона, но не у дна
     elif bull_ob_1h and bull_ob_1h[0]["dist_pct"] < 1.5:
         s1 += 10; n1.append(f"OB↑{bull_ob_1h[0]['dist_pct']:.1f}%")
     elif bull_ob_1h and bull_ob_1h[0]["dist_pct"] < 3.0:
@@ -2112,6 +2121,10 @@ def score_symbol(symbol, ticker, oi_hist,
     # CHoCH↑_1H: смена структуры на 1H — сильнейший предиктор (WR=55.3%, +14.3pp vs baseline)
     if choch_1h == "bull_choch":
         s1 += 25; n1.append("CHoCH↑1H!")
+
+    # CoinGecko trending + дно = социальный хайп подтверждает разворот (бесплатно, без ключа)
+    if _is_trending and price_pos < 0.40:
+        s1 += 10; n1.append("trending🔥")
 
     scores["squeeze"] = s1
     notes["squeeze"]  = ", ".join(n1) or "—"
@@ -2512,6 +2525,14 @@ def score_symbol(symbol, ticker, oi_hist,
     elif liq_short_usd >= 300_000:
         s4 += 10; n4.append(f"LIQ_short ${liq_short_usd/1e3:.0f}K")
 
+    # P1.3: FOMO-штраф — движение уже идёт, поздний вход (WR audit: >150 = 27.9% при 4h)
+    if price_pos > 0.80 and vol_ratio > 2.0 and rs_btc is not None and rs_btc > 2.0:
+        s4 -= 25; n4.append("FOMO⚠")
+
+    # CoinGecko trending + ATR compression = хайп + пружина = pre-pump сигнал
+    if _is_trending and atr_compression < 0.65:
+        s4 += 12; n4.append("trending+comp🔥")
+
     scores["breakout"] = s4
     notes["breakout"]  = ", ".join(n4) or "—"
 
@@ -2524,11 +2545,20 @@ def score_symbol(symbol, ticker, oi_hist,
     # ═══════════════════════════════════════════════════════════════════════════
     s5, n5 = 0, []
 
-    # Funding (главное топливо распродажи)
+    # Funding (главное топливо распродажи) — вес зависит от позиции цены
+    # P1.4: полный бонус только у вершины диапазона, иначе не валидный шорт
     if funding > 0.01:
-        s5 += 35; n5.append(f"fund={funding:.3f}%")
+        if price_pos > 0.60:
+            s5 += 35; n5.append(f"fund={funding:.3f}%")
+        elif price_pos > 0.40:
+            s5 += 18; n5.append(f"fund={funding:.3f}%")
+        else:
+            s5 += 5;  n5.append(f"fund={funding:.3f}%@low")  # фандинг+ у дна = слабый шорт
     elif funding > 0:
-        s5 += 22; n5.append(f"fund={funding:.3f}%")
+        if price_pos > 0.50:
+            s5 += 22; n5.append(f"fund={funding:.3f}%")
+        else:
+            s5 += 10; n5.append(f"fund={funding:.3f}%")
     elif funding > -0.005:
         s5 += 8;  n5.append("fund≈0")
 
@@ -3560,6 +3590,67 @@ def interpret_signals(r):
     elif sme > r.get("mtf_s", 0) and sme >= 2:
         add("MTF+1D", f"{sme} bear", "ШОРТ",
             f"MTF Extended {sme} медвежьих совпадений включая 1D.")
+
+    # ── Binance кросс-биржевые сигналы ────────────────────────────────────────
+    bnb_fund = r.get("bnb_fund")
+    if bnb_fund is not None:
+        bybit_fund = r.get("fund_%", 0.0)
+        if bybit_fund != 0 and bnb_fund != 0 and bybit_fund * bnb_fund > 0:
+            if bybit_fund < -0.05 and bnb_fund < -0.05:
+                add("Binance Funding", f"Bnb{bnb_fund:+.4f}%", "ЛОНГ",
+                    "Оба рынка (Bybit+Binance) с сильным отрицательным funding → "
+                    "двойное топливо для шорт-сквиза. Наивысшее подтверждение сигнала.")
+            elif bybit_fund > 0.05 and bnb_fund > 0.05:
+                add("Binance Funding", f"Bnb{bnb_fund:+.4f}%", "ШОРТ",
+                    "Оба рынка перегреты лонгами → двойной риск дампа.")
+            else:
+                add("Binance Funding", f"Bnb{bnb_fund:+.4f}%", "ИНФО",
+                    "Funding на Binance подтверждает направление Bybit → сигнал надёжнее.")
+        elif bnb_fund is not None:
+            add("Binance Funding", f"Bnb{bnb_fund:+.4f}%", "ЖДАТЬ",
+                "Binance funding расходится с Bybit → кросс-подтверждения нет, осторожно.")
+
+    # ── Binance ордербук / тейкер давление (из get_binance_enrichment) ────────
+    book_imb = r.get("book_imbalance")
+    if book_imb is not None:
+        if book_imb > 0.25:
+            add("Binance Ордербук", f"{book_imb:+.3f}", "ЛОНГ",
+                f"Бидов значительно больше ({book_imb*100:.0f}% перевес) — "
+                f"покупатели стоят плотно в стакане Binance.")
+        elif book_imb < -0.25:
+            add("Binance Ордербук", f"{book_imb:+.3f}", "ШОРТ",
+                f"Офферов значительно больше ({abs(book_imb)*100:.0f}% перевес) — "
+                f"продавцы доминируют в стакане Binance.")
+        else:
+            add("Binance Ордербук", f"{book_imb:+.3f}", "ЖДАТЬ",
+                "Стакан Binance сбалансирован — нет чёткого давления с одной стороны.")
+
+    taker_ratio = r.get("taker_buy_sell_ratio")
+    if taker_ratio is not None:
+        if taker_ratio > 1.4:
+            add("Binance Тейкер", f"×{taker_ratio:.2f}", "ЛОНГ",
+                f"Тейкеры на Binance агрессивно покупают (ratio={taker_ratio:.2f}) — "
+                f"рыночный спрос превышает предложение.")
+        elif taker_ratio < 0.7:
+            add("Binance Тейкер", f"×{taker_ratio:.2f}", "ШОРТ",
+                f"Тейкеры на Binance агрессивно продают (ratio={taker_ratio:.2f}) — "
+                f"рыночное давление вниз.")
+        else:
+            add("Binance Тейкер", f"×{taker_ratio:.2f}", "ЖДАТЬ",
+                "Тейкер давление нейтральное — покупки и продажи примерно равны.")
+
+    top_ls = r.get("top_ls_ratio")
+    if top_ls is not None:
+        if top_ls < 0.7:
+            add("Binance Топ-трейдеры", f"L/S={top_ls:.2f}", "ЛОНГ",
+                f"Топ-трейдеры Binance в основном в шорт (ratio={top_ls:.2f}<1) → "
+                f"при росте цены их будут давить → потенциальный сквиз.")
+        elif top_ls > 1.5:
+            add("Binance Топ-трейдеры", f"L/S={top_ls:.2f}", "ШОРТ",
+                f"Топ-трейдеры перегружены лонгами (ratio={top_ls:.2f}) → риск лонг-сквиза вниз.")
+        else:
+            add("Binance Топ-трейдеры", f"L/S={top_ls:.2f}", "ЖДАТЬ",
+                "Позиционирование топ-трейдеров нейтральное.")
 
     # ── Итог ─────────────────────────────────────────────────────────────────
     if bull > bear * 1.6:
@@ -4815,6 +4906,20 @@ def _passes_setup_tg_filter(r: dict) -> bool:
         # <100  → 39.2% WR  |  100-150 → 27.9% WR  |  >150 → 46.5% WR (24h hold)
         return score < 100 or score > 150
 
+    # P1.1: Squeeze mid-score (100–140) hard requirement gate.
+    # WR audit: 100–140 achieves only 42.0% WR (24h) vs 53.6% for <100 and 51.0% for >150.
+    # Require at least one strong confirmatory signal in this band.
+    if setup == "squeeze" and 100 <= score <= 140:
+        funding = r.get("fund_%", 0)
+        has_strong_signal = (
+            funding <= -0.05                           # high/extreme negative funding
+            or r.get("choch_1h") == "bull_choch"      # structure change confirmed
+            or r.get("liq_short_usd", 0) >= 300_000   # real liquidation fuel ($300K+)
+            or r.get("mtf_b", 0) >= 2                 # MTF confluence ≥ 2 zones
+        )
+        if not has_strong_signal:
+            return False
+
     min_sc = SETUP_TG_MIN_SCORE.get(setup, 80)
     if r.get("choch_conviction"):
         min_sc = max(60, min_sc - 30)
@@ -4942,13 +5047,37 @@ def run_screener(top_n=50, min_score=35,
         except Exception as _e:
             print(f"[social] Пропущен: {_e}")
 
+    # CoinGecko trending: загружаем ДО скоринга чтобы использовать в scoring
+    trending_symbols: set = set()
+    if _FD_AVAILABLE:
+        try:
+            _trend_raw = _fd.get_trending(limit_coins=10)
+            trending_symbols = {c["symbol"] for c in _trend_raw.get("coins", [])}
+            if trending_symbols:
+                print(f"CoinGecko trending: {', '.join(sorted(trending_symbols)[:7])}")
+        except Exception as _e:
+            print(f"[trending] Пропущен: {_e}")
+
+    # P1.6: Фильтр новых листингов (< 30 дней) — до параллельного скоринга
+    if listing_ts_map:
+        _now_ms = time.time() * 1000
+        _too_new = [s for s in symbols
+                    if listing_ts_map.get(s) is not None
+                    and (_now_ms - listing_ts_map[s]) / 86_400_000 < 30]
+        if _too_new:
+            print(f"[QF] Исключено {len(_too_new)} монет с листингом < 30 дней: "
+                  f"{', '.join(_too_new[:5])}{'…' if len(_too_new) > 5 else ''}")
+            _too_new_set = set(_too_new)
+            symbols = [s for s in symbols if s not in _too_new_set]
+
     # Единый контейнер глобального контекста → передаётся в каждый воркер
     global_ctx = {
-        "spot_vol":       spot_vol_map,
-        "btc_dominance":  btc_dominance,
-        "btc_ema_pos":    btc_ema_pos,
-        "listing_ts_map": listing_ts_map,
-        "social_ctx":     social_ctx,
+        "spot_vol":        spot_vol_map,
+        "btc_dominance":   btc_dominance,
+        "btc_ema_pos":     btc_ema_pos,
+        "listing_ts_map":  listing_ts_map,
+        "social_ctx":      social_ctx,
+        "trending_symbols": trending_symbols,
     }
 
     # Binance кросс-подтверждение (один bulk-запрос + parallel OI)
@@ -5002,20 +5131,14 @@ def run_screener(top_n=50, min_score=35,
             r["alt_breadth_pct"] = alt_breadth_pct
         print(f"Alt breadth: {alt_breadth_pct}%  ({_bull_count}/{len(results)} в аптренде)")
 
-    # Помечаем монеты из CoinGecko trending (социальный хайп / нарратив)
-    if _FD_AVAILABLE:
-        try:
-            trend = _fd.get_trending(limit_coins=10)
-            trending_set = {c["symbol"] for c in trend.get("coins", [])}
-        except Exception:
-            trending_set = set()
-        for r in results:
-            base = r["symbol"].upper().replace("USDT", "").replace("PERP", "")
-            r["trending"] = base in trending_set
-            if r["trending"] and r.get("flags", "—") != "—":
-                r["flags"] = r["flags"] + " 🔥"
-            elif r["trending"]:
-                r["flags"] = "🔥"
+    # Помечаем монеты из CoinGecko trending (trending_symbols уже загружен до скоринга)
+    for r in results:
+        base = r["symbol"].upper().replace("USDT", "").replace("PERP", "")
+        r["trending"] = base in trending_symbols
+        if r["trending"] and r.get("flags", "—") != "—":
+            r["flags"] = r["flags"] + " 🔥"
+        elif r["trending"]:
+            r["flags"] = "🔥"
 
     filtered = sorted(
         [r for r in results if r["score"] >= min_score],
@@ -5112,6 +5235,16 @@ def run_screener(top_n=50, min_score=35,
             "range_sweep": "Рейндж Sweep",
             "breakout":    "Breakout / Pre-Pump",
         }
+        # Обогащаем топ-кандидатов данными Binance (ордербук + тейкер) перед deep dive
+        if _FD_AVAILABLE:
+            for r in top_rows:
+                try:
+                    enrichment = _fd.get_binance_enrichment(r["symbol"])
+                    if enrichment:
+                        r.update(enrichment)
+                except Exception:
+                    pass
+
         for r in top_rows:
             signals, verdict, bull, bear = interpret_signals(r)
             plan = build_trade_plan(r)
