@@ -68,6 +68,9 @@ HARD_BLOCK_HOURS  = {18, 19}  # 18UTC=18% WR, 19UTC=17.5% WR (worst hour)
 BAD_HOUR_MIN_SCORE = 130
 # FIX 8: Saturday WR=24.5% vs Thursday WR=64.0% — поднимаем порог на 50%
 SATURDAY_MIN_SCORE = 195  # round(BAD_HOUR_MIN_SCORE * 1.5)
+# FINDING 7: Friday/Tuesday also show lower WR — moderate threshold increases (n=26/n=small, not hard block)
+FRIDAY_MIN_SCORE   = 169  # round(BAD_HOUR_MIN_SCORE * 1.3)
+TUESDAY_MIN_SCORE  = 150  # round(BAD_HOUR_MIN_SCORE * 1.15)
 
 # Per-setup Telegram score gates — WR audit 2026-04-24, N=2232 resolved trades.
 # Min score: signals below this are suppressed.
@@ -2003,15 +2006,19 @@ def score_symbol(symbol, ticker, oi_hist,
     elif funding < 0.005:
         s1 += 8;  n1.append("fund≈0")
 
-    # Экстремальный funding — мощный дополнительный триггер сквиза
+    # Экстремальный funding — FINDING 2: extreme_neg = сквиз УЖЕ произошёл → штраф
     if fund_extreme == "extreme_neg":
-        s1 += 25; n1.append("FUND_EXTREME!")   # < -0.08% — редкое событие
+        s1 -= 10; n1.append("FUND_EXTREME!")   # < -0.08% — сквиз скорее всего отработан
     elif fund_extreme == "high_neg":
         s1 += 14; n1.append("fund_high_neg")   # < -0.05% — сильное давление
     elif fund_extreme == "period_min":
         s1 += 8;  n1.append("fund_period_min") # минимум за ~3 дня
     elif fund_extreme in ("extreme_pos", "high_pos"):
         s1 -= 15; n1.append("fund_перегрет!")  # лонги перегреты = не время для сквиза
+
+    # Оптимальная зона funding: умеренно отрицательный (-0.03% до 0%) = сквиз ещё впереди
+    if -0.03 <= funding < 0:
+        s1 += 15; n1.append("fund_opt(-0.03→0)")
 
     # Funding trend: нарастающее давление
     if fund_trend == "declining":
@@ -2161,9 +2168,10 @@ def score_symbol(symbol, ticker, oi_hist,
         elif btc_dominance > 52:
             s1 -= 8;  n1.append(f"BTC.d={btc_dominance:.0f}%↑btc")
 
-    # CHoCH↑_1H: смена структуры на 1H — сильнейший предиктор (WR=55.3%, +14.3pp vs baseline)
+    # CHoCH↑_1H в СКВИЗЕ = импульс уже потрачен (WR -20.5pp, коэф. из train_model.py)
+    # FINDING 3: в bos_fvg/breakout CHoCH = позитив; в squeeze = отработан заранее → штраф
     if choch_1h == "bull_choch":
-        s1 += 25; n1.append("CHoCH↑1H!")
+        s1 -= 15; n1.append("CHoCH↑1H⚠")
 
     # CoinGecko trending + дно = социальный хайп подтверждает разворот (бесплатно, без ключа)
     if _is_trending and price_pos < 0.40:
@@ -5620,6 +5628,28 @@ def run_screener(top_n=50, min_score=35,
                   f"Осталось: {len(_tg_candidates)}")
         else:
             print(f"[TimeGate] Суббота — слабый WR, но все {len(_tg_candidates)} выше порога {SATURDAY_MIN_SCORE}.")
+    elif _utc_weekday == 4:
+        # FINDING 7: Friday lower WR (n=26, not hard block) — threshold × 1.3
+        _before_fri = len(_tg_candidates)
+        _tg_candidates = [r for r in _tg_candidates if r["score"] >= FRIDAY_MIN_SCORE]
+        _fri_blocked = _before_fri - len(_tg_candidates)
+        if _fri_blocked:
+            print(f"[TimeGate] Пятница — пониженный WR. "
+                  f"Заблокировано: {_fri_blocked} (score < {FRIDAY_MIN_SCORE}). "
+                  f"Осталось: {len(_tg_candidates)}")
+        else:
+            print(f"[TimeGate] Пятница — пониженный WR, но все {len(_tg_candidates)} выше порога {FRIDAY_MIN_SCORE}.")
+    elif _utc_weekday == 1:
+        # FINDING 7: Tuesday mild lower WR — threshold × 1.15
+        _before_tue = len(_tg_candidates)
+        _tg_candidates = [r for r in _tg_candidates if r["score"] >= TUESDAY_MIN_SCORE]
+        _tue_blocked = _before_tue - len(_tg_candidates)
+        if _tue_blocked:
+            print(f"[TimeGate] Вторник — умеренно пониженный WR. "
+                  f"Заблокировано: {_tue_blocked} (score < {TUESDAY_MIN_SCORE}). "
+                  f"Осталось: {len(_tg_candidates)}")
+        else:
+            print(f"[TimeGate] Вторник — пониженный WR, но все {len(_tg_candidates)} выше порога {TUESDAY_MIN_SCORE}.")
     elif _utc_hour in BAD_SIGNAL_HOURS:
         _before_tg = len(_tg_candidates)
         _tg_candidates = [r for r in _tg_candidates if r["score"] >= BAD_HOUR_MIN_SCORE]
