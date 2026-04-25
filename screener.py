@@ -63,9 +63,11 @@ GOOD_SIGNAL_HOURS = {1, 2, 5, 9, 10, 13, 15, 16, 20, 21}  # убран 14 (WR=36
 # Часы UTC с плохим WR (35-40%) — поднимаем порог score для TG
 BAD_SIGNAL_HOURS  = {12, 14, 17, 18, 19, 22, 23, 0}  # +12(38%), +14(36%)
 # Часы UTC с катастрофическим WR (< 30%) — жёсткий блок: не сохранять в pending.json
-HARD_BLOCK_HOURS  = {18, 22}  # 18UTC=18% WR, 22UTC=28.5% WR
+HARD_BLOCK_HOURS  = {18, 19}  # 18UTC=18% WR, 19UTC=17.5% WR (worst hour)
 # В плохие часы сигнал идёт в TG только если score >= BAD_HOUR_MIN_SCORE
 BAD_HOUR_MIN_SCORE = 130
+# FIX 8: Saturday WR=24.5% vs Thursday WR=64.0% — поднимаем порог на 50%
+SATURDAY_MIN_SCORE = 195  # round(BAD_HOUR_MIN_SCORE * 1.5)
 
 # Per-setup Telegram score gates — WR audit 2026-04-24, N=2232 resolved trades.
 # Min score: signals below this are suppressed.
@@ -1674,6 +1676,16 @@ def load_score_weights(min_samples: int = 20) -> dict:
         except Exception:
             pass
 
+    # Per-setup LR weights (TASK C): CHoCH has opposite sign per setup.
+    for _setup_name in ("bos_fvg", "breakout", "squeeze"):
+        _p = Path(__file__).parent / "calibration" / f"signal_weights_{_setup_name}.json"
+        if _p.exists():
+            try:
+                with open(_p, "r", encoding="utf-8") as _f:
+                    out[f"__signal_weights_{_setup_name}__"] = _json.load(_f)
+            except Exception:
+                pass
+
     return out
 
 
@@ -1959,6 +1971,16 @@ def score_symbol(symbol, ticker, oi_hist,
     # CoinGecko trending — пре-загружен в run_screener (бесплатно, без API-ключа)
     _is_trending = _base_sym in (_ctx.get("trending_symbols") or set())
 
+    # ── Weekly + 15m context (TASK A) ────────────────────────────────────────
+    _k1w  = _ctx.get("k1w",  ([], [], [], [], []))
+    _k15m = _ctx.get("k15m", ([], [], [], [], []))
+    op1w, hi1w, lo1w, cl1w, vol1w   = _k1w
+    op15m, hi15m, lo15m, cl15m, vol15m = _k15m
+    weekly_ctx  = compute_weekly_context(op1w, hi1w, lo1w, cl1w, price)
+    m15_ctx     = compute_15m_context(op15m, hi15m, lo15m, cl15m, price)
+    weekly_trend = weekly_ctx["weekly_trend"]
+    m15_trend    = m15_ctx["m15_trend"]
+
     # Средний объём за 7 завершённых дней (USD)
     avg_vol_7d_usd = None
     if len(volD) >= 8 and len(clD) >= 8:
@@ -2016,6 +2038,9 @@ def score_symbol(symbol, ticker, oi_hist,
         s1 += 25; n1.append(f"OI{oi_change:.1f}%")
     elif oi_change < -5:
         s1 += 14; n1.append(f"OI{oi_change:.1f}%")
+    # FIX 6: extreme OI build (>15%) at lows = speculative longs, not true bottom
+    if oi_change > 15:
+        s1 -= 10; n1.append(f"OI_ext+{oi_change:.0f}%!")
 
     # OI Divergence: шорты закрываются у дна = разворот вверх (только у дна)
     if oi_div == "bull_div" and price_pos < 0.35:
@@ -2045,9 +2070,13 @@ def score_symbol(symbol, ticker, oi_hist,
     elif daily_trend == "bull" or h4_trend == "bull":
         s1 += 8;  n1.append("HTF↑")
 
-    # MTF Confluence (КЛЮЧЕВОЙ СИГНАЛ)
-    if bull_mtf >= 3:
-        s1 += 25; n1.append(f"MTF{bull_mtf}!")
+    # MTF Confluence (КЛЮЧЕВОЙ СИГНАЛ) — tiered: fresh signal > saturated signal
+    if bull_mtf >= 5:
+        s1 += 10; n1.append(f"MTF{bull_mtf}!")
+    elif bull_mtf >= 4:
+        s1 += 20; n1.append(f"MTF{bull_mtf}!")
+    elif bull_mtf >= 3:
+        s1 += 30; n1.append(f"MTF{bull_mtf}!")
     elif bull_mtf >= 2:
         s1 += 18; n1.append(f"MTF{bull_mtf}")
     elif bull_mtf == 1:
@@ -2107,6 +2136,11 @@ def score_symbol(symbol, ticker, oi_hist,
     # RS vs BTC: опережение при дне
     if rs_btc is not None and rs_btc > 1.3 and price_pos < 0.40:
         s1 += 6; n1.append(f"RS{rs_btc:.1f}x")
+    # FIX 4: moderate RS (0-2x) = clean setup; extreme RS (>5x) = already pumped
+    if rs_btc is not None and 0 < rs_btc < 2:
+        s1 += 8; n1.append(f"RS{rs_btc:.2f}(mod)")
+    if rs_btc is not None and rs_btc > 5:
+        s1 -= 8; n1.append(f"RS{rs_btc:.1f}x(ext)")
 
     # Стенка ставок НИЖЕ цены = покупатели держат поддержку → топливо сквиза
     if len(bid_stack_sc) >= 2 and bid_wall_d <= 2.5:
@@ -2156,6 +2190,9 @@ def score_symbol(symbol, ticker, oi_hist,
         s2 += 15; n2.append(f"OI+{oi_change:.1f}%")
     elif oi_change > 4:
         s2 += 7;  n2.append(f"OI+{oi_change:.1f}%")
+    # FIX 6: extreme OI (>15%) = overcrowded; additive penalty (net +15 not +25)
+    if oi_change > 15:
+        s2 -= 10; n2.append(f"OI_ext+{oi_change:.0f}%!")
 
     # OI Divergence подтверждает направление
     if oi_div == "strong_bull":
@@ -2169,10 +2206,14 @@ def score_symbol(symbol, ticker, oi_hist,
     if ls_ratio and ls_ratio > 1.5:
         s2 += 10; n2.append(f"L/S={ls_ratio:.2f}")
 
-    # MTF Confluence
+    # MTF Confluence — tiered: fresh signal > saturated signal
     best_mtf = max(bull_mtf, bear_mtf)
-    if best_mtf >= 3:
-        s2 += 25; n2.append(f"MTF{best_mtf}!")
+    if best_mtf >= 5:
+        s2 += 10; n2.append(f"MTF{best_mtf}!")
+    elif best_mtf >= 4:
+        s2 += 20; n2.append(f"MTF{best_mtf}!")
+    elif best_mtf >= 3:
+        s2 += 30; n2.append(f"MTF{best_mtf}!")
     elif best_mtf >= 2:
         s2 += 18; n2.append(f"MTF{best_mtf}")
     elif best_mtf == 1:
@@ -2217,6 +2258,11 @@ def score_symbol(symbol, ticker, oi_hist,
     # RS vs BTC
     if rs_btc is not None and rs_btc > 1.5:
         s2 += 8; n2.append(f"RS{rs_btc:.1f}x")
+    # FIX 4: moderate RS (0-2x) = clean setup; extreme RS (>5x) = already pumped
+    if rs_btc is not None and 0 < rs_btc < 2:
+        s2 += 8; n2.append(f"RS{rs_btc:.2f}(mod)")
+    if rs_btc is not None and rs_btc > 5:
+        s2 -= 8; n2.append(f"RS{rs_btc:.1f}x(ext)")
 
     # CHoCH_1H: смена структуры подтверждает структурный пробой (WR=55.3%, +14.3pp)
     if choch_1h == "bull_choch":
@@ -2380,6 +2426,9 @@ def score_symbol(symbol, ticker, oi_hist,
         s4 += 12; n4.append("OI_div↑")
     elif oi_div == "strong_bear":
         s4 -= 10
+    # FIX 6: extreme OI build (>15%) = overextended setup
+    if oi_change > 15:
+        s4 -= 10; n4.append(f"OI_ext+{oi_change:.0f}%!")
 
     # 8. HTF: покупай в сторону тренда
     if trend_bull_aligned:
@@ -2392,6 +2441,11 @@ def score_symbol(symbol, ticker, oi_hist,
         s4 += 18; n4.append(f"RS{rs_btc:.1f}x!")
     elif rs_btc is not None and rs_btc > 1.3:
         s4 += 10; n4.append(f"RS{rs_btc:.1f}x")
+    # FIX 4: moderate RS (0-2x) = clean setup; extreme RS (>5x) = already pumped
+    if rs_btc is not None and 0 < rs_btc < 2:
+        s4 += 8; n4.append(f"RS{rs_btc:.2f}(mod)")
+    if rs_btc is not None and rs_btc > 5:
+        s4 -= 8; n4.append(f"RS{rs_btc:.1f}x(ext)")
 
     # 10. Funding нейтральный или отрицательный = место для роста
     if funding < -0.015:
@@ -2409,9 +2463,13 @@ def score_symbol(symbol, ticker, oi_hist,
     elif fund_extreme in ("extreme_pos", "high_pos"):
         s4 -= 12  # перегрев = высокий риск
 
-    # 11. MTF Confluence: структурная поддержка для роста
-    if bull_mtf >= 3:
-        s4 += 16; n4.append(f"MTF{bull_mtf}↑!")
+    # 11. MTF Confluence: структурная поддержка для роста — tiered
+    if bull_mtf >= 5:
+        s4 += 6;  n4.append(f"MTF{bull_mtf}↑!")
+    elif bull_mtf >= 4:
+        s4 += 13; n4.append(f"MTF{bull_mtf}↑!")
+    elif bull_mtf >= 3:
+        s4 += 20; n4.append(f"MTF{bull_mtf}↑!")
     elif bull_mtf >= 2:
         s4 += 10; n4.append(f"MTF{bull_mtf}↑")
     elif bull_mtf == 1:
@@ -2434,8 +2492,9 @@ def score_symbol(symbol, ticker, oi_hist,
         s4 += 12; n4.append("fund↓нараст")
 
     # 15. EMA Structure — бычий порядок на 1H
+    # FIX 7: EMA_bull_1H in breakout = WR -4.2pp (makes signals worse); inverted to penalty
     if ema_1h.get("ema_bull"):
-        s4 += 14; n4.append("EMA_bull1H")
+        s4 -= 5; n4.append("EMA_bull1H⚠")
     elif ema_1h.get("golden_cross"):
         s4 += 18; n4.append("GoldenX!")
     elif ema_1h.get("price_vs_ema20") == "above" and ema_1h.get("ema20_slope") == "rising":
@@ -2453,6 +2512,8 @@ def score_symbol(symbol, ticker, oi_hist,
             s4 += 14; n4.append(f"VWAP{vwap_dev:.1f}%")
         elif vwap_dev < -1.0:
             s4 += 8;  n4.append(f"VWAP{vwap_dev:.1f}%")
+        if vwap_dev < -5.0:
+            s4 -= 20; n4.append("VWAP<-5%!")  # net -6: freefall not just oversold
 
     # 18. RSI Дивергенция бычья → ранний сигнал разворота
     if rsi_div_1h == "bull_div":
@@ -2463,8 +2524,9 @@ def score_symbol(symbol, ticker, oi_hist,
         s4 += 12; n4.append(f"RSI{rsi_1h:.0f}(OS)")  # перепроданность
 
     # 19. CHoCH бычий — ранний слом нисходящего тренда
+    # FIX 5: breakout CHoCH WR +15.3pp (55.6% vs 40.3%); boosted from 16 → 20
     if choch_1h == "bull_choch":
-        s4 += 16; n4.append("CHoCH↑1H!")
+        s4 += 20; n4.append("CHoCH↑1H!")
     elif choch_4h == "bull_choch":
         s4 += 14; n4.append("CHoCH↑4H!")
 
@@ -2631,9 +2693,13 @@ def score_symbol(symbol, ticker, oi_hist,
     elif daily_trend == "bear" or h4_trend == "bear":
         s5 += 8;  n5.append("HTF↓")
 
-    # MTF медвежьи зоны (КЛЮЧЕВОЙ СИГНАЛ)
-    if bear_mtf >= 3:
-        s5 += 25; n5.append(f"MTF{bear_mtf}↓!")
+    # MTF медвежьи зоны (КЛЮЧЕВОЙ СИГНАЛ) — tiered: fresh signal > saturated
+    if bear_mtf >= 5:
+        s5 += 10; n5.append(f"MTF{bear_mtf}↓!")
+    elif bear_mtf >= 4:
+        s5 += 20; n5.append(f"MTF{bear_mtf}↓!")
+    elif bear_mtf >= 3:
+        s5 += 30; n5.append(f"MTF{bear_mtf}↓!")
     elif bear_mtf >= 2:
         s5 += 18; n5.append(f"MTF{bear_mtf}↓")
     elif bear_mtf == 1:
@@ -2807,6 +2873,14 @@ def score_symbol(symbol, ticker, oi_hist,
     if best == "short_dist" and setup_dir == "short" and btc_ema_pos != "below":
         return None
 
+    # ── Weekly Grade X hard block (TASK B) ──────────────────────────────────
+    # Both Weekly and Daily oppose signal direction → Grade X, filter out.
+    if weekly_trend != "unknown":
+        if setup_dir == "long" and weekly_trend == "bear" and daily_trend == "bear":
+            return None
+        if setup_dir == "short" and weekly_trend == "bull" and daily_trend == "bull":
+            return None
+
     # Filter 2: Breakout в strong bear regime — смерть (WR 12%, MISS 46%)
     # Пробой вверх при Daily+4H bear = false breakout в 85%+ случаев.
     if best == "breakout" and daily_trend == "bear" and h4_trend == "bear":
@@ -2862,11 +2936,13 @@ def score_symbol(symbol, ticker, oi_hist,
             notes[best] = (notes[best] + f", w×{mult:.2f}").lstrip(", ")
 
     # ── Signal-level additive adjustments from logistic regression calibration ──
-    # Applies only to LONG setups (weights trained on ЛОНГ decisive trades).
-    # Corrects for signals over/under-rewarded by hand-tuned scoring:
-    #   OI rising penalized (empirical -9.3pp WR), CVD kline bull penalized (-3.5pp),
-    #   CHoCH↑1H / OI falling / RSI<40 boosted.
-    _sw = score_weights.get("__signal_weights__") if score_weights else None
+    # Per-setup model takes priority; falls back to generic pooled weights.
+    # CHoCH coefficient differs per setup: bos_fvg=+18.7pp, breakout=+15.3pp,
+    # squeeze=-20.5pp (negative! — CHoCH in squeeze = momentum already spent).
+    _sw = None
+    if score_weights and setup_dir == "long":
+        _sw = (score_weights.get(f"__signal_weights_{best}__")
+               or score_weights.get("__signal_weights__"))
     if _sw and setup_dir == "long":
         _sw_adj = 0.0
         _sw_adj += _sw.get("choch_bull_1h",   0.0) * int(choch_1h == "bull_choch")
@@ -3048,6 +3124,12 @@ def score_symbol(symbol, ticker, oi_hist,
         # Ликвидации (USD за 60мин) — для _conviction_score и алертов
         "liq_long_usd":  liq_long_usd,
         "liq_short_usd": liq_short_usd,
+        # ── Weekly + 15m context (TASK A) ─────────────────────────────────────
+        "weekly_trend":     weekly_trend,
+        "weekly_pos":       weekly_ctx["weekly_pos"],
+        "weekly_above_ema": weekly_ctx["weekly_above_ema"],
+        "m15_trend":        m15_trend,
+        "m15_momentum":     m15_ctx["m15_momentum"],
         # Социальный сентимент
         "social_note":   _social_note or "—",
         "cp_score":      _cp_score,
@@ -3751,6 +3833,123 @@ def composite_grade(r):
     return "D"
 
 
+def compute_weekly_context(op1w, hi1w, lo1w, cl1w, price):
+    """
+    Weekly TF context: trend direction and price position.
+    Returns dict with weekly_trend ('bull'|'bear'|'range'|'unknown'),
+    weekly_pos (0..1), weekly_above_ema (bool), weekly_ema10 (float).
+    """
+    if len(cl1w) < 4:
+        return {"weekly_trend": "unknown", "weekly_pos": 0.5,
+                "weekly_above_ema": None, "weekly_ema10": None}
+    # Exclude last candle (may be incomplete)
+    cls = cl1w[:-1]
+    his = hi1w[:-1]
+    los = lo1w[:-1]
+    # 10-week EMA
+    period = min(10, len(cls))
+    ema10 = sum(cls[-period:]) / period
+    k = 2 / (period + 1)
+    for c in cls[-period:]:
+        ema10 = c * k + ema10 * (1 - k)
+    weekly_above_ema = price > ema10
+    # Trend: 3 consecutive completed weeks
+    trend_up = len(cls) >= 3 and cls[-1] > cls[-2] and cls[-2] > cls[-3]
+    trend_dn = len(cls) >= 3 and cls[-1] < cls[-2] and cls[-2] < cls[-3]
+    if trend_up and weekly_above_ema:
+        weekly_trend = "bull"
+    elif trend_dn and not weekly_above_ema:
+        weekly_trend = "bear"
+    else:
+        weekly_trend = "range"
+    # Price position in last 4-week range
+    n = min(4, len(his))
+    week_hi = max(his[-n:])
+    week_lo = min(los[-n:])
+    rng = week_hi - week_lo
+    weekly_pos = (price - week_lo) / rng if rng > 0 else 0.5
+    return {
+        "weekly_trend":     weekly_trend,
+        "weekly_pos":       round(max(0.0, min(1.0, weekly_pos)), 3),
+        "weekly_above_ema": weekly_above_ema,
+        "weekly_ema10":     round(ema10, 6),
+    }
+
+
+def compute_15m_context(op15m, hi15m, lo15m, cl15m, price):
+    """
+    15m TF context: micro-trend and EMA momentum for entry precision.
+    Returns dict with m15_trend ('bull'|'bear'|'neutral'),
+    m15_last_close (float), m15_momentum (float %).
+    """
+    if len(cl15m) < 5:
+        return {"m15_trend": "neutral", "m15_last_close": price, "m15_momentum": 0.0}
+    cls = cl15m[:-1]  # completed candles
+    # Micro-trend: 3 consecutive completed candles
+    trend_up = len(cls) >= 3 and cls[-1] > cls[-2] and cls[-2] > cls[-3]
+    trend_dn = len(cls) >= 3 and cls[-1] < cls[-2] and cls[-2] < cls[-3]
+    # 20-bar EMA
+    period = min(20, len(cls))
+    ema20 = sum(cls[-period:]) / period
+    k = 2 / (period + 1)
+    for c in cls[-period:]:
+        ema20 = c * k + ema20 * (1 - k)
+    m15_momentum = (price - ema20) / ema20 * 100 if ema20 > 0 else 0.0
+    m15_trend = "bull" if trend_up else ("bear" if trend_dn else "neutral")
+    return {
+        "m15_trend":      m15_trend,
+        "m15_last_close": cls[-1],
+        "m15_momentum":   round(m15_momentum, 2),
+    }
+
+
+def calc_mtf_grade(r, setup_dir="long"):
+    """
+    Full MTF grade A+/A/B+/B/C/D with weekly hard-block Grade X.
+
+    Grade X: Weekly + Daily both oppose signal direction — hard counter-trend.
+    Grade A+: score ≥ 90 + MTF_ext ≥ 2 + trend aligned + CVD confirms + weekly aligned.
+    Grade A:  score ≥ 80 + MTF ≥ 2  OR  score ≥ 90.
+    Grade B+: score ≥ 70 + MTF ≥ 1.
+    Grade B:  score ≥ 55.
+    Grade C:  score ≥ 35.
+    Grade D:  < 35.
+    """
+    score   = r["score"]
+    mtf     = max(r.get("bull_mtf_ext", r.get("mtf_b", 0)),
+                  r.get("bear_mtf_ext", r.get("mtf_s", 0)))
+    aligned = (r.get("d_htf") != "range" and r.get("h4_htf") != "range"
+               and r.get("d_htf") == r.get("h4_htf"))
+    cvd_ok  = abs(r.get("cvd_k%", 0)) > 15
+    weekly_trend = r.get("weekly_trend", "unknown")
+    daily_trend  = r.get("d_htf", "range")
+    # Grade X: both senior TFs oppose signal
+    if weekly_trend != "unknown":
+        if setup_dir == "long" and weekly_trend == "bear" and daily_trend == "bear":
+            return "X"
+        if setup_dir == "short" and weekly_trend == "bull" and daily_trend == "bull":
+            return "X"
+    # Weekly alignment bonus for A+
+    weekly_aligned = (
+        (setup_dir == "long"  and weekly_trend == "bull") or
+        (setup_dir == "short" and weekly_trend == "bear") or
+        weekly_trend == "unknown"
+    )
+    if score >= 90 and mtf >= 2 and aligned and cvd_ok and weekly_aligned:
+        return "A+"
+    if score >= 80 and mtf >= 2:
+        return "A"
+    if score >= 90:
+        return "A"
+    if score >= 70 and mtf >= 1:
+        return "B+"
+    if score >= 55:
+        return "B"
+    if score >= 35:
+        return "C"
+    return "D"
+
+
 def get_session_info():
     """
     Текущая торговая сессия по UTC.
@@ -4149,6 +4348,12 @@ def build_trade_plan(r):
         else:
             tp2 = max(price - atr_abs * 4.0, 0)
             tp2_note = f"ATR×4.0   {format_price(tp2)}"
+
+        # TASK D: short_dist edge fades after 4H (WR 44.6% → 38.5% at 24H).
+        # Target TP1 only — do not extend to 48h low.
+        if setup == "short_dist":
+            tp2      = tp1
+            tp2_note = f"TP1 (4H-edge) {format_price(tp1)}"
 
         # Sanity-check: stop должен быть ВЫШЕ entry для шорта
         if stop <= entry_high:
@@ -4856,8 +5061,9 @@ def _fetch_and_score(sym, tickers, btc_chg_24h, bnb_map=None,
     spot_turnover = spot_vol_map.get(sym, 0)
     perp_spot_ratio = perp_turnover / spot_turnover if spot_turnover > 0 else None
 
-    # Передаём в score_symbol через расширенный контекст
-    sym_ctx = {**_gctx, "perp_spot_ratio": perp_spot_ratio}
+    # Передаём в score_symbol через расширенный контекст (включая недельные + 15м свечи)
+    sym_ctx = {**_gctx, "perp_spot_ratio": perp_spot_ratio,
+               "k1w": _d["k1w"], "k15m": _d["k15m"]}
 
     result = score_symbol(
         sym, tickers[sym], oi_hist,
@@ -4928,9 +5134,9 @@ def _passes_setup_tg_filter(r: dict) -> bool:
         return False
 
     if setup == "breakout":
-        # Score correlation is inverted at 4h (100–150 is the dead zone):
-        # <100  → 39.2% WR  |  100-150 → 27.9% WR  |  >150 → 46.5% WR (24h hold)
-        return score < 100 or score > 150
+        # WR audit: score 100-120 → 53.1% WR (pass), score >120 → 33.3% WR (block)
+        # Old gate was inverted; block only high scores now.
+        return score < 120
 
     # P1.1: Squeeze mid-score (100–140) hard requirement gate.
     # WR audit: 100–140 achieves only 42.0% WR (24h) vs 53.6% for <100 and 51.0% for >150.
@@ -5400,8 +5606,20 @@ def run_screener(top_n=50, min_score=35,
 
     # ── Time gate: фильтр плохих часов ────────────────────────────────────────
     _utc_hour = datetime.utcnow().hour
+    _utc_weekday = datetime.utcnow().weekday()  # 0=Mon … 5=Sat … 6=Sun
     if bypass_cooldown:
         print(f"[TimeGate] bypass_cooldown=True — временной фильтр пропущен")
+    elif _utc_weekday == 5:
+        # FIX 8: Saturday WR=24.5% — повышаем порог до SATURDAY_MIN_SCORE
+        _before_sat = len(_tg_candidates)
+        _tg_candidates = [r for r in _tg_candidates if r["score"] >= SATURDAY_MIN_SCORE]
+        _sat_blocked = _before_sat - len(_tg_candidates)
+        if _sat_blocked:
+            print(f"[TimeGate] Суббота — слабый WR (24.5%). "
+                  f"Заблокировано: {_sat_blocked} (score < {SATURDAY_MIN_SCORE}). "
+                  f"Осталось: {len(_tg_candidates)}")
+        else:
+            print(f"[TimeGate] Суббота — слабый WR, но все {len(_tg_candidates)} выше порога {SATURDAY_MIN_SCORE}.")
     elif _utc_hour in BAD_SIGNAL_HOURS:
         _before_tg = len(_tg_candidates)
         _tg_candidates = [r for r in _tg_candidates if r["score"] >= BAD_HOUR_MIN_SCORE]
@@ -5493,10 +5711,17 @@ def run_screener(top_n=50, min_score=35,
             print(f"[Tracker] Закрыто исходов: {resolved} → outcome_tracker.py stats")
         # Сохраняем текущие сигналы как pending (кроме HARD_BLOCK часов — WR < 30%)
         if _utc_hour in HARD_BLOCK_HOURS:
-            print(f"[HARD BLOCK] UTC {_utc_hour:02d}:xx — WR={'18' if _utc_hour==18 else '28'}% < 30%."
+            print(f"[HARD BLOCK] UTC {_utc_hour:02d}:xx — WR={'18' if _utc_hour==18 else '17.5'}% < 30%."
                   f" Сигналы не сохранены в pending (не торговать этот час).")
         else:
-            saved = _ot.save_pending(filtered, results)
+            # FIX 3: range_sweep WR=25% — exclude from pending to keep ML training data clean
+            to_save = [r for r in filtered if r.get("setup") != "range_sweep"]
+            # FIX 4: stamp grade at save time so resolved.csv has real grades (not "—")
+            # Use calc_mtf_grade (TASK B) — includes weekly hard-block Grade X.
+            for r in to_save:
+                _sdir = "short" if r.get("setup") == "short_dist" else "long"
+                r["grade"] = calc_mtf_grade(r, setup_dir=_sdir)
+            saved = _ot.save_pending(to_save, results)
             if saved:
                 print(f"[Tracker] Сохранено {saved} сигналов для бэктеста")
 
