@@ -2981,6 +2981,23 @@ def score_symbol(symbol, ticker, oi_hist,
             scores[best] = score
             notes[best] = (notes[best] + f", sws{_sw_s_adj:+.0f}").lstrip(", ")
 
+    # ── GOLDEN flag (Phase 2C): READ-ONLY overlay — no score change ──────────
+    # Count how many of 9 optimal conditions are met; flag when ≥7.
+    _now_utc = datetime.utcnow()
+    _golden_conds = [
+        best in ("bos_fvg", "squeeze"),                              # 1 setup type
+        _now_utc.hour in {9, 10, 21, 22},                           # 2 optimal UTC hour
+        _now_utc.weekday() in {0, 2, 3, 6},                         # 3 Mon/Wed/Thu/Sun
+        bull_mtf >= 3,                                               # 4 top-tier MTF
+        vwap_dev is not None and -5.0 <= vwap_dev <= -1.0,          # 5 VWAP good zone
+        -0.03 <= funding <= 0.0,                                     # 6 optimal funding
+        rs_btc is not None and 0 < rs_btc < 2.0,                    # 7 moderate RS_BTC
+        oi_change < 5.0,                                             # 8 calm accumulation
+        best != "squeeze" and choch_1h == "bull_choch",             # 9 CHoCH (not squeeze)
+    ]
+    golden_count = sum(_golden_conds)
+    golden = golden_count >= 7
+
     # ── Структурные уровни для торгового плана ──────────────────────────────
     # Ближайшие FVG/OB зоны (top, bottom, dist_pct), None если зоны нет
     def _nearest(zones, ztype):
@@ -3061,6 +3078,8 @@ def score_symbol(symbol, ticker, oi_hist,
         "setup":          best,
         "score":          score,
         "notes":          notes[best],
+        "golden":         golden,
+        "golden_count":   golden_count,
         # Pre-pump метрики
         "atr_comp":       atr_compression,
         "oi_coil_%":      oi_coil_chg,

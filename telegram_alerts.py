@@ -338,10 +338,11 @@ def format_watchlist(filtered: list, max_symbols: int = 5,
             tp1     = r["price"] - atr_abs * 1.5
             tp2     = max(r["price"] - atr_abs * 3.0, 0)
 
-        h24_tag   = "  📅<b>[24H HIGH CONVICTION]</b>" if r.get("tg_24h_hold") else ""
-        choch_tag = "  🔷<b>[CHoCH CONFIRMED]</b>" if r.get("choch_conviction") else ""
+        h24_tag    = "  📅<b>[24H HIGH CONVICTION]</b>" if r.get("tg_24h_hold") else ""
+        choch_tag  = "  🔷<b>[CHoCH CONFIRMED]</b>" if r.get("choch_conviction") else ""
+        golden_tag = "  <b>[GOLDEN]</b>" if r.get("golden") else ""
         lines.append(
-            f"{setu}{gem} <b>{sym}</b>  score={score}  [{grade}]{h24_tag}{choch_tag}"
+            f"{setu}{gem} <b>{sym}</b>  score={score}  [{grade}]{h24_tag}{choch_tag}{golden_tag}"
         )
         lines.append(
             f"   Цена: <code>{price}</code>  |  "
@@ -910,12 +911,13 @@ def format_top_setups(
         se       = SETUP_ICON.get(setup, "📊")
         sn       = SETUP_NAME.get(setup, setup)
         in_zone   = (r.get("in_bfvg") or r.get("in_bob")) if bull else (r.get("in_sfvg") or r.get("in_sob"))
-        now_tag   = "  ⚡<b>СЕЙЧАС</b>" if in_zone else ""
-        h24_tag   = "  📅<b>[24H HIGH CONVICTION]</b>" if r.get("tg_24h_hold") else ""
-        choch_tag = "  🔷<b>[CHoCH CONFIRMED]</b>" if r.get("choch_conviction") else ""
+        now_tag    = "  ⚡<b>СЕЙЧАС</b>" if in_zone else ""
+        h24_tag    = "  📅<b>[24H HIGH CONVICTION]</b>" if r.get("tg_24h_hold") else ""
+        choch_tag  = "  🔷<b>[CHoCH CONFIRMED]</b>" if r.get("choch_conviction") else ""
+        golden_tag = "  <b>[GOLDEN]</b>" if r.get("golden") else ""
 
         lines += [
-            f"{i}. {se}{side_icon} <b>{_esc(sym)}</b>  [{sn}]  score={score}{now_tag}{h24_tag}{choch_tag}",
+            f"{i}. {se}{side_icon} <b>{_esc(sym)}</b>  [{sn}]  score={score}{now_tag}{h24_tag}{choch_tag}{golden_tag}",
             f"   Убеждённость: <b>{conv}%</b>  {bar}",
             f"   Entry <code>{_fmt_price(entry)}</code>"
             f"  Stop <code>{_fmt_price(stop)}</code>"
