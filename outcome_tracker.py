@@ -405,6 +405,12 @@ def check_and_resolve(silent: bool = False) -> int:
                     mfe_pct = ((entry_px - min_low)  / entry_px * 100) if (min_low  and entry_px) else 0.0
                     mae_pct = ((entry_px - max_high) / entry_px * 100) if (max_high and entry_px) else 0.0
 
+                # T1.4: ЖДАТЬ signals have no directional commitment → exclude from WR stats
+                if direction == "ЖДАТЬ":
+                    outcome = "FLAT"
+                    hit_tp1 = False
+                    hit_stop = False
+
                 exit_px_4h, exit_rsn_4h = _resolve_exit(
                     hit_tp1, hit_stop, tp1, stop, price_now, "4h"
                 )
@@ -454,6 +460,12 @@ def check_and_resolve(silent: bool = False) -> int:
                                ("WIN" if pct < -0.5 else ("LOSS" if pct > 0.5 else "FLAT")))
                     mfe_pct = ((entry_px - min_low)  / entry_px * 100) if (min_low  and entry_px) else 0.0
                     mae_pct = ((entry_px - max_high) / entry_px * 100) if (max_high and entry_px) else 0.0
+
+                # T1.4: ЖДАТЬ signals have no directional commitment → exclude from WR stats
+                if direction == "ЖДАТЬ":
+                    outcome = "FLAT"
+                    hit_tp1 = False
+                    hit_stop = False
 
                 exit_px_24h, exit_rsn_24h = _resolve_exit(
                     hit_tp1, hit_stop, tp1, stop, price_now, "24h"

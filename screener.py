@@ -1656,12 +1656,21 @@ def load_score_weights(min_samples: int = 20) -> dict:
         out[key] = round(mult, 3)
 
     # Load per-signal additive adjustments from logistic regression calibration.
+    import json as _json
     sig_w_path = Path(__file__).parent / "calibration" / "signal_weights.json"
     if sig_w_path.exists():
         try:
-            import json as _json
             with open(sig_w_path, "r", encoding="utf-8") as _f:
                 out["__signal_weights__"] = _json.load(_f)
+        except Exception:
+            pass
+
+    # SHORT-specific signal weights (T1.2: separate LR model for short direction)
+    sig_w_short_path = Path(__file__).parent / "calibration" / "signal_weights_short.json"
+    if sig_w_short_path.exists():
+        try:
+            with open(sig_w_short_path, "r", encoding="utf-8") as _f:
+                out["__signal_weights_short__"] = _json.load(_f)
         except Exception:
             pass
 
@@ -2873,6 +2882,20 @@ def score_symbol(symbol, ticker, oi_hist,
             score = max(0, score + int(round(_sw_adj)))
             scores[best] = score
             notes[best] = (notes[best] + f", sw{_sw_adj:+.0f}").lstrip(", ")
+
+    # ── SHORT signal-level calibration (T1.2) ────────────────────────────────
+    # Trained on ШОРТ decisive trades. Key: score>150 is anti-correlated with
+    # SHORT WR (33.8% vs 47.5% baseline) — high score = overbought short setup.
+    _sw_s = score_weights.get("__signal_weights_short__") if score_weights else None
+    if _sw_s and setup_dir == "short":
+        _sw_s_adj = 0.0
+        _sw_s_adj += _sw_s.get("score_gt150", 0.0) * int(score > 150)
+        _sw_s_adj += _sw_s.get("rsi_gt65",    0.0) * int(rsi_1h > 65)
+        _sw_s_adj += _sw_s.get("ema_bull_1h", 0.0) * int(ema_1h.get("ema_bull", False))
+        if _sw_s_adj != 0.0:
+            score = max(0, score + int(round(_sw_s_adj)))
+            scores[best] = score
+            notes[best] = (notes[best] + f", sws{_sw_s_adj:+.0f}").lstrip(", ")
 
     # ── Структурные уровни для торгового плана ──────────────────────────────
     # Ближайшие FVG/OB зоны (top, bottom, dist_pct), None если зоны нет
@@ -4778,6 +4801,8 @@ def _fetch_symbol_data_parallel(sym: str) -> dict:
         "k1h":    lambda: fetch_klines(sym, "60",  212),
         "k4h":    lambda: fetch_klines(sym, "240", 212),
         "kD":     lambda: fetch_klines(sym, "D",    52),
+        "k1w":    lambda: fetch_klines(sym, "W",    52),   # TTL 24h — weekly candles
+        "k15m":   lambda: fetch_klines(sym, "15",   96),   # TTL 3 min
         "fund":   lambda: fetch_funding_history(sym, limit=8),
         "ls":     lambda: fetch_ls_ratio(sym),
         "trades": lambda: fetch_recent_trades(sym, 1000),
@@ -4786,11 +4811,12 @@ def _fetch_symbol_data_parallel(sym: str) -> dict:
     _empty_klines = ([], [], [], [], [])
     defaults = {
         "oi": [], "k1h": _empty_klines, "k4h": _empty_klines,
-        "kD": _empty_klines, "fund": [], "ls": None,
+        "kD": _empty_klines, "k1w": _empty_klines, "k15m": _empty_klines,
+        "fund": [], "ls": None,
         "trades": [], "book": ([], []),
     }
     out = dict(defaults)
-    with ThreadPoolExecutor(max_workers=8) as _pool:
+    with ThreadPoolExecutor(max_workers=10) as _pool:
         fmap = {_pool.submit(fn): name for name, fn in tasks.items()}
         for fut in as_completed(fmap):
             name = fmap[fut]
