@@ -84,6 +84,13 @@ CSV_FIELDS = [
     "exit_reason_24h",   # tp1 / sl / 24h_close
     # v6: CHoCH conviction flag (AVEC-10)
     "choch_conviction",  # 1 if bull_choch on 1H at signal time, else 0
+    # v7: derived fields for post-trade analysis (AVEA-45)
+    "exit_price_4h",      # actual exit price at 4h horizon (tp1 / stop / close)
+    "exit_price_24h",     # actual exit price at 24h horizon
+    "hold_time_4h_min",   # minutes from signal to 4h resolution
+    "hold_time_24h_min",  # minutes from signal to 24h resolution
+    "outcome_label_4h",   # profitable / unprofitable / breakeven
+    "outcome_label_24h",  # profitable / unprofitable / breakeven
 ]
 
 
@@ -345,6 +352,15 @@ def _compute_r_multiple(exit_price: float, entry: float, sl: float) -> float | N
     return round((exit_price - entry) / risk, 4)
 
 
+def _outcome_label(outcome: str) -> str:
+    """Maps TP1/WIN/STOP/LOSS/FLAT → profitable/unprofitable/breakeven."""
+    if outcome in ("TP1", "WIN"):
+        return "profitable"
+    if outcome in ("STOP", "LOSS"):
+        return "unprofitable"
+    return "breakeven"
+
+
 def _resolve_exit(hit_tp1: bool, hit_stop: bool,
                   tp1: float, stop: float, close_price: float,
                   horizon_label: str) -> tuple[float, str]:
@@ -415,16 +431,23 @@ def check_and_resolve(silent: bool = False) -> int:
                     hit_tp1, hit_stop, tp1, stop, price_now, "4h"
                 )
                 r_mult_4h = _compute_r_multiple(exit_px_4h, entry_px, stop)
-                entry["resolve_4h_ts"]  = _now_ts()
-                entry["price_4h"]       = price_now
-                entry["change_4h_pct"]  = round(pct, 2)
-                entry["hit_tp1_4h"]     = int(hit_tp1)
-                entry["hit_stop_4h"]    = int(hit_stop)
-                entry["outcome_4h"]     = outcome
-                entry["mfe_4h_pct"]     = round(mfe_pct, 2)
-                entry["mae_4h_pct"]     = round(mae_pct, 2)
-                entry["r_multiple_4h"]  = r_mult_4h
-                entry["exit_reason_4h"] = exit_rsn_4h
+                resolve_ts_4h = _now_ts()
+                entry["resolve_4h_ts"]   = resolve_ts_4h
+                entry["price_4h"]        = price_now
+                entry["change_4h_pct"]   = round(pct, 2)
+                entry["hit_tp1_4h"]      = int(hit_tp1)
+                entry["hit_stop_4h"]     = int(hit_stop)
+                entry["outcome_4h"]      = outcome
+                entry["mfe_4h_pct"]      = round(mfe_pct, 2)
+                entry["mae_4h_pct"]      = round(mae_pct, 2)
+                entry["r_multiple_4h"]   = r_mult_4h
+                entry["exit_reason_4h"]  = exit_rsn_4h
+                # v7: derived fields (AVEA-45)
+                entry["exit_price_4h"]   = round(exit_px_4h, 8)
+                entry["hold_time_4h_min"] = round(
+                    (_parse_ts(resolve_ts_4h) - run_dt).total_seconds() / 60, 1
+                )
+                entry["outcome_label_4h"] = _outcome_label(outcome)
                 resolved_count += 1
                 updated = True
                 if not silent:
@@ -471,16 +494,23 @@ def check_and_resolve(silent: bool = False) -> int:
                     hit_tp1, hit_stop, tp1, stop, price_now, "24h"
                 )
                 r_mult_24h = _compute_r_multiple(exit_px_24h, entry_px, stop)
-                entry["resolve_24h_ts"] = _now_ts()
-                entry["price_24h"]      = price_now
-                entry["change_24h_pct"] = round(pct, 2)
-                entry["hit_tp1_24h"]    = int(hit_tp1)
-                entry["hit_stop_24h"]   = int(hit_stop)
-                entry["outcome_24h"]    = outcome
-                entry["mfe_24h_pct"]    = round(mfe_pct, 2)
-                entry["mae_24h_pct"]    = round(mae_pct, 2)
+                resolve_ts_24h = _now_ts()
+                entry["resolve_24h_ts"]  = resolve_ts_24h
+                entry["price_24h"]       = price_now
+                entry["change_24h_pct"]  = round(pct, 2)
+                entry["hit_tp1_24h"]     = int(hit_tp1)
+                entry["hit_stop_24h"]    = int(hit_stop)
+                entry["outcome_24h"]     = outcome
+                entry["mfe_24h_pct"]     = round(mfe_pct, 2)
+                entry["mae_24h_pct"]     = round(mae_pct, 2)
                 entry["r_multiple_24h"]  = r_mult_24h
                 entry["exit_reason_24h"] = exit_rsn_24h
+                # v7: derived fields (AVEA-45)
+                entry["exit_price_24h"]    = round(exit_px_24h, 8)
+                entry["hold_time_24h_min"] = round(
+                    (_parse_ts(resolve_ts_24h) - run_dt).total_seconds() / 60, 1
+                )
+                entry["outcome_label_24h"] = _outcome_label(outcome)
                 resolved_count += 1
                 updated = True
 
