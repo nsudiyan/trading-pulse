@@ -1,0 +1,5926 @@
+{
+  "generated_at": "2026-04-26T18:57:50Z",
+  "horizon": "24h",
+  "min_n": 10,
+  "exclude_wait": true,
+  "n_wait_excluded": 139,
+  "n_total": 2150,
+  "n_wins": 990,
+  "n_losses": 1160,
+  "baseline_wr": 46.05,
+  "baseline_ci_low": 43.9,
+  "baseline_ci_high": 48.2,
+  "total_hypotheses": 548,
+  "success_count": 97,
+  "anti_pattern_count": 130,
+  "success_patterns": [
+    {
+      "id": "H0355",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_weak",
+        "rsi_zone": "rsi_overbought"
+      },
+      "label": "rs_btc_zone:rs_btc_weak + rsi_zone:rsi_overbought",
+      "n": 13,
+      "win_count": 11,
+      "loss_count": 2,
+      "win_rate": 84.6,
+      "delta_pp": 38.6,
+      "ci_low": 57.8,
+      "ci_high": 95.7,
+      "z_score": 2.79,
+      "p_value": 0.0053,
+      "confidence": "low",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0440",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_oversold",
+        "setup": "squeeze"
+      },
+      "label": "rsi_zone:rsi_oversold + setup:squeeze",
+      "n": 60,
+      "win_count": 48,
+      "loss_count": 12,
+      "win_rate": 80.0,
+      "delta_pp": 34.0,
+      "ci_low": 68.2,
+      "ci_high": 88.2,
+      "z_score": 5.28,
+      "p_value": 0.0,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0476",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_elevated",
+        "vwap_zone": "vwap_far_below"
+      },
+      "label": "rsi_zone:rsi_elevated + vwap_zone:vwap_far_below",
+      "n": 13,
+      "win_count": 10,
+      "loss_count": 3,
+      "win_rate": 76.9,
+      "delta_pp": 30.9,
+      "ci_low": 49.7,
+      "ci_high": 91.8,
+      "z_score": 2.23,
+      "p_value": 0.0255,
+      "confidence": "low",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0224",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "rsi_zone": "rsi_oversold"
+      },
+      "label": "funding_regime:fund_negative + rsi_zone:rsi_oversold",
+      "n": 45,
+      "win_count": 33,
+      "loss_count": 12,
+      "win_rate": 73.3,
+      "delta_pp": 27.3,
+      "ci_low": 59.0,
+      "ci_high": 84.0,
+      "z_score": 3.67,
+      "p_value": 0.0002,
+      "confidence": "medium",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0515",
+      "depth": 2,
+      "condition": {
+        "setup": "bos_fvg",
+        "vwap_zone": "vwap_far_above"
+      },
+      "label": "setup:bos_fvg + vwap_zone:vwap_far_above",
+      "n": 29,
+      "win_count": 21,
+      "loss_count": 8,
+      "win_rate": 72.4,
+      "delta_pp": 26.4,
+      "ci_low": 54.3,
+      "ci_high": 85.3,
+      "z_score": 2.85,
+      "p_value": 0.0044,
+      "confidence": "medium",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0241",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "setup": "bos_fvg"
+      },
+      "label": "funding_regime:fund_negative + setup:bos_fvg",
+      "n": 47,
+      "win_count": 33,
+      "loss_count": 14,
+      "win_rate": 70.2,
+      "delta_pp": 24.2,
+      "ci_low": 56.0,
+      "ci_high": 81.3,
+      "z_score": 3.32,
+      "p_value": 0.0009,
+      "confidence": "medium",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0257",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "utc_session": "session_london"
+      },
+      "label": "funding_regime:fund_negative + utc_session:session_london",
+      "n": 67,
+      "win_count": 47,
+      "loss_count": 20,
+      "win_rate": 70.1,
+      "delta_pp": 24.1,
+      "ci_low": 58.3,
+      "ci_high": 79.8,
+      "z_score": 3.96,
+      "p_value": 0.0001,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0322",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_weak",
+        "setup": "squeeze"
+      },
+      "label": "mtf_bull_tier:mtf_bull_weak + setup:squeeze",
+      "n": 91,
+      "win_count": 62,
+      "loss_count": 29,
+      "win_rate": 68.1,
+      "delta_pp": 22.1,
+      "ci_low": 58.0,
+      "ci_high": 76.8,
+      "z_score": 4.23,
+      "p_value": 0.0,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0359",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neutral",
+        "rsi_zone": "rsi_oversold"
+      },
+      "label": "rs_btc_zone:rs_btc_neutral + rsi_zone:rsi_oversold",
+      "n": 83,
+      "win_count": 56,
+      "loss_count": 27,
+      "win_rate": 67.5,
+      "delta_pp": 21.4,
+      "ci_low": 56.8,
+      "ci_high": 76.6,
+      "z_score": 3.92,
+      "p_value": 0.0001,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0184",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "mtf_bull_tier": "mtf_bull_moderate"
+      },
+      "label": "funding_regime:fund_negative + mtf_bull_tier:mtf_bull_moderate",
+      "n": 52,
+      "win_count": 35,
+      "loss_count": 17,
+      "win_rate": 67.3,
+      "delta_pp": 21.3,
+      "ci_low": 53.8,
+      "ci_high": 78.5,
+      "z_score": 3.08,
+      "p_value": 0.0021,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0304",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_moderate",
+        "rsi_zone": "rsi_oversold"
+      },
+      "label": "mtf_bull_tier:mtf_bull_moderate + rsi_zone:rsi_oversold",
+      "n": 54,
+      "win_count": 36,
+      "loss_count": 18,
+      "win_rate": 66.7,
+      "delta_pp": 20.6,
+      "ci_low": 53.4,
+      "ci_high": 77.8,
+      "z_score": 3.04,
+      "p_value": 0.0024,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0067",
+      "depth": 2,
+      "condition": {
+        "choch_bull_1h": "choch=1",
+        "ema_bull_1h": "ema1h=1"
+      },
+      "label": "choch_bull_1h:choch=1 + ema_bull_1h:ema1h=1",
+      "n": 41,
+      "win_count": 27,
+      "loss_count": 14,
+      "win_rate": 65.9,
+      "delta_pp": 19.8,
+      "ci_low": 50.5,
+      "ci_high": 78.4,
+      "z_score": 2.54,
+      "p_value": 0.0109,
+      "confidence": "medium",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0185",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "mtf_bull_tier": "mtf_bull_weak"
+      },
+      "label": "funding_regime:fund_negative + mtf_bull_tier:mtf_bull_weak",
+      "n": 67,
+      "win_count": 44,
+      "loss_count": 23,
+      "win_rate": 65.7,
+      "delta_pp": 19.6,
+      "ci_low": 53.7,
+      "ci_high": 75.9,
+      "z_score": 3.22,
+      "p_value": 0.0013,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0275",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_pos",
+        "vwap_zone": "vwap_far_above"
+      },
+      "label": "funding_regime:fund_extreme_pos + vwap_zone:vwap_far_above",
+      "n": 26,
+      "win_count": 17,
+      "loss_count": 9,
+      "win_rate": 65.4,
+      "delta_pp": 19.3,
+      "ci_low": 46.2,
+      "ci_high": 80.6,
+      "z_score": 1.98,
+      "p_value": 0.0479,
+      "confidence": "medium",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0513",
+      "depth": 2,
+      "condition": {
+        "setup": "breakout",
+        "vwap_zone": "vwap_near"
+      },
+      "label": "setup:breakout + vwap_zone:vwap_near",
+      "n": 60,
+      "win_count": 39,
+      "loss_count": 21,
+      "win_rate": 65.0,
+      "delta_pp": 19.0,
+      "ci_low": 52.4,
+      "ci_high": 75.8,
+      "z_score": 2.95,
+      "p_value": 0.0032,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0484",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_depressed",
+        "vwap_zone": "vwap_above"
+      },
+      "label": "rsi_zone:rsi_depressed + vwap_zone:vwap_above",
+      "n": 20,
+      "win_count": 13,
+      "loss_count": 7,
+      "win_rate": 65.0,
+      "delta_pp": 19.0,
+      "ci_low": 43.3,
+      "ci_high": 81.9,
+      "z_score": 1.7,
+      "p_value": 0.089,
+      "confidence": "low",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0260",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "utc_session": "session_asia"
+      },
+      "label": "funding_regime:fund_negative + utc_session:session_asia",
+      "n": 54,
+      "win_count": 35,
+      "loss_count": 19,
+      "win_rate": 64.8,
+      "delta_pp": 18.8,
+      "ci_low": 51.5,
+      "ci_high": 76.2,
+      "z_score": 2.77,
+      "p_value": 0.0057,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0525",
+      "depth": 2,
+      "condition": {
+        "setup": "short_dist",
+        "vwap_zone": "vwap_far_above"
+      },
+      "label": "setup:short_dist + vwap_zone:vwap_far_above",
+      "n": 17,
+      "win_count": 11,
+      "loss_count": 6,
+      "win_rate": 64.7,
+      "delta_pp": 18.7,
+      "ci_low": 41.3,
+      "ci_high": 82.7,
+      "z_score": 1.54,
+      "p_value": 0.1227,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0410",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_strong",
+        "utc_session": "session_asia"
+      },
+      "label": "rs_btc_zone:rs_btc_strong + utc_session:session_asia",
+      "n": 42,
+      "win_count": 27,
+      "loss_count": 15,
+      "win_rate": 64.3,
+      "delta_pp": 18.2,
+      "ci_low": 49.2,
+      "ci_high": 77.0,
+      "z_score": 2.37,
+      "p_value": 0.0177,
+      "confidence": "medium",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0205",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "rs_btc_zone": "rs_btc_strong"
+      },
+      "label": "funding_regime:fund_negative + rs_btc_zone:rs_btc_strong",
+      "n": 14,
+      "win_count": 9,
+      "loss_count": 5,
+      "win_rate": 64.3,
+      "delta_pp": 18.2,
+      "ci_low": 38.8,
+      "ci_high": 83.7,
+      "z_score": 1.37,
+      "p_value": 0.1709,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0345",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_weak",
+        "vwap_zone": "vwap_above"
+      },
+      "label": "mtf_bull_tier:mtf_bull_weak + vwap_zone:vwap_above",
+      "n": 50,
+      "win_count": 32,
+      "loss_count": 18,
+      "win_rate": 64.0,
+      "delta_pp": 18.0,
+      "ci_low": 50.1,
+      "ci_high": 75.9,
+      "z_score": 2.55,
+      "p_value": 0.0109,
+      "confidence": "medium",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0259",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "utc_session": "session_off"
+      },
+      "label": "funding_regime:fund_negative + utc_session:session_off",
+      "n": 36,
+      "win_count": 23,
+      "loss_count": 13,
+      "win_rate": 63.9,
+      "delta_pp": 17.8,
+      "ci_low": 47.6,
+      "ci_high": 77.5,
+      "z_score": 2.15,
+      "p_value": 0.0317,
+      "confidence": "medium",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0228",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_positive",
+        "rsi_zone": "rsi_depressed"
+      },
+      "label": "funding_regime:fund_positive + rsi_zone:rsi_depressed",
+      "n": 11,
+      "win_count": 7,
+      "loss_count": 4,
+      "win_rate": 63.6,
+      "delta_pp": 17.6,
+      "ci_low": 35.4,
+      "ci_high": 84.8,
+      "z_score": 1.17,
+      "p_value": 0.2418,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0443",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_overbought",
+        "setup": "bos_fvg"
+      },
+      "label": "rsi_zone:rsi_overbought + setup:bos_fvg",
+      "n": 41,
+      "win_count": 26,
+      "loss_count": 15,
+      "win_rate": 63.4,
+      "delta_pp": 17.4,
+      "ci_low": 48.1,
+      "ci_high": 76.4,
+      "z_score": 2.23,
+      "p_value": 0.0257,
+      "confidence": "medium",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0458",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_oversold",
+        "utc_session": "session_london"
+      },
+      "label": "rsi_zone:rsi_oversold + utc_session:session_london",
+      "n": 76,
+      "win_count": 48,
+      "loss_count": 28,
+      "win_rate": 63.2,
+      "delta_pp": 17.1,
+      "ci_low": 51.9,
+      "ci_high": 73.1,
+      "z_score": 2.99,
+      "p_value": 0.0028,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0367",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_strong",
+        "rsi_zone": "rsi_elevated"
+      },
+      "label": "rs_btc_zone:rs_btc_strong + rsi_zone:rsi_elevated",
+      "n": 57,
+      "win_count": 36,
+      "loss_count": 21,
+      "win_rate": 63.2,
+      "delta_pp": 17.1,
+      "ci_low": 50.2,
+      "ci_high": 74.5,
+      "z_score": 2.59,
+      "p_value": 0.0095,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0112",
+      "depth": 2,
+      "condition": {
+        "choch_bull_1h": "choch=1",
+        "vwap_zone": "vwap_near"
+      },
+      "label": "choch_bull_1h:choch=1 + vwap_zone:vwap_near",
+      "n": 19,
+      "win_count": 12,
+      "loss_count": 7,
+      "win_rate": 63.2,
+      "delta_pp": 17.1,
+      "ci_low": 41.0,
+      "ci_high": 80.9,
+      "z_score": 1.5,
+      "p_value": 0.1345,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0187",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_positive",
+        "mtf_bull_tier": "mtf_bull_weak"
+      },
+      "label": "funding_regime:fund_positive + mtf_bull_tier:mtf_bull_weak",
+      "n": 19,
+      "win_count": 12,
+      "loss_count": 7,
+      "win_rate": 63.2,
+      "delta_pp": 17.1,
+      "ci_low": 41.0,
+      "ci_high": 80.9,
+      "z_score": 1.5,
+      "p_value": 0.1345,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0281",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "vwap_zone": "vwap_below"
+      },
+      "label": "funding_regime:fund_negative + vwap_zone:vwap_below",
+      "n": 108,
+      "win_count": 68,
+      "loss_count": 40,
+      "win_rate": 63.0,
+      "delta_pp": 16.9,
+      "ci_low": 53.6,
+      "ci_high": 71.5,
+      "z_score": 3.53,
+      "p_value": 0.0004,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0388",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_strong",
+        "setup": "bos_fvg"
+      },
+      "label": "rs_btc_zone:rs_btc_strong + setup:bos_fvg",
+      "n": 56,
+      "win_count": 35,
+      "loss_count": 21,
+      "win_rate": 62.5,
+      "delta_pp": 16.5,
+      "ci_low": 49.4,
+      "ci_high": 74.0,
+      "z_score": 2.47,
+      "p_value": 0.0135,
+      "confidence": "medium",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0209",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_neg",
+        "rsi_zone": "rsi_oversold"
+      },
+      "label": "funding_regime:fund_extreme_neg + rsi_zone:rsi_oversold",
+      "n": 24,
+      "win_count": 15,
+      "loss_count": 9,
+      "win_rate": 62.5,
+      "delta_pp": 16.5,
+      "ci_low": 42.7,
+      "ci_high": 78.8,
+      "z_score": 1.62,
+      "p_value": 0.1058,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0411",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_pos",
+        "vwap_zone": "vwap_above"
+      },
+      "label": "rs_btc_zone:rs_btc_pos + vwap_zone:vwap_above",
+      "n": 98,
+      "win_count": 61,
+      "loss_count": 37,
+      "win_rate": 62.2,
+      "delta_pp": 16.2,
+      "ci_low": 52.4,
+      "ci_high": 71.2,
+      "z_score": 3.22,
+      "p_value": 0.0013,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0349",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_pos",
+        "rsi_zone": "rsi_elevated"
+      },
+      "label": "rs_btc_zone:rs_btc_pos + rsi_zone:rsi_elevated",
+      "n": 108,
+      "win_count": 67,
+      "loss_count": 41,
+      "win_rate": 62.0,
+      "delta_pp": 16.0,
+      "ci_low": 52.6,
+      "ci_high": 70.6,
+      "z_score": 3.33,
+      "p_value": 0.0009,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0194",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_neutral",
+        "rs_btc_zone": "rs_btc_weak"
+      },
+      "label": "funding_regime:fund_neutral + rs_btc_zone:rs_btc_weak",
+      "n": 29,
+      "win_count": 18,
+      "loss_count": 11,
+      "win_rate": 62.1,
+      "delta_pp": 16.0,
+      "ci_low": 44.0,
+      "ci_high": 77.3,
+      "z_score": 1.73,
+      "p_value": 0.0834,
+      "confidence": "low",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0203",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "rs_btc_zone": "rs_btc_neutral"
+      },
+      "label": "funding_regime:fund_negative + rs_btc_zone:rs_btc_neutral",
+      "n": 142,
+      "win_count": 88,
+      "loss_count": 54,
+      "win_rate": 62.0,
+      "delta_pp": 15.9,
+      "ci_low": 53.8,
+      "ci_high": 69.5,
+      "z_score": 3.81,
+      "p_value": 0.0001,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0220",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_pos",
+        "rsi_zone": "rsi_overbought"
+      },
+      "label": "funding_regime:fund_extreme_pos + rsi_zone:rsi_overbought",
+      "n": 21,
+      "win_count": 13,
+      "loss_count": 8,
+      "win_rate": 61.9,
+      "delta_pp": 15.9,
+      "ci_low": 40.9,
+      "ci_high": 79.2,
+      "z_score": 1.46,
+      "p_value": 0.1448,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0391",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_pos",
+        "utc_session": "session_london"
+      },
+      "label": "rs_btc_zone:rs_btc_pos + utc_session:session_london",
+      "n": 123,
+      "win_count": 76,
+      "loss_count": 47,
+      "win_rate": 61.8,
+      "delta_pp": 15.7,
+      "ci_low": 53.0,
+      "ci_high": 69.9,
+      "z_score": 3.5,
+      "p_value": 0.0005,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0282",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "vwap_zone": "vwap_near"
+      },
+      "label": "funding_regime:fund_negative + vwap_zone:vwap_near",
+      "n": 65,
+      "win_count": 40,
+      "loss_count": 25,
+      "win_rate": 61.5,
+      "delta_pp": 15.5,
+      "ci_low": 49.4,
+      "ci_high": 72.4,
+      "z_score": 2.51,
+      "p_value": 0.0122,
+      "confidence": "medium",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0328",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_moderate",
+        "utc_session": "session_london"
+      },
+      "label": "mtf_bull_tier:mtf_bull_moderate + utc_session:session_london",
+      "n": 101,
+      "win_count": 62,
+      "loss_count": 39,
+      "win_rate": 61.4,
+      "delta_pp": 15.3,
+      "ci_low": 51.6,
+      "ci_high": 70.3,
+      "z_score": 3.09,
+      "p_value": 0.002,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0532",
+      "depth": 2,
+      "condition": {
+        "utc_session": "session_london",
+        "vwap_zone": "vwap_below"
+      },
+      "label": "utc_session:session_london + vwap_zone:vwap_below",
+      "n": 142,
+      "win_count": 87,
+      "loss_count": 55,
+      "win_rate": 61.3,
+      "delta_pp": 15.2,
+      "ci_low": 53.1,
+      "ci_high": 68.9,
+      "z_score": 3.64,
+      "p_value": 0.0003,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0218",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_pos",
+        "rsi_zone": "rsi_elevated"
+      },
+      "label": "funding_regime:fund_extreme_pos + rsi_zone:rsi_elevated",
+      "n": 18,
+      "win_count": 11,
+      "loss_count": 7,
+      "win_rate": 61.1,
+      "delta_pp": 15.1,
+      "ci_low": 38.6,
+      "ci_high": 79.7,
+      "z_score": 1.28,
+      "p_value": 0.1997,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0141",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=1",
+        "rsi_zone": "rsi_depressed"
+      },
+      "label": "ema_bull_1h:ema1h=1 + rsi_zone:rsi_depressed",
+      "n": 41,
+      "win_count": 25,
+      "loss_count": 16,
+      "win_rate": 61.0,
+      "delta_pp": 14.9,
+      "ci_low": 45.7,
+      "ci_high": 74.3,
+      "z_score": 1.92,
+      "p_value": 0.0551,
+      "confidence": "low",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0097",
+      "depth": 2,
+      "condition": {
+        "choch_bull_1h": "choch=1",
+        "setup": "breakout"
+      },
+      "label": "choch_bull_1h:choch=1 + setup:breakout",
+      "n": 33,
+      "win_count": 20,
+      "loss_count": 13,
+      "win_rate": 60.6,
+      "delta_pp": 14.6,
+      "ci_low": 43.7,
+      "ci_high": 75.3,
+      "z_score": 1.68,
+      "p_value": 0.0933,
+      "confidence": "low",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0415",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_pos",
+        "vwap_zone": "vwap_near"
+      },
+      "label": "rs_btc_zone:rs_btc_pos + vwap_zone:vwap_near",
+      "n": 71,
+      "win_count": 43,
+      "loss_count": 28,
+      "win_rate": 60.6,
+      "delta_pp": 14.5,
+      "ci_low": 48.9,
+      "ci_high": 71.1,
+      "z_score": 2.45,
+      "p_value": 0.0141,
+      "confidence": "medium",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0403",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neg",
+        "utc_session": "session_london"
+      },
+      "label": "rs_btc_zone:rs_btc_neg + utc_session:session_london",
+      "n": 25,
+      "win_count": 15,
+      "loss_count": 10,
+      "win_rate": 60.0,
+      "delta_pp": 14.0,
+      "ci_low": 40.7,
+      "ci_high": 76.6,
+      "z_score": 1.4,
+      "p_value": 0.1616,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0125",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=1",
+        "mtf_bull_tier": "mtf_bull_weak"
+      },
+      "label": "ema_bull_1h:ema1h=1 + mtf_bull_tier:mtf_bull_weak",
+      "n": 15,
+      "win_count": 9,
+      "loss_count": 6,
+      "win_rate": 60.0,
+      "delta_pp": 14.0,
+      "ci_low": 35.7,
+      "ci_high": 80.2,
+      "z_score": 1.08,
+      "p_value": 0.2783,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0204",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "rs_btc_zone": "rs_btc_neg"
+      },
+      "label": "funding_regime:fund_negative + rs_btc_zone:rs_btc_neg",
+      "n": 15,
+      "win_count": 9,
+      "loss_count": 6,
+      "win_rate": 60.0,
+      "delta_pp": 14.0,
+      "ci_low": 35.7,
+      "ci_high": 80.2,
+      "z_score": 1.08,
+      "p_value": 0.2783,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0121",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=0",
+        "funding_regime": "fund_negative"
+      },
+      "label": "ema_bull_1h:ema1h=0 + funding_regime:fund_negative",
+      "n": 187,
+      "win_count": 112,
+      "loss_count": 75,
+      "win_rate": 59.9,
+      "delta_pp": 13.8,
+      "ci_low": 52.7,
+      "ci_high": 66.7,
+      "z_score": 3.8,
+      "p_value": 0.0001,
+      "confidence": "high",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0504",
+      "depth": 2,
+      "condition": {
+        "setup": "squeeze",
+        "utc_session": "session_asia"
+      },
+      "label": "setup:squeeze + utc_session:session_asia",
+      "n": 122,
+      "win_count": 73,
+      "loss_count": 49,
+      "win_rate": 59.8,
+      "delta_pp": 13.8,
+      "ci_low": 51.0,
+      "ci_high": 68.1,
+      "z_score": 3.06,
+      "p_value": 0.0022,
+      "confidence": "high",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0225",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "rsi_zone": "rsi_depressed"
+      },
+      "label": "funding_regime:fund_negative + rsi_zone:rsi_depressed",
+      "n": 87,
+      "win_count": 52,
+      "loss_count": 35,
+      "win_rate": 59.8,
+      "delta_pp": 13.7,
+      "ci_low": 49.3,
+      "ci_high": 69.4,
+      "z_score": 2.57,
+      "p_value": 0.0102,
+      "confidence": "medium",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0238",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_pos",
+        "setup": "bos_fvg"
+      },
+      "label": "funding_regime:fund_extreme_pos + setup:bos_fvg",
+      "n": 32,
+      "win_count": 19,
+      "loss_count": 13,
+      "win_rate": 59.4,
+      "delta_pp": 13.3,
+      "ci_low": 42.3,
+      "ci_high": 74.5,
+      "z_score": 1.51,
+      "p_value": 0.1304,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0132",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=1",
+        "rs_btc_zone": "rs_btc_neg"
+      },
+      "label": "ema_bull_1h:ema1h=1 + rs_btc_zone:rs_btc_neg",
+      "n": 27,
+      "win_count": 16,
+      "loss_count": 11,
+      "win_rate": 59.3,
+      "delta_pp": 13.2,
+      "ci_low": 40.7,
+      "ci_high": 75.5,
+      "z_score": 1.38,
+      "p_value": 0.1684,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0417",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_weak",
+        "vwap_zone": "vwap_far_above"
+      },
+      "label": "rs_btc_zone:rs_btc_weak + vwap_zone:vwap_far_above",
+      "n": 27,
+      "win_count": 16,
+      "loss_count": 11,
+      "win_rate": 59.3,
+      "delta_pp": 13.2,
+      "ci_low": 40.7,
+      "ci_high": 75.5,
+      "z_score": 1.38,
+      "p_value": 0.1684,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0078",
+      "depth": 2,
+      "condition": {
+        "choch_bull_1h": "choch=1",
+        "mtf_bull_tier": "mtf_bull_strong"
+      },
+      "label": "choch_bull_1h:choch=1 + mtf_bull_tier:mtf_bull_strong",
+      "n": 49,
+      "win_count": 29,
+      "loss_count": 20,
+      "win_rate": 59.2,
+      "delta_pp": 13.1,
+      "ci_low": 45.2,
+      "ci_high": 71.8,
+      "z_score": 1.84,
+      "p_value": 0.065,
+      "confidence": "low",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0072",
+      "depth": 2,
+      "condition": {
+        "choch_bull_1h": "choch=0",
+        "funding_regime": "fund_negative"
+      },
+      "label": "choch_bull_1h:choch=0 + funding_regime:fund_negative",
+      "n": 227,
+      "win_count": 134,
+      "loss_count": 93,
+      "win_rate": 59.0,
+      "delta_pp": 13.0,
+      "ci_low": 52.5,
+      "ci_high": 65.2,
+      "z_score": 3.92,
+      "p_value": 0.0001,
+      "confidence": "high",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0398",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_weak",
+        "utc_session": "session_asia"
+      },
+      "label": "rs_btc_zone:rs_btc_weak + utc_session:session_asia",
+      "n": 22,
+      "win_count": 13,
+      "loss_count": 9,
+      "win_rate": 59.1,
+      "delta_pp": 13.0,
+      "ci_low": 38.7,
+      "ci_high": 76.7,
+      "z_score": 1.23,
+      "p_value": 0.2196,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0487",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_depressed",
+        "vwap_zone": "vwap_near"
+      },
+      "label": "rsi_zone:rsi_depressed + vwap_zone:vwap_near",
+      "n": 173,
+      "win_count": 102,
+      "loss_count": 71,
+      "win_rate": 59.0,
+      "delta_pp": 12.9,
+      "ci_low": 51.5,
+      "ci_high": 66.0,
+      "z_score": 3.41,
+      "p_value": 0.0007,
+      "confidence": "high",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0085",
+      "depth": 2,
+      "condition": {
+        "choch_bull_1h": "choch=1",
+        "rs_btc_zone": "rs_btc_neutral"
+      },
+      "label": "choch_bull_1h:choch=1 + rs_btc_zone:rs_btc_neutral",
+      "n": 39,
+      "win_count": 23,
+      "loss_count": 16,
+      "win_rate": 59.0,
+      "delta_pp": 12.9,
+      "ci_low": 43.4,
+      "ci_high": 72.9,
+      "z_score": 1.62,
+      "p_value": 0.1053,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0197",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_neutral",
+        "rs_btc_zone": "rs_btc_strong"
+      },
+      "label": "funding_regime:fund_neutral + rs_btc_zone:rs_btc_strong",
+      "n": 109,
+      "win_count": 64,
+      "loss_count": 45,
+      "win_rate": 58.7,
+      "delta_pp": 12.7,
+      "ci_low": 49.3,
+      "ci_high": 67.5,
+      "z_score": 2.65,
+      "p_value": 0.008,
+      "confidence": "high",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0501",
+      "depth": 2,
+      "condition": {
+        "setup": "squeeze",
+        "utc_session": "session_london"
+      },
+      "label": "setup:squeeze + utc_session:session_london",
+      "n": 116,
+      "win_count": 68,
+      "loss_count": 48,
+      "win_rate": 58.6,
+      "delta_pp": 12.6,
+      "ci_low": 49.5,
+      "ci_high": 67.2,
+      "z_score": 2.72,
+      "p_value": 0.0066,
+      "confidence": "high",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0431",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_strong",
+        "vwap_zone": "vwap_far_above"
+      },
+      "label": "rs_btc_zone:rs_btc_strong + vwap_zone:vwap_far_above",
+      "n": 58,
+      "win_count": 34,
+      "loss_count": 24,
+      "win_rate": 58.6,
+      "delta_pp": 12.6,
+      "ci_low": 45.8,
+      "ci_high": 70.4,
+      "z_score": 1.92,
+      "p_value": 0.0547,
+      "confidence": "low",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0480",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_oversold",
+        "vwap_zone": "vwap_below"
+      },
+      "label": "rsi_zone:rsi_oversold + vwap_zone:vwap_below",
+      "n": 111,
+      "win_count": 65,
+      "loss_count": 46,
+      "win_rate": 58.6,
+      "delta_pp": 12.5,
+      "ci_low": 49.3,
+      "ci_high": 67.3,
+      "z_score": 2.64,
+      "p_value": 0.0082,
+      "confidence": "high",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0422",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neutral",
+        "vwap_zone": "vwap_far_above"
+      },
+      "label": "rs_btc_zone:rs_btc_neutral + vwap_zone:vwap_far_above",
+      "n": 41,
+      "win_count": 24,
+      "loss_count": 17,
+      "win_rate": 58.5,
+      "delta_pp": 12.5,
+      "ci_low": 43.4,
+      "ci_high": 72.2,
+      "z_score": 1.6,
+      "p_value": 0.1086,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0016",
+      "depth": 1,
+      "condition": {
+        "funding_regime": "fund_negative"
+      },
+      "label": "funding_regime:fund_negative",
+      "n": 233,
+      "win_count": 136,
+      "loss_count": 97,
+      "win_rate": 58.4,
+      "delta_pp": 12.3,
+      "ci_low": 52.0,
+      "ci_high": 64.5,
+      "z_score": 3.77,
+      "p_value": 0.0002,
+      "confidence": "high",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0253",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_pos",
+        "utc_session": "session_london"
+      },
+      "label": "funding_regime:fund_extreme_pos + utc_session:session_london",
+      "n": 24,
+      "win_count": 14,
+      "loss_count": 10,
+      "win_rate": 58.3,
+      "delta_pp": 12.3,
+      "ci_low": 38.8,
+      "ci_high": 75.5,
+      "z_score": 1.21,
+      "p_value": 0.2272,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0207",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_positive",
+        "rs_btc_zone": "rs_btc_strong"
+      },
+      "label": "funding_regime:fund_positive + rs_btc_zone:rs_btc_strong",
+      "n": 12,
+      "win_count": 7,
+      "loss_count": 5,
+      "win_rate": 58.3,
+      "delta_pp": 12.3,
+      "ci_low": 32.0,
+      "ci_high": 80.7,
+      "z_score": 0.85,
+      "p_value": 0.3931,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0274",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_pos",
+        "vwap_zone": "vwap_above"
+      },
+      "label": "funding_regime:fund_extreme_pos + vwap_zone:vwap_above",
+      "n": 12,
+      "win_count": 7,
+      "loss_count": 5,
+      "win_rate": 58.3,
+      "delta_pp": 12.3,
+      "ci_low": 32.0,
+      "ci_high": 80.7,
+      "z_score": 0.85,
+      "p_value": 0.3931,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0489",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_neutral",
+        "vwap_zone": "vwap_far_above"
+      },
+      "label": "rsi_zone:rsi_neutral + vwap_zone:vwap_far_above",
+      "n": 12,
+      "win_count": 7,
+      "loss_count": 5,
+      "win_rate": 58.3,
+      "delta_pp": 12.3,
+      "ci_low": 32.0,
+      "ci_high": 80.7,
+      "z_score": 0.85,
+      "p_value": 0.3931,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0438",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_oversold",
+        "setup": "breakout"
+      },
+      "label": "rsi_zone:rsi_oversold + setup:breakout",
+      "n": 43,
+      "win_count": 25,
+      "loss_count": 18,
+      "win_rate": 58.1,
+      "delta_pp": 12.1,
+      "ci_low": 43.3,
+      "ci_high": 71.6,
+      "z_score": 1.59,
+      "p_value": 0.1116,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0242",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "setup": "squeeze"
+      },
+      "label": "funding_regime:fund_negative + setup:squeeze",
+      "n": 145,
+      "win_count": 84,
+      "loss_count": 61,
+      "win_rate": 57.9,
+      "delta_pp": 11.9,
+      "ci_low": 49.8,
+      "ci_high": 65.7,
+      "z_score": 2.87,
+      "p_value": 0.0041,
+      "confidence": "high",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0444",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_overbought",
+        "setup": "squeeze"
+      },
+      "label": "rsi_zone:rsi_overbought + setup:squeeze",
+      "n": 19,
+      "win_count": 11,
+      "loss_count": 8,
+      "win_rate": 57.9,
+      "delta_pp": 11.8,
+      "ci_low": 36.3,
+      "ci_high": 76.9,
+      "z_score": 1.04,
+      "p_value": 0.3001,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0373",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_pos",
+        "setup": "bos_fvg"
+      },
+      "label": "rs_btc_zone:rs_btc_pos + setup:bos_fvg",
+      "n": 116,
+      "win_count": 67,
+      "loss_count": 49,
+      "win_rate": 57.8,
+      "delta_pp": 11.7,
+      "ci_low": 48.7,
+      "ci_high": 66.4,
+      "z_score": 2.53,
+      "p_value": 0.0114,
+      "confidence": "medium",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0430",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_strong",
+        "vwap_zone": "vwap_above"
+      },
+      "label": "rs_btc_zone:rs_btc_strong + vwap_zone:vwap_above",
+      "n": 26,
+      "win_count": 15,
+      "loss_count": 11,
+      "win_rate": 57.7,
+      "delta_pp": 11.6,
+      "ci_low": 38.9,
+      "ci_high": 74.5,
+      "z_score": 1.19,
+      "p_value": 0.2335,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0115",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=1",
+        "funding_regime": "fund_extreme_pos"
+      },
+      "label": "ema_bull_1h:ema1h=1 + funding_regime:fund_extreme_pos",
+      "n": 35,
+      "win_count": 20,
+      "loss_count": 15,
+      "win_rate": 57.1,
+      "delta_pp": 11.1,
+      "ci_low": 40.9,
+      "ci_high": 72.0,
+      "z_score": 1.32,
+      "p_value": 0.1878,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0377",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_weak",
+        "setup": "bos_fvg"
+      },
+      "label": "rs_btc_zone:rs_btc_weak + setup:bos_fvg",
+      "n": 35,
+      "win_count": 20,
+      "loss_count": 15,
+      "win_rate": 57.1,
+      "delta_pp": 11.1,
+      "ci_low": 40.9,
+      "ci_high": 72.0,
+      "z_score": 1.32,
+      "p_value": 0.1878,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0299",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_strong",
+        "rsi_zone": "rsi_oversold"
+      },
+      "label": "mtf_bull_tier:mtf_bull_strong + rsi_zone:rsi_oversold",
+      "n": 21,
+      "win_count": 12,
+      "loss_count": 9,
+      "win_rate": 57.1,
+      "delta_pp": 11.1,
+      "ci_low": 36.5,
+      "ci_high": 75.5,
+      "z_score": 1.02,
+      "p_value": 0.3076,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0226",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "rsi_zone": "rsi_neutral"
+      },
+      "label": "funding_regime:fund_negative + rsi_zone:rsi_neutral",
+      "n": 58,
+      "win_count": 33,
+      "loss_count": 25,
+      "win_rate": 56.9,
+      "delta_pp": 10.9,
+      "ci_low": 44.1,
+      "ci_high": 68.8,
+      "z_score": 1.66,
+      "p_value": 0.0974,
+      "confidence": "low",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0133",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=1",
+        "rs_btc_zone": "rs_btc_strong"
+      },
+      "label": "ema_bull_1h:ema1h=1 + rs_btc_zone:rs_btc_strong",
+      "n": 104,
+      "win_count": 59,
+      "loss_count": 45,
+      "win_rate": 56.7,
+      "delta_pp": 10.7,
+      "ci_low": 47.1,
+      "ci_high": 65.8,
+      "z_score": 2.19,
+      "p_value": 0.0288,
+      "confidence": "medium",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0074",
+      "depth": 2,
+      "condition": {
+        "choch_bull_1h": "choch=1",
+        "funding_regime": "fund_neutral"
+      },
+      "label": "choch_bull_1h:choch=1 + funding_regime:fund_neutral",
+      "n": 48,
+      "win_count": 27,
+      "loss_count": 21,
+      "win_rate": 56.2,
+      "delta_pp": 10.2,
+      "ci_low": 42.3,
+      "ci_high": 69.3,
+      "z_score": 1.42,
+      "p_value": 0.1561,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0289",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_strong",
+        "rs_btc_zone": "rs_btc_strong"
+      },
+      "label": "mtf_bull_tier:mtf_bull_strong + rs_btc_zone:rs_btc_strong",
+      "n": 132,
+      "win_count": 74,
+      "loss_count": 58,
+      "win_rate": 56.1,
+      "delta_pp": 10.0,
+      "ci_low": 47.5,
+      "ci_high": 64.2,
+      "z_score": 2.31,
+      "p_value": 0.021,
+      "confidence": "medium",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0307",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_weak",
+        "rsi_zone": "rsi_elevated"
+      },
+      "label": "mtf_bull_tier:mtf_bull_weak + rsi_zone:rsi_elevated",
+      "n": 54,
+      "win_count": 30,
+      "loss_count": 24,
+      "win_rate": 55.6,
+      "delta_pp": 9.5,
+      "ci_low": 42.4,
+      "ci_high": 68.0,
+      "z_score": 1.4,
+      "p_value": 0.1609,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0461",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_oversold",
+        "utc_session": "session_asia"
+      },
+      "label": "rsi_zone:rsi_oversold + utc_session:session_asia",
+      "n": 45,
+      "win_count": 25,
+      "loss_count": 20,
+      "win_rate": 55.6,
+      "delta_pp": 9.5,
+      "ci_low": 41.2,
+      "ci_high": 69.1,
+      "z_score": 1.28,
+      "p_value": 0.2006,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0024",
+      "depth": 1,
+      "condition": {
+        "rsi_zone": "rsi_oversold"
+      },
+      "label": "rsi_zone:rsi_oversold",
+      "n": 195,
+      "win_count": 108,
+      "loss_count": 87,
+      "win_rate": 55.4,
+      "delta_pp": 9.3,
+      "ci_low": 48.4,
+      "ci_high": 62.2,
+      "z_score": 2.62,
+      "p_value": 0.0089,
+      "confidence": "high",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0533",
+      "depth": 2,
+      "condition": {
+        "utc_session": "session_london",
+        "vwap_zone": "vwap_near"
+      },
+      "label": "utc_session:session_london + vwap_zone:vwap_near",
+      "n": 130,
+      "win_count": 72,
+      "loss_count": 58,
+      "win_rate": 55.4,
+      "delta_pp": 9.3,
+      "ci_low": 46.8,
+      "ci_high": 63.7,
+      "z_score": 2.14,
+      "p_value": 0.0327,
+      "confidence": "medium",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0371",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_strong",
+        "rsi_zone": "rsi_neutral"
+      },
+      "label": "rs_btc_zone:rs_btc_strong + rsi_zone:rsi_neutral",
+      "n": 29,
+      "win_count": 16,
+      "loss_count": 13,
+      "win_rate": 55.2,
+      "delta_pp": 9.1,
+      "ci_low": 37.5,
+      "ci_high": 71.6,
+      "z_score": 0.99,
+      "p_value": 0.3241,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0500",
+      "depth": 2,
+      "condition": {
+        "setup": "bos_fvg",
+        "utc_session": "session_asia"
+      },
+      "label": "setup:bos_fvg + utc_session:session_asia",
+      "n": 169,
+      "win_count": 93,
+      "loss_count": 76,
+      "win_rate": 55.0,
+      "delta_pp": 9.0,
+      "ci_low": 47.5,
+      "ci_high": 62.3,
+      "z_score": 2.34,
+      "p_value": 0.0191,
+      "confidence": "medium",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0087",
+      "depth": 2,
+      "condition": {
+        "choch_bull_1h": "choch=0",
+        "rsi_zone": "rsi_oversold"
+      },
+      "label": "choch_bull_1h:choch=0 + rsi_zone:rsi_oversold",
+      "n": 193,
+      "win_count": 106,
+      "loss_count": 87,
+      "win_rate": 54.9,
+      "delta_pp": 8.9,
+      "ci_low": 47.9,
+      "ci_high": 61.8,
+      "z_score": 2.47,
+      "p_value": 0.0134,
+      "confidence": "medium",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0144",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=0",
+        "rsi_zone": "rsi_oversold"
+      },
+      "label": "ema_bull_1h:ema1h=0 + rsi_zone:rsi_oversold",
+      "n": 193,
+      "win_count": 106,
+      "loss_count": 87,
+      "win_rate": 54.9,
+      "delta_pp": 8.9,
+      "ci_low": 47.9,
+      "ci_high": 61.8,
+      "z_score": 2.47,
+      "p_value": 0.0134,
+      "confidence": "medium",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0497",
+      "depth": 2,
+      "condition": {
+        "setup": "bos_fvg",
+        "utc_session": "session_london"
+      },
+      "label": "setup:bos_fvg + utc_session:session_london",
+      "n": 151,
+      "win_count": 83,
+      "loss_count": 68,
+      "win_rate": 55.0,
+      "delta_pp": 8.9,
+      "ci_low": 47.0,
+      "ci_high": 62.7,
+      "z_score": 2.2,
+      "p_value": 0.0279,
+      "confidence": "medium",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0360",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neutral",
+        "rsi_zone": "rsi_overbought"
+      },
+      "label": "rs_btc_zone:rs_btc_neutral + rsi_zone:rsi_overbought",
+      "n": 93,
+      "win_count": 51,
+      "loss_count": 42,
+      "win_rate": 54.8,
+      "delta_pp": 8.8,
+      "ci_low": 44.7,
+      "ci_high": 64.6,
+      "z_score": 1.7,
+      "p_value": 0.0889,
+      "confidence": "low",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0248",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_neg",
+        "utc_session": "session_asia"
+      },
+      "label": "funding_regime:fund_extreme_neg + utc_session:session_asia",
+      "n": 64,
+      "win_count": 35,
+      "loss_count": 29,
+      "win_rate": 54.7,
+      "delta_pp": 8.6,
+      "ci_low": 42.6,
+      "ci_high": 66.3,
+      "z_score": 1.39,
+      "p_value": 0.1655,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0483",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_overbought",
+        "vwap_zone": "vwap_near"
+      },
+      "label": "rsi_zone:rsi_overbought + vwap_zone:vwap_near",
+      "n": 11,
+      "win_count": 6,
+      "loss_count": 5,
+      "win_rate": 54.5,
+      "delta_pp": 8.5,
+      "ci_low": 28.0,
+      "ci_high": 78.7,
+      "z_score": 0.57,
+      "p_value": 0.5717,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0055",
+      "depth": 1,
+      "condition": {
+        "rs_btc_zone": "rs_btc_strong"
+      },
+      "label": "rs_btc_zone:rs_btc_strong",
+      "n": 216,
+      "win_count": 117,
+      "loss_count": 99,
+      "win_rate": 54.2,
+      "delta_pp": 8.1,
+      "ci_low": 47.5,
+      "ci_high": 60.7,
+      "z_score": 2.39,
+      "p_value": 0.0167,
+      "confidence": "medium",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0435",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_elevated",
+        "setup": "bos_fvg"
+      },
+      "label": "rsi_zone:rsi_elevated + setup:bos_fvg",
+      "n": 218,
+      "win_count": 118,
+      "loss_count": 100,
+      "win_rate": 54.1,
+      "delta_pp": 8.1,
+      "ci_low": 47.5,
+      "ci_high": 60.6,
+      "z_score": 2.39,
+      "p_value": 0.0167,
+      "confidence": "medium",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0165",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=1",
+        "vwap_zone": "vwap_far_above"
+      },
+      "label": "ema_bull_1h:ema1h=1 + vwap_zone:vwap_far_above",
+      "n": 144,
+      "win_count": 78,
+      "loss_count": 66,
+      "win_rate": 54.2,
+      "delta_pp": 8.1,
+      "ci_low": 46.0,
+      "ci_high": 62.1,
+      "z_score": 1.95,
+      "p_value": 0.0506,
+      "confidence": "low",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0393",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_pos",
+        "utc_session": "session_off"
+      },
+      "label": "rs_btc_zone:rs_btc_pos + utc_session:session_off",
+      "n": 85,
+      "win_count": 46,
+      "loss_count": 39,
+      "win_rate": 54.1,
+      "delta_pp": 8.1,
+      "ci_low": 43.6,
+      "ci_high": 64.3,
+      "z_score": 1.49,
+      "p_value": 0.1355,
+      "confidence": "provisional",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0160",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=0",
+        "utc_session": "session_london"
+      },
+      "label": "ema_bull_1h:ema1h=0 + utc_session:session_london",
+      "n": 281,
+      "win_count": 152,
+      "loss_count": 129,
+      "win_rate": 54.1,
+      "delta_pp": 8.0,
+      "ci_low": 48.2,
+      "ci_high": 59.8,
+      "z_score": 2.71,
+      "p_value": 0.0068,
+      "confidence": "high",
+      "verdict": "POSITIVE"
+    }
+  ],
+  "anti_patterns": [
+    {
+      "id": "H0405",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neg",
+        "utc_session": "session_off"
+      },
+      "label": "rs_btc_zone:rs_btc_neg + utc_session:session_off",
+      "n": 18,
+      "win_count": 3,
+      "loss_count": 15,
+      "win_rate": 16.7,
+      "delta_pp": -29.4,
+      "ci_low": 5.8,
+      "ci_high": 39.2,
+      "z_score": -2.5,
+      "p_value": 0.0124,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0351",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_pos",
+        "rsi_zone": "rsi_overbought"
+      },
+      "label": "rs_btc_zone:rs_btc_pos + rsi_zone:rsi_overbought",
+      "n": 30,
+      "win_count": 7,
+      "loss_count": 23,
+      "win_rate": 23.3,
+      "delta_pp": -22.7,
+      "ci_low": 11.8,
+      "ci_high": 40.9,
+      "z_score": -2.5,
+      "p_value": 0.0126,
+      "confidence": "medium",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0490",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_neutral",
+        "vwap_zone": "vwap_far_below"
+      },
+      "label": "rsi_zone:rsi_neutral + vwap_zone:vwap_far_below",
+      "n": 76,
+      "win_count": 19,
+      "loss_count": 57,
+      "win_rate": 25.0,
+      "delta_pp": -21.0,
+      "ci_low": 16.6,
+      "ci_high": 35.8,
+      "z_score": -3.68,
+      "p_value": 0.0002,
+      "confidence": "high",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0189",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_neg",
+        "rs_btc_zone": "rs_btc_weak"
+      },
+      "label": "funding_regime:fund_extreme_neg + rs_btc_zone:rs_btc_weak",
+      "n": 60,
+      "win_count": 15,
+      "loss_count": 45,
+      "win_rate": 25.0,
+      "delta_pp": -21.0,
+      "ci_low": 15.8,
+      "ci_high": 37.2,
+      "z_score": -3.27,
+      "p_value": 0.0011,
+      "confidence": "high",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0276",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_pos",
+        "vwap_zone": "vwap_far_below"
+      },
+      "label": "funding_regime:fund_extreme_pos + vwap_zone:vwap_far_below",
+      "n": 24,
+      "win_count": 6,
+      "loss_count": 18,
+      "win_rate": 25.0,
+      "delta_pp": -21.0,
+      "ci_low": 12.0,
+      "ci_high": 44.9,
+      "z_score": -2.07,
+      "p_value": 0.0386,
+      "confidence": "medium",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0221",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_pos",
+        "rsi_zone": "rsi_depressed"
+      },
+      "label": "funding_regime:fund_extreme_pos + rsi_zone:rsi_depressed",
+      "n": 20,
+      "win_count": 5,
+      "loss_count": 15,
+      "win_rate": 25.0,
+      "delta_pp": -21.0,
+      "ci_low": 11.2,
+      "ci_high": 46.9,
+      "z_score": -1.89,
+      "p_value": 0.059,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0364",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neg",
+        "rsi_zone": "rsi_oversold"
+      },
+      "label": "rs_btc_zone:rs_btc_neg + rsi_zone:rsi_oversold",
+      "n": 16,
+      "win_count": 4,
+      "loss_count": 12,
+      "win_rate": 25.0,
+      "delta_pp": -21.0,
+      "ci_low": 10.2,
+      "ci_high": 49.5,
+      "z_score": -1.69,
+      "p_value": 0.0912,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0378",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_weak",
+        "setup": "squeeze"
+      },
+      "label": "rs_btc_zone:rs_btc_weak + setup:squeeze",
+      "n": 55,
+      "win_count": 14,
+      "loss_count": 41,
+      "win_rate": 25.5,
+      "delta_pp": -20.6,
+      "ci_low": 15.8,
+      "ci_high": 38.3,
+      "z_score": -3.06,
+      "p_value": 0.0022,
+      "confidence": "high",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0412",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_pos",
+        "vwap_zone": "vwap_far_above"
+      },
+      "label": "rs_btc_zone:rs_btc_pos + vwap_zone:vwap_far_above",
+      "n": 35,
+      "win_count": 9,
+      "loss_count": 26,
+      "win_rate": 25.7,
+      "delta_pp": -20.3,
+      "ci_low": 14.2,
+      "ci_high": 42.1,
+      "z_score": -2.41,
+      "p_value": 0.0158,
+      "confidence": "medium",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0404",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neg",
+        "utc_session": "session_ny"
+      },
+      "label": "rs_btc_zone:rs_btc_neg + utc_session:session_ny",
+      "n": 30,
+      "win_count": 8,
+      "loss_count": 22,
+      "win_rate": 26.7,
+      "delta_pp": -19.4,
+      "ci_low": 14.2,
+      "ci_high": 44.4,
+      "z_score": -2.13,
+      "p_value": 0.0332,
+      "confidence": "medium",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0206",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_positive",
+        "rs_btc_zone": "rs_btc_neutral"
+      },
+      "label": "funding_regime:fund_positive + rs_btc_zone:rs_btc_neutral",
+      "n": 26,
+      "win_count": 7,
+      "loss_count": 19,
+      "win_rate": 26.9,
+      "delta_pp": -19.1,
+      "ci_low": 13.7,
+      "ci_high": 46.1,
+      "z_score": -1.96,
+      "p_value": 0.0504,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0068",
+      "depth": 2,
+      "condition": {
+        "choch_bull_1h": "choch=1",
+        "ema_bull_1h": "ema1h=0"
+      },
+      "label": "choch_bull_1h:choch=1 + ema_bull_1h:ema1h=0",
+      "n": 22,
+      "win_count": 6,
+      "loss_count": 16,
+      "win_rate": 27.3,
+      "delta_pp": -18.8,
+      "ci_low": 13.2,
+      "ci_high": 48.2,
+      "z_score": -1.77,
+      "p_value": 0.0773,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0423",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neutral",
+        "vwap_zone": "vwap_far_below"
+      },
+      "label": "rs_btc_zone:rs_btc_neutral + vwap_zone:vwap_far_below",
+      "n": 84,
+      "win_count": 23,
+      "loss_count": 61,
+      "win_rate": 27.4,
+      "delta_pp": -18.7,
+      "ci_low": 19.0,
+      "ci_high": 37.7,
+      "z_score": -3.43,
+      "p_value": 0.0006,
+      "confidence": "high",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0296",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_weak",
+        "rs_btc_zone": "rs_btc_neg"
+      },
+      "label": "mtf_bull_tier:mtf_bull_weak + rs_btc_zone:rs_btc_neg",
+      "n": 28,
+      "win_count": 8,
+      "loss_count": 20,
+      "win_rate": 28.6,
+      "delta_pp": -17.5,
+      "ci_low": 15.3,
+      "ci_high": 47.1,
+      "z_score": -1.86,
+      "p_value": 0.0636,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0366",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neg",
+        "rsi_zone": "rsi_neutral"
+      },
+      "label": "rs_btc_zone:rs_btc_neg + rsi_zone:rsi_neutral",
+      "n": 28,
+      "win_count": 8,
+      "loss_count": 20,
+      "win_rate": 28.6,
+      "delta_pp": -17.5,
+      "ci_low": 15.3,
+      "ci_high": 47.1,
+      "z_score": -1.86,
+      "p_value": 0.0636,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0427",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neg",
+        "vwap_zone": "vwap_far_below"
+      },
+      "label": "rs_btc_zone:rs_btc_neg + vwap_zone:vwap_far_below",
+      "n": 28,
+      "win_count": 8,
+      "loss_count": 20,
+      "win_rate": 28.6,
+      "delta_pp": -17.5,
+      "ci_low": 15.3,
+      "ci_high": 47.1,
+      "z_score": -1.86,
+      "p_value": 0.0636,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0084",
+      "depth": 2,
+      "condition": {
+        "choch_bull_1h": "choch=1",
+        "rs_btc_zone": "rs_btc_pos"
+      },
+      "label": "choch_bull_1h:choch=1 + rs_btc_zone:rs_btc_pos",
+      "n": 14,
+      "win_count": 4,
+      "loss_count": 10,
+      "win_rate": 28.6,
+      "delta_pp": -17.5,
+      "ci_low": 11.7,
+      "ci_high": 54.6,
+      "z_score": -1.31,
+      "p_value": 0.1896,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0246",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_neg",
+        "utc_session": "session_ny"
+      },
+      "label": "funding_regime:fund_extreme_neg + utc_session:session_ny",
+      "n": 111,
+      "win_count": 32,
+      "loss_count": 79,
+      "win_rate": 28.8,
+      "delta_pp": -17.2,
+      "ci_low": 21.2,
+      "ci_high": 37.9,
+      "z_score": -3.64,
+      "p_value": 0.0003,
+      "confidence": "high",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0211",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_neg",
+        "rsi_zone": "rsi_depressed"
+      },
+      "label": "funding_regime:fund_extreme_neg + rsi_zone:rsi_depressed",
+      "n": 69,
+      "win_count": 20,
+      "loss_count": 49,
+      "win_rate": 29.0,
+      "delta_pp": -17.1,
+      "ci_low": 19.6,
+      "ci_high": 40.6,
+      "z_score": -2.84,
+      "p_value": 0.0045,
+      "confidence": "high",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0537",
+      "depth": 2,
+      "condition": {
+        "utc_session": "session_ny",
+        "vwap_zone": "vwap_below"
+      },
+      "label": "utc_session:session_ny + vwap_zone:vwap_below",
+      "n": 141,
+      "win_count": 41,
+      "loss_count": 100,
+      "win_rate": 29.1,
+      "delta_pp": -17.0,
+      "ci_low": 22.2,
+      "ci_high": 37.0,
+      "z_score": -4.04,
+      "p_value": 0.0001,
+      "confidence": "high",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0267",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_neg",
+        "vwap_zone": "vwap_below"
+      },
+      "label": "funding_regime:fund_extreme_neg + vwap_zone:vwap_below",
+      "n": 54,
+      "win_count": 16,
+      "loss_count": 38,
+      "win_rate": 29.6,
+      "delta_pp": -16.4,
+      "ci_low": 19.1,
+      "ci_high": 42.8,
+      "z_score": -2.42,
+      "p_value": 0.0155,
+      "confidence": "medium",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0419",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_weak",
+        "vwap_zone": "vwap_below"
+      },
+      "label": "rs_btc_zone:rs_btc_weak + vwap_zone:vwap_below",
+      "n": 20,
+      "win_count": 6,
+      "loss_count": 14,
+      "win_rate": 30.0,
+      "delta_pp": -16.0,
+      "ci_low": 14.5,
+      "ci_high": 51.9,
+      "z_score": -1.44,
+      "p_value": 0.1499,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0219",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_pos",
+        "rsi_zone": "rsi_oversold"
+      },
+      "label": "funding_regime:fund_extreme_pos + rsi_zone:rsi_oversold",
+      "n": 10,
+      "win_count": 3,
+      "loss_count": 7,
+      "win_rate": 30.0,
+      "delta_pp": -16.0,
+      "ci_low": 10.8,
+      "ci_high": 60.3,
+      "z_score": -1.02,
+      "p_value": 0.3087,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0262",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_positive",
+        "utc_session": "session_off"
+      },
+      "label": "funding_regime:fund_positive + utc_session:session_off",
+      "n": 10,
+      "win_count": 3,
+      "loss_count": 7,
+      "win_rate": 30.0,
+      "delta_pp": -16.0,
+      "ci_low": 10.8,
+      "ci_high": 60.3,
+      "z_score": -1.02,
+      "p_value": 0.3087,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0277",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_pos",
+        "vwap_zone": "vwap_below"
+      },
+      "label": "funding_regime:fund_extreme_pos + vwap_zone:vwap_below",
+      "n": 10,
+      "win_count": 3,
+      "loss_count": 7,
+      "win_rate": 30.0,
+      "delta_pp": -16.0,
+      "ci_low": 10.8,
+      "ci_high": 60.3,
+      "z_score": -1.02,
+      "p_value": 0.3087,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0386",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neg",
+        "setup": "short_dist"
+      },
+      "label": "rs_btc_zone:rs_btc_neg + setup:short_dist",
+      "n": 10,
+      "win_count": 3,
+      "loss_count": 7,
+      "win_rate": 30.0,
+      "delta_pp": -16.0,
+      "ci_low": 10.8,
+      "ci_high": 60.3,
+      "z_score": -1.02,
+      "p_value": 0.3087,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0357",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_weak",
+        "rsi_zone": "rsi_neutral"
+      },
+      "label": "rs_btc_zone:rs_btc_weak + rsi_zone:rsi_neutral",
+      "n": 46,
+      "win_count": 14,
+      "loss_count": 32,
+      "win_rate": 30.4,
+      "delta_pp": -15.6,
+      "ci_low": 19.1,
+      "ci_high": 44.8,
+      "z_score": -2.12,
+      "p_value": 0.0336,
+      "confidence": "medium",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0396",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_weak",
+        "utc_session": "session_ny"
+      },
+      "label": "rs_btc_zone:rs_btc_weak + utc_session:session_ny",
+      "n": 46,
+      "win_count": 14,
+      "loss_count": 32,
+      "win_rate": 30.4,
+      "delta_pp": -15.6,
+      "ci_low": 19.1,
+      "ci_high": 44.8,
+      "z_score": -2.12,
+      "p_value": 0.0336,
+      "confidence": "medium",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0320",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_weak",
+        "setup": "breakout"
+      },
+      "label": "mtf_bull_tier:mtf_bull_weak + setup:breakout",
+      "n": 49,
+      "win_count": 15,
+      "loss_count": 34,
+      "win_rate": 30.6,
+      "delta_pp": -15.4,
+      "ci_low": 19.5,
+      "ci_high": 44.5,
+      "z_score": -2.17,
+      "p_value": 0.0302,
+      "confidence": "medium",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0441",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_oversold",
+        "setup": "short_dist"
+      },
+      "label": "rsi_zone:rsi_oversold + setup:short_dist",
+      "n": 29,
+      "win_count": 9,
+      "loss_count": 20,
+      "win_rate": 31.0,
+      "delta_pp": -15.0,
+      "ci_low": 17.3,
+      "ci_high": 49.2,
+      "z_score": -1.62,
+      "p_value": 0.1048,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0186",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_positive",
+        "mtf_bull_tier": "mtf_bull_strong"
+      },
+      "label": "funding_regime:fund_positive + mtf_bull_tier:mtf_bull_strong",
+      "n": 32,
+      "win_count": 10,
+      "loss_count": 22,
+      "win_rate": 31.2,
+      "delta_pp": -14.8,
+      "ci_low": 18.0,
+      "ci_high": 48.6,
+      "z_score": -1.68,
+      "p_value": 0.0931,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0383",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neg",
+        "setup": "breakout"
+      },
+      "label": "rs_btc_zone:rs_btc_neg + setup:breakout",
+      "n": 16,
+      "win_count": 5,
+      "loss_count": 11,
+      "win_rate": 31.2,
+      "delta_pp": -14.8,
+      "ci_low": 14.2,
+      "ci_high": 55.6,
+      "z_score": -1.19,
+      "p_value": 0.2351,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0137",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=0",
+        "rs_btc_zone": "rs_btc_neg"
+      },
+      "label": "ema_bull_1h:ema1h=0 + rs_btc_zone:rs_btc_neg",
+      "n": 83,
+      "win_count": 26,
+      "loss_count": 57,
+      "win_rate": 31.3,
+      "delta_pp": -14.7,
+      "ci_low": 22.4,
+      "ci_high": 41.9,
+      "z_score": -2.69,
+      "p_value": 0.0071,
+      "confidence": "high",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0542",
+      "depth": 2,
+      "condition": {
+        "utc_session": "session_off",
+        "vwap_zone": "vwap_below"
+      },
+      "label": "utc_session:session_off + vwap_zone:vwap_below",
+      "n": 95,
+      "win_count": 30,
+      "loss_count": 65,
+      "win_rate": 31.6,
+      "delta_pp": -14.5,
+      "ci_low": 23.1,
+      "ci_high": 41.5,
+      "z_score": -2.83,
+      "p_value": 0.0047,
+      "confidence": "high",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0255",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_pos",
+        "utc_session": "session_off"
+      },
+      "label": "funding_regime:fund_extreme_pos + utc_session:session_off",
+      "n": 19,
+      "win_count": 6,
+      "loss_count": 13,
+      "win_rate": 31.6,
+      "delta_pp": -14.5,
+      "ci_low": 15.4,
+      "ci_high": 54.0,
+      "z_score": -1.27,
+      "p_value": 0.2058,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0315",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_strong",
+        "setup": "short_dist"
+      },
+      "label": "mtf_bull_tier:mtf_bull_strong + setup:short_dist",
+      "n": 78,
+      "win_count": 25,
+      "loss_count": 53,
+      "win_rate": 32.1,
+      "delta_pp": -14.0,
+      "ci_low": 22.7,
+      "ci_high": 43.0,
+      "z_score": -2.48,
+      "p_value": 0.0131,
+      "confidence": "medium",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0437",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_elevated",
+        "setup": "short_dist"
+      },
+      "label": "rsi_zone:rsi_elevated + setup:short_dist",
+      "n": 75,
+      "win_count": 24,
+      "loss_count": 51,
+      "win_rate": 32.0,
+      "delta_pp": -14.0,
+      "ci_low": 22.5,
+      "ci_high": 43.2,
+      "z_score": -2.44,
+      "p_value": 0.0147,
+      "confidence": "medium",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0188",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_neg",
+        "rs_btc_zone": "rs_btc_pos"
+      },
+      "label": "funding_regime:fund_extreme_neg + rs_btc_zone:rs_btc_pos",
+      "n": 59,
+      "win_count": 19,
+      "loss_count": 40,
+      "win_rate": 32.2,
+      "delta_pp": -13.8,
+      "ci_low": 21.7,
+      "ci_high": 44.9,
+      "z_score": -2.13,
+      "p_value": 0.0329,
+      "confidence": "medium",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0392",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_pos",
+        "utc_session": "session_ny"
+      },
+      "label": "rs_btc_zone:rs_btc_pos + utc_session:session_ny",
+      "n": 135,
+      "win_count": 44,
+      "loss_count": 91,
+      "win_rate": 32.6,
+      "delta_pp": -13.5,
+      "ci_low": 25.3,
+      "ci_high": 40.9,
+      "z_score": -3.14,
+      "p_value": 0.0017,
+      "confidence": "high",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0382",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neutral",
+        "setup": "short_dist"
+      },
+      "label": "rs_btc_zone:rs_btc_neutral + setup:short_dist",
+      "n": 245,
+      "win_count": 80,
+      "loss_count": 165,
+      "win_rate": 32.7,
+      "delta_pp": -13.4,
+      "ci_low": 27.1,
+      "ci_high": 38.8,
+      "z_score": -4.21,
+      "p_value": 0.0,
+      "confidence": "high",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0527",
+      "depth": 2,
+      "condition": {
+        "setup": "short_dist",
+        "vwap_zone": "vwap_below"
+      },
+      "label": "setup:short_dist + vwap_zone:vwap_below",
+      "n": 105,
+      "win_count": 35,
+      "loss_count": 70,
+      "win_rate": 33.3,
+      "delta_pp": -12.7,
+      "ci_low": 25.0,
+      "ci_high": 42.8,
+      "z_score": -2.61,
+      "p_value": 0.009,
+      "confidence": "high",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0477",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_elevated",
+        "vwap_zone": "vwap_below"
+      },
+      "label": "rsi_zone:rsi_elevated + vwap_zone:vwap_below",
+      "n": 33,
+      "win_count": 11,
+      "loss_count": 22,
+      "win_rate": 33.3,
+      "delta_pp": -12.7,
+      "ci_low": 19.8,
+      "ci_high": 50.4,
+      "z_score": -1.47,
+      "p_value": 0.1429,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0397",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_weak",
+        "utc_session": "session_off"
+      },
+      "label": "rs_btc_zone:rs_btc_weak + utc_session:session_off",
+      "n": 18,
+      "win_count": 6,
+      "loss_count": 12,
+      "win_rate": 33.3,
+      "delta_pp": -12.7,
+      "ci_low": 16.3,
+      "ci_high": 56.3,
+      "z_score": -1.08,
+      "p_value": 0.2792,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0472",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_neutral",
+        "utc_session": "session_off"
+      },
+      "label": "rsi_zone:rsi_neutral + utc_session:session_off",
+      "n": 89,
+      "win_count": 30,
+      "loss_count": 59,
+      "win_rate": 33.7,
+      "delta_pp": -12.3,
+      "ci_low": 24.7,
+      "ci_high": 44.0,
+      "z_score": -2.34,
+      "p_value": 0.0195,
+      "confidence": "medium",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0174",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_neg",
+        "mtf_bull_tier": "mtf_bull_strong"
+      },
+      "label": "funding_regime:fund_extreme_neg + mtf_bull_tier:mtf_bull_strong",
+      "n": 215,
+      "win_count": 73,
+      "loss_count": 142,
+      "win_rate": 34.0,
+      "delta_pp": -12.1,
+      "ci_low": 28.0,
+      "ci_high": 40.5,
+      "z_score": -3.56,
+      "p_value": 0.0004,
+      "confidence": "high",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0502",
+      "depth": 2,
+      "condition": {
+        "setup": "squeeze",
+        "utc_session": "session_ny"
+      },
+      "label": "setup:squeeze + utc_session:session_ny",
+      "n": 203,
+      "win_count": 69,
+      "loss_count": 134,
+      "win_rate": 34.0,
+      "delta_pp": -12.1,
+      "ci_low": 27.8,
+      "ci_high": 40.7,
+      "z_score": -3.45,
+      "p_value": 0.0006,
+      "confidence": "high",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0135",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=0",
+        "rs_btc_zone": "rs_btc_weak"
+      },
+      "label": "ema_bull_1h:ema1h=0 + rs_btc_zone:rs_btc_weak",
+      "n": 53,
+      "win_count": 18,
+      "loss_count": 35,
+      "win_rate": 34.0,
+      "delta_pp": -12.1,
+      "ci_low": 22.7,
+      "ci_high": 47.4,
+      "z_score": -1.77,
+      "p_value": 0.0776,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0384",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neg",
+        "setup": "bos_fvg"
+      },
+      "label": "rs_btc_zone:rs_btc_neg + setup:bos_fvg",
+      "n": 47,
+      "win_count": 16,
+      "loss_count": 31,
+      "win_rate": 34.0,
+      "delta_pp": -12.0,
+      "ci_low": 22.2,
+      "ci_high": 48.3,
+      "z_score": -1.65,
+      "p_value": 0.0987,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0338",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_strong",
+        "vwap_zone": "vwap_far_below"
+      },
+      "label": "mtf_bull_tier:mtf_bull_strong + vwap_zone:vwap_far_below",
+      "n": 174,
+      "win_count": 60,
+      "loss_count": 114,
+      "win_rate": 34.5,
+      "delta_pp": -11.6,
+      "ci_low": 27.8,
+      "ci_high": 41.8,
+      "z_score": -3.06,
+      "p_value": 0.0022,
+      "confidence": "high",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0541",
+      "depth": 2,
+      "condition": {
+        "utc_session": "session_off",
+        "vwap_zone": "vwap_far_below"
+      },
+      "label": "utc_session:session_off + vwap_zone:vwap_far_below",
+      "n": 58,
+      "win_count": 20,
+      "loss_count": 38,
+      "win_rate": 34.5,
+      "delta_pp": -11.6,
+      "ci_low": 23.6,
+      "ci_high": 47.3,
+      "z_score": -1.77,
+      "p_value": 0.0772,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0524",
+      "depth": 2,
+      "condition": {
+        "setup": "short_dist",
+        "vwap_zone": "vwap_above"
+      },
+      "label": "setup:short_dist + vwap_zone:vwap_above",
+      "n": 72,
+      "win_count": 25,
+      "loss_count": 47,
+      "win_rate": 34.7,
+      "delta_pp": -11.3,
+      "ci_low": 24.8,
+      "ci_high": 46.2,
+      "z_score": -1.93,
+      "p_value": 0.0539,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0418",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_weak",
+        "vwap_zone": "vwap_far_below"
+      },
+      "label": "rs_btc_zone:rs_btc_weak + vwap_zone:vwap_far_below",
+      "n": 43,
+      "win_count": 15,
+      "loss_count": 28,
+      "win_rate": 34.9,
+      "delta_pp": -11.2,
+      "ci_low": 22.4,
+      "ci_high": 49.8,
+      "z_score": -1.47,
+      "p_value": 0.1419,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0428",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neg",
+        "vwap_zone": "vwap_below"
+      },
+      "label": "rs_btc_zone:rs_btc_neg + vwap_zone:vwap_below",
+      "n": 43,
+      "win_count": 15,
+      "loss_count": 28,
+      "win_rate": 34.9,
+      "delta_pp": -11.2,
+      "ci_low": 22.4,
+      "ci_high": 49.8,
+      "z_score": -1.47,
+      "p_value": 0.1419,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0521",
+      "depth": 2,
+      "condition": {
+        "setup": "squeeze",
+        "vwap_zone": "vwap_far_below"
+      },
+      "label": "setup:squeeze + vwap_zone:vwap_far_below",
+      "n": 123,
+      "win_count": 43,
+      "loss_count": 80,
+      "win_rate": 35.0,
+      "delta_pp": -11.1,
+      "ci_low": 27.1,
+      "ci_high": 43.7,
+      "z_score": -2.47,
+      "p_value": 0.0136,
+      "confidence": "medium",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0266",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_neg",
+        "vwap_zone": "vwap_far_below"
+      },
+      "label": "funding_regime:fund_extreme_neg + vwap_zone:vwap_far_below",
+      "n": 100,
+      "win_count": 35,
+      "loss_count": 65,
+      "win_rate": 35.0,
+      "delta_pp": -11.0,
+      "ci_low": 26.4,
+      "ci_high": 44.7,
+      "z_score": -2.22,
+      "p_value": 0.0267,
+      "confidence": "medium",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0245",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_neg",
+        "utc_session": "session_london"
+      },
+      "label": "funding_regime:fund_extreme_neg + utc_session:session_london",
+      "n": 68,
+      "win_count": 24,
+      "loss_count": 44,
+      "win_rate": 35.3,
+      "delta_pp": -10.8,
+      "ci_low": 25.0,
+      "ci_high": 47.2,
+      "z_score": -1.78,
+      "p_value": 0.0753,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0196",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_neutral",
+        "rs_btc_zone": "rs_btc_neg"
+      },
+      "label": "funding_regime:fund_neutral + rs_btc_zone:rs_btc_neg",
+      "n": 65,
+      "win_count": 23,
+      "loss_count": 42,
+      "win_rate": 35.4,
+      "delta_pp": -10.7,
+      "ci_low": 24.9,
+      "ci_high": 47.5,
+      "z_score": -1.72,
+      "p_value": 0.0846,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0471",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_neutral",
+        "utc_session": "session_ny"
+      },
+      "label": "rsi_zone:rsi_neutral + utc_session:session_ny",
+      "n": 230,
+      "win_count": 82,
+      "loss_count": 148,
+      "win_rate": 35.7,
+      "delta_pp": -10.4,
+      "ci_low": 29.7,
+      "ci_high": 42.0,
+      "z_score": -3.16,
+      "p_value": 0.0016,
+      "confidence": "high",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0453",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_neutral",
+        "setup": "short_dist"
+      },
+      "label": "rsi_zone:rsi_neutral + setup:short_dist",
+      "n": 112,
+      "win_count": 40,
+      "loss_count": 72,
+      "win_rate": 35.7,
+      "delta_pp": -10.3,
+      "ci_low": 27.4,
+      "ci_high": 44.9,
+      "z_score": -2.19,
+      "p_value": 0.0283,
+      "confidence": "medium",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0098",
+      "depth": 2,
+      "condition": {
+        "choch_bull_1h": "choch=1",
+        "setup": "short_dist"
+      },
+      "label": "choch_bull_1h:choch=1 + setup:short_dist",
+      "n": 14,
+      "win_count": 5,
+      "loss_count": 9,
+      "win_rate": 35.7,
+      "delta_pp": -10.3,
+      "ci_low": 16.3,
+      "ci_high": 61.2,
+      "z_score": -0.78,
+      "p_value": 0.438,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0208",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_neg",
+        "rsi_zone": "rsi_elevated"
+      },
+      "label": "funding_regime:fund_extreme_neg + rsi_zone:rsi_elevated",
+      "n": 75,
+      "win_count": 27,
+      "loss_count": 48,
+      "win_rate": 36.0,
+      "delta_pp": -10.0,
+      "ci_low": 26.1,
+      "ci_high": 47.3,
+      "z_score": -1.75,
+      "p_value": 0.0809,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0536",
+      "depth": 2,
+      "condition": {
+        "utc_session": "session_ny",
+        "vwap_zone": "vwap_far_below"
+      },
+      "label": "utc_session:session_ny + vwap_zone:vwap_far_below",
+      "n": 113,
+      "win_count": 41,
+      "loss_count": 72,
+      "win_rate": 36.3,
+      "delta_pp": -9.8,
+      "ci_low": 28.0,
+      "ci_high": 45.5,
+      "z_score": -2.08,
+      "p_value": 0.0373,
+      "confidence": "medium",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0507",
+      "depth": 2,
+      "condition": {
+        "setup": "short_dist",
+        "utc_session": "session_off"
+      },
+      "label": "setup:short_dist + utc_session:session_off",
+      "n": 69,
+      "win_count": 25,
+      "loss_count": 44,
+      "win_rate": 36.2,
+      "delta_pp": -9.8,
+      "ci_low": 25.9,
+      "ci_high": 48.0,
+      "z_score": -1.64,
+      "p_value": 0.1019,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0450",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_neutral",
+        "setup": "breakout"
+      },
+      "label": "rsi_zone:rsi_neutral + setup:breakout",
+      "n": 58,
+      "win_count": 21,
+      "loss_count": 37,
+      "win_rate": 36.2,
+      "delta_pp": -9.8,
+      "ci_low": 25.1,
+      "ci_high": 49.1,
+      "z_score": -1.5,
+      "p_value": 0.1327,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0354",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_weak",
+        "rsi_zone": "rsi_elevated"
+      },
+      "label": "rs_btc_zone:rs_btc_weak + rsi_zone:rsi_elevated",
+      "n": 44,
+      "win_count": 16,
+      "loss_count": 28,
+      "win_rate": 36.4,
+      "delta_pp": -9.7,
+      "ci_low": 23.8,
+      "ci_high": 51.1,
+      "z_score": -1.29,
+      "p_value": 0.1975,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0240",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "setup": "breakout"
+      },
+      "label": "funding_regime:fund_negative + setup:breakout",
+      "n": 33,
+      "win_count": 12,
+      "loss_count": 21,
+      "win_rate": 36.4,
+      "delta_pp": -9.7,
+      "ci_low": 22.2,
+      "ci_high": 53.4,
+      "z_score": -1.12,
+      "p_value": 0.2644,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0420",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_weak",
+        "vwap_zone": "vwap_near"
+      },
+      "label": "rs_btc_zone:rs_btc_weak + vwap_zone:vwap_near",
+      "n": 11,
+      "win_count": 4,
+      "loss_count": 7,
+      "win_rate": 36.4,
+      "delta_pp": -9.7,
+      "ci_low": 15.2,
+      "ci_high": 64.6,
+      "z_score": -0.64,
+      "p_value": 0.5194,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0505",
+      "depth": 2,
+      "condition": {
+        "setup": "short_dist",
+        "utc_session": "session_london"
+      },
+      "label": "setup:short_dist + utc_session:session_london",
+      "n": 52,
+      "win_count": 19,
+      "loss_count": 33,
+      "win_rate": 36.5,
+      "delta_pp": -9.5,
+      "ci_low": 24.8,
+      "ci_high": 50.1,
+      "z_score": -1.38,
+      "p_value": 0.169,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0303",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_moderate",
+        "rsi_zone": "rsi_elevated"
+      },
+      "label": "mtf_bull_tier:mtf_bull_moderate + rsi_zone:rsi_elevated",
+      "n": 60,
+      "win_count": 22,
+      "loss_count": 38,
+      "win_rate": 36.7,
+      "delta_pp": -9.4,
+      "ci_low": 25.6,
+      "ci_high": 49.3,
+      "z_score": -1.46,
+      "p_value": 0.1449,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0142",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=1",
+        "rsi_zone": "rsi_neutral"
+      },
+      "label": "ema_bull_1h:ema1h=1 + rsi_zone:rsi_neutral",
+      "n": 147,
+      "win_count": 54,
+      "loss_count": 93,
+      "win_rate": 36.7,
+      "delta_pp": -9.3,
+      "ci_low": 29.4,
+      "ci_high": 44.8,
+      "z_score": -2.27,
+      "p_value": 0.0235,
+      "confidence": "medium",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0230",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_neg",
+        "setup": "breakout"
+      },
+      "label": "funding_regime:fund_extreme_neg + setup:breakout",
+      "n": 76,
+      "win_count": 28,
+      "loss_count": 48,
+      "win_rate": 36.8,
+      "delta_pp": -9.2,
+      "ci_low": 26.9,
+      "ci_high": 48.1,
+      "z_score": -1.61,
+      "p_value": 0.1074,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0229",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_positive",
+        "rsi_zone": "rsi_neutral"
+      },
+      "label": "funding_regime:fund_positive + rsi_zone:rsi_neutral",
+      "n": 19,
+      "win_count": 7,
+      "loss_count": 12,
+      "win_rate": 36.8,
+      "delta_pp": -9.2,
+      "ci_low": 19.1,
+      "ci_high": 59.0,
+      "z_score": -0.8,
+      "p_value": 0.4209,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0436",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_elevated",
+        "setup": "squeeze"
+      },
+      "label": "rsi_zone:rsi_elevated + setup:squeeze",
+      "n": 100,
+      "win_count": 37,
+      "loss_count": 63,
+      "win_rate": 37.0,
+      "delta_pp": -9.0,
+      "ci_low": 28.2,
+      "ci_high": 46.8,
+      "z_score": -1.81,
+      "p_value": 0.0695,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0236",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_neutral",
+        "setup": "short_dist"
+      },
+      "label": "funding_regime:fund_neutral + setup:short_dist",
+      "n": 320,
+      "win_count": 119,
+      "loss_count": 201,
+      "win_rate": 37.2,
+      "delta_pp": -8.9,
+      "ci_low": 32.1,
+      "ci_high": 42.6,
+      "z_score": -3.18,
+      "p_value": 0.0015,
+      "confidence": "high",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0232",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_neg",
+        "setup": "squeeze"
+      },
+      "label": "funding_regime:fund_extreme_neg + setup:squeeze",
+      "n": 171,
+      "win_count": 64,
+      "loss_count": 107,
+      "win_rate": 37.4,
+      "delta_pp": -8.6,
+      "ci_low": 30.5,
+      "ci_high": 44.9,
+      "z_score": -2.26,
+      "p_value": 0.0237,
+      "confidence": "medium",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0508",
+      "depth": 2,
+      "condition": {
+        "setup": "short_dist",
+        "utc_session": "session_asia"
+      },
+      "label": "setup:short_dist + utc_session:session_asia",
+      "n": 80,
+      "win_count": 30,
+      "loss_count": 50,
+      "win_rate": 37.5,
+      "delta_pp": -8.5,
+      "ci_low": 27.7,
+      "ci_high": 48.5,
+      "z_score": -1.53,
+      "p_value": 0.1251,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0170",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=0",
+        "vwap_zone": "vwap_far_above"
+      },
+      "label": "ema_bull_1h:ema1h=0 + vwap_zone:vwap_far_above",
+      "n": 24,
+      "win_count": 9,
+      "loss_count": 15,
+      "win_rate": 37.5,
+      "delta_pp": -8.5,
+      "ci_low": 21.2,
+      "ci_high": 57.3,
+      "z_score": -0.84,
+      "p_value": 0.4009,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0191",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_neg",
+        "rs_btc_zone": "rs_btc_neg"
+      },
+      "label": "funding_regime:fund_extreme_neg + rs_btc_zone:rs_btc_neg",
+      "n": 16,
+      "win_count": 6,
+      "loss_count": 10,
+      "win_rate": 37.5,
+      "delta_pp": -8.5,
+      "ci_low": 18.5,
+      "ci_high": 61.4,
+      "z_score": -0.69,
+      "p_value": 0.4928,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0485",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_depressed",
+        "vwap_zone": "vwap_far_below"
+      },
+      "label": "rsi_zone:rsi_depressed + vwap_zone:vwap_far_below",
+      "n": 148,
+      "win_count": 56,
+      "loss_count": 92,
+      "win_rate": 37.8,
+      "delta_pp": -8.2,
+      "ci_low": 30.4,
+      "ci_high": 45.9,
+      "z_score": -2.0,
+      "p_value": 0.0451,
+      "confidence": "medium",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0082",
+      "depth": 2,
+      "condition": {
+        "choch_bull_1h": "choch=0",
+        "rs_btc_zone": "rs_btc_neg"
+      },
+      "label": "choch_bull_1h:choch=0 + rs_btc_zone:rs_btc_neg",
+      "n": 108,
+      "win_count": 41,
+      "loss_count": 67,
+      "win_rate": 38.0,
+      "delta_pp": -8.1,
+      "ci_low": 29.4,
+      "ci_high": 47.4,
+      "z_score": -1.69,
+      "p_value": 0.0919,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0113",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=1",
+        "funding_regime": "fund_extreme_neg"
+      },
+      "label": "ema_bull_1h:ema1h=1 + funding_regime:fund_extreme_neg",
+      "n": 126,
+      "win_count": 48,
+      "loss_count": 78,
+      "win_rate": 38.1,
+      "delta_pp": -8.0,
+      "ci_low": 30.1,
+      "ci_high": 46.8,
+      "z_score": -1.79,
+      "p_value": 0.0733,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0124",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=1",
+        "mtf_bull_tier": "mtf_bull_moderate"
+      },
+      "label": "ema_bull_1h:ema1h=1 + mtf_bull_tier:mtf_bull_moderate",
+      "n": 42,
+      "win_count": 16,
+      "loss_count": 26,
+      "win_rate": 38.1,
+      "delta_pp": -8.0,
+      "ci_low": 25.0,
+      "ci_high": 53.2,
+      "z_score": -1.03,
+      "p_value": 0.3012,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0171",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=0",
+        "vwap_zone": "vwap_far_below"
+      },
+      "label": "ema_bull_1h:ema1h=0 + vwap_zone:vwap_far_below",
+      "n": 286,
+      "win_count": 109,
+      "loss_count": 177,
+      "win_rate": 38.1,
+      "delta_pp": -7.9,
+      "ci_low": 32.7,
+      "ci_high": 43.9,
+      "z_score": -2.69,
+      "p_value": 0.0071,
+      "confidence": "high",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0054",
+      "depth": 1,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neg"
+      },
+      "label": "rs_btc_zone:rs_btc_neg",
+      "n": 110,
+      "win_count": 42,
+      "loss_count": 68,
+      "win_rate": 38.2,
+      "delta_pp": -7.9,
+      "ci_low": 29.6,
+      "ci_high": 47.5,
+      "z_score": -1.65,
+      "p_value": 0.0979,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0325",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_strong",
+        "utc_session": "session_ny"
+      },
+      "label": "mtf_bull_tier:mtf_bull_strong + utc_session:session_ny",
+      "n": 437,
+      "win_count": 167,
+      "loss_count": 270,
+      "win_rate": 38.2,
+      "delta_pp": -7.8,
+      "ci_low": 33.8,
+      "ci_high": 42.9,
+      "z_score": -3.28,
+      "p_value": 0.001,
+      "confidence": "high",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0155",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=0",
+        "setup": "short_dist"
+      },
+      "label": "ema_bull_1h:ema1h=0 + setup:short_dist",
+      "n": 322,
+      "win_count": 123,
+      "loss_count": 199,
+      "win_rate": 38.2,
+      "delta_pp": -7.8,
+      "ci_low": 33.1,
+      "ci_high": 43.6,
+      "z_score": -2.83,
+      "p_value": 0.0047,
+      "confidence": "high",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0013",
+      "depth": 1,
+      "condition": {
+        "funding_regime": "fund_extreme_neg"
+      },
+      "label": "funding_regime:fund_extreme_neg",
+      "n": 287,
+      "win_count": 110,
+      "loss_count": 177,
+      "win_rate": 38.3,
+      "delta_pp": -7.7,
+      "ci_low": 32.9,
+      "ci_high": 44.1,
+      "z_score": -2.62,
+      "p_value": 0.0087,
+      "confidence": "high",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0528",
+      "depth": 2,
+      "condition": {
+        "setup": "short_dist",
+        "vwap_zone": "vwap_near"
+      },
+      "label": "setup:short_dist + vwap_zone:vwap_near",
+      "n": 141,
+      "win_count": 54,
+      "loss_count": 87,
+      "win_rate": 38.3,
+      "delta_pp": -7.7,
+      "ci_low": 30.7,
+      "ci_high": 46.5,
+      "z_score": -1.85,
+      "p_value": 0.0649,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0468",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_depressed",
+        "utc_session": "session_off"
+      },
+      "label": "rsi_zone:rsi_depressed + utc_session:session_off",
+      "n": 120,
+      "win_count": 46,
+      "loss_count": 74,
+      "win_rate": 38.3,
+      "delta_pp": -7.7,
+      "ci_low": 30.1,
+      "ci_high": 47.3,
+      "z_score": -1.7,
+      "p_value": 0.09,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0181",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_pos",
+        "mtf_bull_tier": "mtf_bull_moderate"
+      },
+      "label": "funding_regime:fund_extreme_pos + mtf_bull_tier:mtf_bull_moderate",
+      "n": 26,
+      "win_count": 10,
+      "loss_count": 16,
+      "win_rate": 38.5,
+      "delta_pp": -7.6,
+      "ci_low": 22.4,
+      "ci_high": 57.5,
+      "z_score": -0.78,
+      "p_value": 0.4378,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0005",
+      "depth": 1,
+      "condition": {
+        "setup": "short_dist"
+      },
+      "label": "setup:short_dist",
+      "n": 374,
+      "win_count": 144,
+      "loss_count": 230,
+      "win_rate": 38.5,
+      "delta_pp": -7.5,
+      "ci_low": 33.7,
+      "ci_high": 43.5,
+      "z_score": -2.93,
+      "p_value": 0.0034,
+      "confidence": "high",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0302",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_strong",
+        "rsi_zone": "rsi_neutral"
+      },
+      "label": "mtf_bull_tier:mtf_bull_strong + rsi_zone:rsi_neutral",
+      "n": 337,
+      "win_count": 130,
+      "loss_count": 207,
+      "win_rate": 38.6,
+      "delta_pp": -7.5,
+      "ci_low": 33.5,
+      "ci_high": 43.9,
+      "z_score": -2.75,
+      "p_value": 0.0059,
+      "confidence": "high",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0118",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=0",
+        "funding_regime": "fund_extreme_neg"
+      },
+      "label": "ema_bull_1h:ema1h=0 + funding_regime:fund_extreme_neg",
+      "n": 161,
+      "win_count": 62,
+      "loss_count": 99,
+      "win_rate": 38.5,
+      "delta_pp": -7.5,
+      "ci_low": 31.3,
+      "ci_high": 46.2,
+      "z_score": -1.92,
+      "p_value": 0.055,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0096",
+      "depth": 2,
+      "condition": {
+        "choch_bull_1h": "choch=0",
+        "setup": "short_dist"
+      },
+      "label": "choch_bull_1h:choch=0 + setup:short_dist",
+      "n": 360,
+      "win_count": 139,
+      "loss_count": 221,
+      "win_rate": 38.6,
+      "delta_pp": -7.4,
+      "ci_low": 33.7,
+      "ci_high": 43.7,
+      "z_score": -2.83,
+      "p_value": 0.0046,
+      "confidence": "high",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0341",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_moderate",
+        "vwap_zone": "vwap_above"
+      },
+      "label": "mtf_bull_tier:mtf_bull_moderate + vwap_zone:vwap_above",
+      "n": 44,
+      "win_count": 17,
+      "loss_count": 27,
+      "win_rate": 38.6,
+      "delta_pp": -7.4,
+      "ci_low": 25.7,
+      "ci_high": 53.4,
+      "z_score": -0.99,
+      "p_value": 0.3241,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0069",
+      "depth": 2,
+      "condition": {
+        "choch_bull_1h": "choch=0",
+        "funding_regime": "fund_extreme_neg"
+      },
+      "label": "choch_bull_1h:choch=0 + funding_regime:fund_extreme_neg",
+      "n": 283,
+      "win_count": 110,
+      "loss_count": 173,
+      "win_rate": 38.9,
+      "delta_pp": -7.2,
+      "ci_low": 33.4,
+      "ci_high": 44.7,
+      "z_score": -2.42,
+      "p_value": 0.0154,
+      "confidence": "medium",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0120",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=0",
+        "funding_regime": "fund_extreme_pos"
+      },
+      "label": "ema_bull_1h:ema1h=0 + funding_regime:fund_extreme_pos",
+      "n": 54,
+      "win_count": 21,
+      "loss_count": 33,
+      "win_rate": 38.9,
+      "delta_pp": -7.2,
+      "ci_low": 27.0,
+      "ci_high": 52.2,
+      "z_score": -1.06,
+      "p_value": 0.2913,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0237",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_pos",
+        "setup": "breakout"
+      },
+      "label": "funding_regime:fund_extreme_pos + setup:breakout",
+      "n": 18,
+      "win_count": 7,
+      "loss_count": 11,
+      "win_rate": 38.9,
+      "delta_pp": -7.2,
+      "ci_low": 20.3,
+      "ci_high": 61.4,
+      "z_score": -0.61,
+      "p_value": 0.5424,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0314",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_strong",
+        "setup": "squeeze"
+      },
+      "label": "mtf_bull_tier:mtf_bull_strong + setup:squeeze",
+      "n": 337,
+      "win_count": 132,
+      "loss_count": 205,
+      "win_rate": 39.2,
+      "delta_pp": -6.9,
+      "ci_low": 34.1,
+      "ci_high": 44.5,
+      "z_score": -2.53,
+      "p_value": 0.0113,
+      "confidence": "medium",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0401",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neutral",
+        "utc_session": "session_off"
+      },
+      "label": "rs_btc_zone:rs_btc_neutral + utc_session:session_off",
+      "n": 242,
+      "win_count": 95,
+      "loss_count": 147,
+      "win_rate": 39.3,
+      "delta_pp": -6.8,
+      "ci_low": 33.3,
+      "ci_high": 45.5,
+      "z_score": -2.12,
+      "p_value": 0.0341,
+      "confidence": "medium",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0167",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=1",
+        "vwap_zone": "vwap_below"
+      },
+      "label": "ema_bull_1h:ema1h=1 + vwap_zone:vwap_below",
+      "n": 56,
+      "win_count": 22,
+      "loss_count": 34,
+      "win_rate": 39.3,
+      "delta_pp": -6.8,
+      "ci_low": 27.6,
+      "ci_high": 52.4,
+      "z_score": -1.02,
+      "p_value": 0.3101,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0107",
+      "depth": 2,
+      "condition": {
+        "choch_bull_1h": "choch=0",
+        "vwap_zone": "vwap_far_below"
+      },
+      "label": "choch_bull_1h:choch=0 + vwap_zone:vwap_far_below",
+      "n": 315,
+      "win_count": 124,
+      "loss_count": 191,
+      "win_rate": 39.4,
+      "delta_pp": -6.7,
+      "ci_low": 34.1,
+      "ci_high": 44.9,
+      "z_score": -2.38,
+      "p_value": 0.0174,
+      "confidence": "medium",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0323",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_weak",
+        "setup": "short_dist"
+      },
+      "label": "mtf_bull_tier:mtf_bull_weak + setup:short_dist",
+      "n": 188,
+      "win_count": 74,
+      "loss_count": 114,
+      "win_rate": 39.4,
+      "delta_pp": -6.7,
+      "ci_low": 32.7,
+      "ci_high": 46.5,
+      "z_score": -1.84,
+      "p_value": 0.0659,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0058",
+      "depth": 1,
+      "condition": {
+        "vwap_zone": "vwap_far_below"
+      },
+      "label": "vwap_zone:vwap_far_below",
+      "n": 316,
+      "win_count": 125,
+      "loss_count": 191,
+      "win_rate": 39.6,
+      "delta_pp": -6.5,
+      "ci_low": 34.3,
+      "ci_high": 45.0,
+      "z_score": -2.31,
+      "p_value": 0.0206,
+      "confidence": "medium",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0268",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_neg",
+        "vwap_zone": "vwap_near"
+      },
+      "label": "funding_regime:fund_extreme_neg + vwap_zone:vwap_near",
+      "n": 43,
+      "win_count": 17,
+      "loss_count": 26,
+      "win_rate": 39.5,
+      "delta_pp": -6.5,
+      "ci_low": 26.4,
+      "ci_high": 54.4,
+      "z_score": -0.86,
+      "p_value": 0.3916,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0217",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_neutral",
+        "rsi_zone": "rsi_neutral"
+      },
+      "label": "funding_regime:fund_neutral + rsi_zone:rsi_neutral",
+      "n": 366,
+      "win_count": 145,
+      "loss_count": 221,
+      "win_rate": 39.6,
+      "delta_pp": -6.4,
+      "ci_low": 34.7,
+      "ci_high": 44.7,
+      "z_score": -2.47,
+      "p_value": 0.0136,
+      "confidence": "medium",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0486",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_depressed",
+        "vwap_zone": "vwap_below"
+      },
+      "label": "rsi_zone:rsi_depressed + vwap_zone:vwap_below",
+      "n": 260,
+      "win_count": 103,
+      "loss_count": 157,
+      "win_rate": 39.6,
+      "delta_pp": -6.4,
+      "ci_low": 33.9,
+      "ci_high": 45.7,
+      "z_score": -2.08,
+      "p_value": 0.0375,
+      "confidence": "medium",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0330",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_moderate",
+        "utc_session": "session_off"
+      },
+      "label": "mtf_bull_tier:mtf_bull_moderate + utc_session:session_off",
+      "n": 63,
+      "win_count": 25,
+      "loss_count": 38,
+      "win_rate": 39.7,
+      "delta_pp": -6.4,
+      "ci_low": 28.5,
+      "ci_high": 52.0,
+      "z_score": -1.01,
+      "p_value": 0.3109,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0143",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=0",
+        "rsi_zone": "rsi_elevated"
+      },
+      "label": "ema_bull_1h:ema1h=0 + rsi_zone:rsi_elevated",
+      "n": 161,
+      "win_count": 64,
+      "loss_count": 97,
+      "win_rate": 39.8,
+      "delta_pp": -6.3,
+      "ci_low": 32.5,
+      "ci_high": 47.5,
+      "z_score": -1.6,
+      "p_value": 0.109,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0329",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_moderate",
+        "utc_session": "session_ny"
+      },
+      "label": "mtf_bull_tier:mtf_bull_moderate + utc_session:session_ny",
+      "n": 125,
+      "win_count": 50,
+      "loss_count": 75,
+      "win_rate": 40.0,
+      "delta_pp": -6.0,
+      "ci_low": 31.8,
+      "ci_high": 48.8,
+      "z_score": -1.36,
+      "p_value": 0.175,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0210",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_neg",
+        "rsi_zone": "rsi_overbought"
+      },
+      "label": "funding_regime:fund_extreme_neg + rsi_zone:rsi_overbought",
+      "n": 30,
+      "win_count": 12,
+      "loss_count": 18,
+      "win_rate": 40.0,
+      "delta_pp": -6.0,
+      "ci_low": 24.6,
+      "ci_high": 57.7,
+      "z_score": -0.66,
+      "p_value": 0.5064,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0239",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_pos",
+        "setup": "short_dist"
+      },
+      "label": "funding_regime:fund_extreme_pos + setup:short_dist",
+      "n": 30,
+      "win_count": 12,
+      "loss_count": 18,
+      "win_rate": 40.0,
+      "delta_pp": -6.0,
+      "ci_low": 24.6,
+      "ci_high": 57.7,
+      "z_score": -0.66,
+      "p_value": 0.5064,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0117",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=1",
+        "funding_regime": "fund_positive"
+      },
+      "label": "ema_bull_1h:ema1h=1 + funding_regime:fund_positive",
+      "n": 15,
+      "win_count": 6,
+      "loss_count": 9,
+      "win_rate": 40.0,
+      "delta_pp": -6.0,
+      "ci_low": 19.8,
+      "ci_high": 64.3,
+      "z_score": -0.47,
+      "p_value": 0.6385,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0291",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_moderate",
+        "rs_btc_zone": "rs_btc_weak"
+      },
+      "label": "mtf_bull_tier:mtf_bull_moderate + rs_btc_zone:rs_btc_weak",
+      "n": 10,
+      "win_count": 4,
+      "loss_count": 6,
+      "win_rate": 40.0,
+      "delta_pp": -6.0,
+      "ci_low": 16.8,
+      "ci_high": 68.7,
+      "z_score": -0.38,
+      "p_value": 0.7013,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0126",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=0",
+        "mtf_bull_tier": "mtf_bull_strong"
+      },
+      "label": "ema_bull_1h:ema1h=0 + mtf_bull_tier:mtf_bull_strong",
+      "n": 476,
+      "win_count": 191,
+      "loss_count": 285,
+      "win_rate": 40.1,
+      "delta_pp": -5.9,
+      "ci_low": 35.8,
+      "ci_high": 44.6,
+      "z_score": -2.59,
+      "p_value": 0.0096,
+      "confidence": "high",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0080",
+      "depth": 2,
+      "condition": {
+        "choch_bull_1h": "choch=0",
+        "rs_btc_zone": "rs_btc_weak"
+      },
+      "label": "choch_bull_1h:choch=0 + rs_btc_zone:rs_btc_weak",
+      "n": 117,
+      "win_count": 47,
+      "loss_count": 70,
+      "win_rate": 40.2,
+      "delta_pp": -5.9,
+      "ci_low": 31.7,
+      "ci_high": 49.2,
+      "z_score": -1.28,
+      "p_value": 0.2023,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0161",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=0",
+        "utc_session": "session_ny"
+      },
+      "label": "ema_bull_1h:ema1h=0 + utc_session:session_ny",
+      "n": 515,
+      "win_count": 208,
+      "loss_count": 307,
+      "win_rate": 40.4,
+      "delta_pp": -5.7,
+      "ci_low": 36.2,
+      "ci_high": 44.7,
+      "z_score": -2.58,
+      "p_value": 0.01,
+      "confidence": "high",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0151",
+      "depth": 2,
+      "condition": {
+        "ema_bull_1h": "ema1h=1",
+        "setup": "short_dist"
+      },
+      "label": "ema_bull_1h:ema1h=1 + setup:short_dist",
+      "n": 52,
+      "win_count": 21,
+      "loss_count": 31,
+      "win_rate": 40.4,
+      "delta_pp": -5.7,
+      "ci_low": 28.2,
+      "ci_high": 53.9,
+      "z_score": -0.82,
+      "p_value": 0.4127,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0506",
+      "depth": 2,
+      "condition": {
+        "setup": "short_dist",
+        "utc_session": "session_ny"
+      },
+      "label": "setup:short_dist + utc_session:session_ny",
+      "n": 173,
+      "win_count": 70,
+      "loss_count": 103,
+      "win_rate": 40.5,
+      "delta_pp": -5.6,
+      "ci_low": 33.4,
+      "ci_high": 47.9,
+      "z_score": -1.47,
+      "p_value": 0.1406,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0212",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_neg",
+        "rsi_zone": "rsi_neutral"
+      },
+      "label": "funding_regime:fund_extreme_neg + rsi_zone:rsi_neutral",
+      "n": 89,
+      "win_count": 36,
+      "loss_count": 53,
+      "win_rate": 40.4,
+      "delta_pp": -5.6,
+      "ci_low": 30.9,
+      "ci_high": 50.8,
+      "z_score": -1.06,
+      "p_value": 0.2894,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0516",
+      "depth": 2,
+      "condition": {
+        "setup": "bos_fvg",
+        "vwap_zone": "vwap_far_below"
+      },
+      "label": "setup:bos_fvg + vwap_zone:vwap_far_below",
+      "n": 84,
+      "win_count": 34,
+      "loss_count": 50,
+      "win_rate": 40.5,
+      "delta_pp": -5.6,
+      "ci_low": 30.6,
+      "ci_high": 51.2,
+      "z_score": -1.02,
+      "p_value": 0.3057,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0251",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_neutral",
+        "utc_session": "session_off"
+      },
+      "label": "funding_regime:fund_neutral + utc_session:session_off",
+      "n": 303,
+      "win_count": 123,
+      "loss_count": 180,
+      "win_rate": 40.6,
+      "delta_pp": -5.5,
+      "ci_low": 35.2,
+      "ci_high": 46.2,
+      "z_score": -1.9,
+      "p_value": 0.0569,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0421",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neutral",
+        "vwap_zone": "vwap_above"
+      },
+      "label": "rs_btc_zone:rs_btc_neutral + vwap_zone:vwap_above",
+      "n": 354,
+      "win_count": 144,
+      "loss_count": 210,
+      "win_rate": 40.7,
+      "delta_pp": -5.4,
+      "ci_low": 35.7,
+      "ci_high": 45.9,
+      "z_score": -2.03,
+      "p_value": 0.0427,
+      "confidence": "medium",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0452",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_neutral",
+        "setup": "squeeze"
+      },
+      "label": "rsi_zone:rsi_neutral + setup:squeeze",
+      "n": 155,
+      "win_count": 63,
+      "loss_count": 92,
+      "win_rate": 40.6,
+      "delta_pp": -5.4,
+      "ci_low": 33.2,
+      "ci_high": 48.5,
+      "z_score": -1.35,
+      "p_value": 0.1773,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0465",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_overbought",
+        "utc_session": "session_asia"
+      },
+      "label": "rsi_zone:rsi_overbought + utc_session:session_asia",
+      "n": 32,
+      "win_count": 13,
+      "loss_count": 19,
+      "win_rate": 40.6,
+      "delta_pp": -5.4,
+      "ci_low": 25.5,
+      "ci_high": 57.7,
+      "z_score": -0.62,
+      "p_value": 0.5384,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0503",
+      "depth": 2,
+      "condition": {
+        "setup": "squeeze",
+        "utc_session": "session_off"
+      },
+      "label": "setup:squeeze + utc_session:session_off",
+      "n": 81,
+      "win_count": 33,
+      "loss_count": 48,
+      "win_rate": 40.7,
+      "delta_pp": -5.3,
+      "ci_low": 30.7,
+      "ci_high": 51.6,
+      "z_score": -0.96,
+      "p_value": 0.338,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0258",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "utc_session": "session_ny"
+      },
+      "label": "funding_regime:fund_negative + utc_session:session_ny",
+      "n": 76,
+      "win_count": 31,
+      "loss_count": 45,
+      "win_rate": 40.8,
+      "delta_pp": -5.3,
+      "ci_low": 30.4,
+      "ci_high": 52.0,
+      "z_score": -0.92,
+      "p_value": 0.3578,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0100",
+      "depth": 2,
+      "condition": {
+        "choch_bull_1h": "choch=0",
+        "utc_session": "session_ny"
+      },
+      "label": "choch_bull_1h:choch=0 + utc_session:session_ny",
+      "n": 745,
+      "win_count": 304,
+      "loss_count": 441,
+      "win_rate": 40.8,
+      "delta_pp": -5.2,
+      "ci_low": 37.3,
+      "ci_high": 44.4,
+      "z_score": -2.87,
+      "p_value": 0.0041,
+      "confidence": "high",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0358",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neutral",
+        "rsi_zone": "rsi_elevated"
+      },
+      "label": "rs_btc_zone:rs_btc_neutral + rsi_zone:rsi_elevated",
+      "n": 396,
+      "win_count": 162,
+      "loss_count": 234,
+      "win_rate": 40.9,
+      "delta_pp": -5.1,
+      "ci_low": 36.2,
+      "ci_high": 45.8,
+      "z_score": -2.05,
+      "p_value": 0.0403,
+      "confidence": "medium",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0286",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_strong",
+        "rs_btc_zone": "rs_btc_weak"
+      },
+      "label": "mtf_bull_tier:mtf_bull_strong + rs_btc_zone:rs_btc_weak",
+      "n": 105,
+      "win_count": 43,
+      "loss_count": 62,
+      "win_rate": 41.0,
+      "delta_pp": -5.1,
+      "ci_low": 32.0,
+      "ci_high": 50.5,
+      "z_score": -1.05,
+      "p_value": 0.295,
+      "confidence": "provisional",
+      "verdict": "NEGATIVE"
+    }
+  ],
+  "top_hypotheses": [
+    {
+      "id": "H0355",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_weak",
+        "rsi_zone": "rsi_overbought"
+      },
+      "label": "rs_btc_zone:rs_btc_weak + rsi_zone:rsi_overbought",
+      "n": 13,
+      "win_count": 11,
+      "loss_count": 2,
+      "win_rate": 84.6,
+      "delta_pp": 38.6,
+      "ci_low": 57.8,
+      "ci_high": 95.7,
+      "z_score": 2.79,
+      "p_value": 0.0053,
+      "confidence": "low",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0440",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_oversold",
+        "setup": "squeeze"
+      },
+      "label": "rsi_zone:rsi_oversold + setup:squeeze",
+      "n": 60,
+      "win_count": 48,
+      "loss_count": 12,
+      "win_rate": 80.0,
+      "delta_pp": 34.0,
+      "ci_low": 68.2,
+      "ci_high": 88.2,
+      "z_score": 5.28,
+      "p_value": 0.0,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0476",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_elevated",
+        "vwap_zone": "vwap_far_below"
+      },
+      "label": "rsi_zone:rsi_elevated + vwap_zone:vwap_far_below",
+      "n": 13,
+      "win_count": 10,
+      "loss_count": 3,
+      "win_rate": 76.9,
+      "delta_pp": 30.9,
+      "ci_low": 49.7,
+      "ci_high": 91.8,
+      "z_score": 2.23,
+      "p_value": 0.0255,
+      "confidence": "low",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0405",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neg",
+        "utc_session": "session_off"
+      },
+      "label": "rs_btc_zone:rs_btc_neg + utc_session:session_off",
+      "n": 18,
+      "win_count": 3,
+      "loss_count": 15,
+      "win_rate": 16.7,
+      "delta_pp": -29.4,
+      "ci_low": 5.8,
+      "ci_high": 39.2,
+      "z_score": -2.5,
+      "p_value": 0.0124,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0224",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "rsi_zone": "rsi_oversold"
+      },
+      "label": "funding_regime:fund_negative + rsi_zone:rsi_oversold",
+      "n": 45,
+      "win_count": 33,
+      "loss_count": 12,
+      "win_rate": 73.3,
+      "delta_pp": 27.3,
+      "ci_low": 59.0,
+      "ci_high": 84.0,
+      "z_score": 3.67,
+      "p_value": 0.0002,
+      "confidence": "medium",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0515",
+      "depth": 2,
+      "condition": {
+        "setup": "bos_fvg",
+        "vwap_zone": "vwap_far_above"
+      },
+      "label": "setup:bos_fvg + vwap_zone:vwap_far_above",
+      "n": 29,
+      "win_count": 21,
+      "loss_count": 8,
+      "win_rate": 72.4,
+      "delta_pp": 26.4,
+      "ci_low": 54.3,
+      "ci_high": 85.3,
+      "z_score": 2.85,
+      "p_value": 0.0044,
+      "confidence": "medium",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0241",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "setup": "bos_fvg"
+      },
+      "label": "funding_regime:fund_negative + setup:bos_fvg",
+      "n": 47,
+      "win_count": 33,
+      "loss_count": 14,
+      "win_rate": 70.2,
+      "delta_pp": 24.2,
+      "ci_low": 56.0,
+      "ci_high": 81.3,
+      "z_score": 3.32,
+      "p_value": 0.0009,
+      "confidence": "medium",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0257",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "utc_session": "session_london"
+      },
+      "label": "funding_regime:fund_negative + utc_session:session_london",
+      "n": 67,
+      "win_count": 47,
+      "loss_count": 20,
+      "win_rate": 70.1,
+      "delta_pp": 24.1,
+      "ci_low": 58.3,
+      "ci_high": 79.8,
+      "z_score": 3.96,
+      "p_value": 0.0001,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0351",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_pos",
+        "rsi_zone": "rsi_overbought"
+      },
+      "label": "rs_btc_zone:rs_btc_pos + rsi_zone:rsi_overbought",
+      "n": 30,
+      "win_count": 7,
+      "loss_count": 23,
+      "win_rate": 23.3,
+      "delta_pp": -22.7,
+      "ci_low": 11.8,
+      "ci_high": 40.9,
+      "z_score": -2.5,
+      "p_value": 0.0126,
+      "confidence": "medium",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0322",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_weak",
+        "setup": "squeeze"
+      },
+      "label": "mtf_bull_tier:mtf_bull_weak + setup:squeeze",
+      "n": 91,
+      "win_count": 62,
+      "loss_count": 29,
+      "win_rate": 68.1,
+      "delta_pp": 22.1,
+      "ci_low": 58.0,
+      "ci_high": 76.8,
+      "z_score": 4.23,
+      "p_value": 0.0,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0359",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neutral",
+        "rsi_zone": "rsi_oversold"
+      },
+      "label": "rs_btc_zone:rs_btc_neutral + rsi_zone:rsi_oversold",
+      "n": 83,
+      "win_count": 56,
+      "loss_count": 27,
+      "win_rate": 67.5,
+      "delta_pp": 21.4,
+      "ci_low": 56.8,
+      "ci_high": 76.6,
+      "z_score": 3.92,
+      "p_value": 0.0001,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0184",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "mtf_bull_tier": "mtf_bull_moderate"
+      },
+      "label": "funding_regime:fund_negative + mtf_bull_tier:mtf_bull_moderate",
+      "n": 52,
+      "win_count": 35,
+      "loss_count": 17,
+      "win_rate": 67.3,
+      "delta_pp": 21.3,
+      "ci_low": 53.8,
+      "ci_high": 78.5,
+      "z_score": 3.08,
+      "p_value": 0.0021,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0490",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_neutral",
+        "vwap_zone": "vwap_far_below"
+      },
+      "label": "rsi_zone:rsi_neutral + vwap_zone:vwap_far_below",
+      "n": 76,
+      "win_count": 19,
+      "loss_count": 57,
+      "win_rate": 25.0,
+      "delta_pp": -21.0,
+      "ci_low": 16.6,
+      "ci_high": 35.8,
+      "z_score": -3.68,
+      "p_value": 0.0002,
+      "confidence": "high",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0189",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_neg",
+        "rs_btc_zone": "rs_btc_weak"
+      },
+      "label": "funding_regime:fund_extreme_neg + rs_btc_zone:rs_btc_weak",
+      "n": 60,
+      "win_count": 15,
+      "loss_count": 45,
+      "win_rate": 25.0,
+      "delta_pp": -21.0,
+      "ci_low": 15.8,
+      "ci_high": 37.2,
+      "z_score": -3.27,
+      "p_value": 0.0011,
+      "confidence": "high",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0378",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_weak",
+        "setup": "squeeze"
+      },
+      "label": "rs_btc_zone:rs_btc_weak + setup:squeeze",
+      "n": 55,
+      "win_count": 14,
+      "loss_count": 41,
+      "win_rate": 25.5,
+      "delta_pp": -20.6,
+      "ci_low": 15.8,
+      "ci_high": 38.3,
+      "z_score": -3.06,
+      "p_value": 0.0022,
+      "confidence": "high",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0304",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_moderate",
+        "rsi_zone": "rsi_oversold"
+      },
+      "label": "mtf_bull_tier:mtf_bull_moderate + rsi_zone:rsi_oversold",
+      "n": 54,
+      "win_count": 36,
+      "loss_count": 18,
+      "win_rate": 66.7,
+      "delta_pp": 20.6,
+      "ci_low": 53.4,
+      "ci_high": 77.8,
+      "z_score": 3.04,
+      "p_value": 0.0024,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0276",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_pos",
+        "vwap_zone": "vwap_far_below"
+      },
+      "label": "funding_regime:fund_extreme_pos + vwap_zone:vwap_far_below",
+      "n": 24,
+      "win_count": 6,
+      "loss_count": 18,
+      "win_rate": 25.0,
+      "delta_pp": -21.0,
+      "ci_low": 12.0,
+      "ci_high": 44.9,
+      "z_score": -2.07,
+      "p_value": 0.0386,
+      "confidence": "medium",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0412",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_pos",
+        "vwap_zone": "vwap_far_above"
+      },
+      "label": "rs_btc_zone:rs_btc_pos + vwap_zone:vwap_far_above",
+      "n": 35,
+      "win_count": 9,
+      "loss_count": 26,
+      "win_rate": 25.7,
+      "delta_pp": -20.3,
+      "ci_low": 14.2,
+      "ci_high": 42.1,
+      "z_score": -2.41,
+      "p_value": 0.0158,
+      "confidence": "medium",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0221",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_pos",
+        "rsi_zone": "rsi_depressed"
+      },
+      "label": "funding_regime:fund_extreme_pos + rsi_zone:rsi_depressed",
+      "n": 20,
+      "win_count": 5,
+      "loss_count": 15,
+      "win_rate": 25.0,
+      "delta_pp": -21.0,
+      "ci_low": 11.2,
+      "ci_high": 46.9,
+      "z_score": -1.89,
+      "p_value": 0.059,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0067",
+      "depth": 2,
+      "condition": {
+        "choch_bull_1h": "choch=1",
+        "ema_bull_1h": "ema1h=1"
+      },
+      "label": "choch_bull_1h:choch=1 + ema_bull_1h:ema1h=1",
+      "n": 41,
+      "win_count": 27,
+      "loss_count": 14,
+      "win_rate": 65.9,
+      "delta_pp": 19.8,
+      "ci_low": 50.5,
+      "ci_high": 78.4,
+      "z_score": 2.54,
+      "p_value": 0.0109,
+      "confidence": "medium",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0185",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "mtf_bull_tier": "mtf_bull_weak"
+      },
+      "label": "funding_regime:fund_negative + mtf_bull_tier:mtf_bull_weak",
+      "n": 67,
+      "win_count": 44,
+      "loss_count": 23,
+      "win_rate": 65.7,
+      "delta_pp": 19.6,
+      "ci_low": 53.7,
+      "ci_high": 75.9,
+      "z_score": 3.22,
+      "p_value": 0.0013,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0364",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neg",
+        "rsi_zone": "rsi_oversold"
+      },
+      "label": "rs_btc_zone:rs_btc_neg + rsi_zone:rsi_oversold",
+      "n": 16,
+      "win_count": 4,
+      "loss_count": 12,
+      "win_rate": 25.0,
+      "delta_pp": -21.0,
+      "ci_low": 10.2,
+      "ci_high": 49.5,
+      "z_score": -1.69,
+      "p_value": 0.0912,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0513",
+      "depth": 2,
+      "condition": {
+        "setup": "breakout",
+        "vwap_zone": "vwap_near"
+      },
+      "label": "setup:breakout + vwap_zone:vwap_near",
+      "n": 60,
+      "win_count": 39,
+      "loss_count": 21,
+      "win_rate": 65.0,
+      "delta_pp": 19.0,
+      "ci_low": 52.4,
+      "ci_high": 75.8,
+      "z_score": 2.95,
+      "p_value": 0.0032,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0404",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neg",
+        "utc_session": "session_ny"
+      },
+      "label": "rs_btc_zone:rs_btc_neg + utc_session:session_ny",
+      "n": 30,
+      "win_count": 8,
+      "loss_count": 22,
+      "win_rate": 26.7,
+      "delta_pp": -19.4,
+      "ci_low": 14.2,
+      "ci_high": 44.4,
+      "z_score": -2.13,
+      "p_value": 0.0332,
+      "confidence": "medium",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0260",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "utc_session": "session_asia"
+      },
+      "label": "funding_regime:fund_negative + utc_session:session_asia",
+      "n": 54,
+      "win_count": 35,
+      "loss_count": 19,
+      "win_rate": 64.8,
+      "delta_pp": 18.8,
+      "ci_low": 51.5,
+      "ci_high": 76.2,
+      "z_score": 2.77,
+      "p_value": 0.0057,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0423",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neutral",
+        "vwap_zone": "vwap_far_below"
+      },
+      "label": "rs_btc_zone:rs_btc_neutral + vwap_zone:vwap_far_below",
+      "n": 84,
+      "win_count": 23,
+      "loss_count": 61,
+      "win_rate": 27.4,
+      "delta_pp": -18.7,
+      "ci_low": 19.0,
+      "ci_high": 37.7,
+      "z_score": -3.43,
+      "p_value": 0.0006,
+      "confidence": "high",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0275",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_pos",
+        "vwap_zone": "vwap_far_above"
+      },
+      "label": "funding_regime:fund_extreme_pos + vwap_zone:vwap_far_above",
+      "n": 26,
+      "win_count": 17,
+      "loss_count": 9,
+      "win_rate": 65.4,
+      "delta_pp": 19.3,
+      "ci_low": 46.2,
+      "ci_high": 80.6,
+      "z_score": 1.98,
+      "p_value": 0.0479,
+      "confidence": "medium",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0206",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_positive",
+        "rs_btc_zone": "rs_btc_neutral"
+      },
+      "label": "funding_regime:fund_positive + rs_btc_zone:rs_btc_neutral",
+      "n": 26,
+      "win_count": 7,
+      "loss_count": 19,
+      "win_rate": 26.9,
+      "delta_pp": -19.1,
+      "ci_low": 13.7,
+      "ci_high": 46.1,
+      "z_score": -1.96,
+      "p_value": 0.0504,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0410",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_strong",
+        "utc_session": "session_asia"
+      },
+      "label": "rs_btc_zone:rs_btc_strong + utc_session:session_asia",
+      "n": 42,
+      "win_count": 27,
+      "loss_count": 15,
+      "win_rate": 64.3,
+      "delta_pp": 18.2,
+      "ci_low": 49.2,
+      "ci_high": 77.0,
+      "z_score": 2.37,
+      "p_value": 0.0177,
+      "confidence": "medium",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0345",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_weak",
+        "vwap_zone": "vwap_above"
+      },
+      "label": "mtf_bull_tier:mtf_bull_weak + vwap_zone:vwap_above",
+      "n": 50,
+      "win_count": 32,
+      "loss_count": 18,
+      "win_rate": 64.0,
+      "delta_pp": 18.0,
+      "ci_low": 50.1,
+      "ci_high": 75.9,
+      "z_score": 2.55,
+      "p_value": 0.0109,
+      "confidence": "medium",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0068",
+      "depth": 2,
+      "condition": {
+        "choch_bull_1h": "choch=1",
+        "ema_bull_1h": "ema1h=0"
+      },
+      "label": "choch_bull_1h:choch=1 + ema_bull_1h:ema1h=0",
+      "n": 22,
+      "win_count": 6,
+      "loss_count": 16,
+      "win_rate": 27.3,
+      "delta_pp": -18.8,
+      "ci_low": 13.2,
+      "ci_high": 48.2,
+      "z_score": -1.77,
+      "p_value": 0.0773,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0484",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_depressed",
+        "vwap_zone": "vwap_above"
+      },
+      "label": "rsi_zone:rsi_depressed + vwap_zone:vwap_above",
+      "n": 20,
+      "win_count": 13,
+      "loss_count": 7,
+      "win_rate": 65.0,
+      "delta_pp": 19.0,
+      "ci_low": 43.3,
+      "ci_high": 81.9,
+      "z_score": 1.7,
+      "p_value": 0.089,
+      "confidence": "low",
+      "verdict": "POSITIVE"
+    },
+    {
+      "id": "H0259",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "utc_session": "session_off"
+      },
+      "label": "funding_regime:fund_negative + utc_session:session_off",
+      "n": 36,
+      "win_count": 23,
+      "loss_count": 13,
+      "win_rate": 63.9,
+      "delta_pp": 17.8,
+      "ci_low": 47.6,
+      "ci_high": 77.5,
+      "z_score": 2.15,
+      "p_value": 0.0317,
+      "confidence": "medium",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0246",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_neg",
+        "utc_session": "session_ny"
+      },
+      "label": "funding_regime:fund_extreme_neg + utc_session:session_ny",
+      "n": 111,
+      "win_count": 32,
+      "loss_count": 79,
+      "win_rate": 28.8,
+      "delta_pp": -17.2,
+      "ci_low": 21.2,
+      "ci_high": 37.9,
+      "z_score": -3.64,
+      "p_value": 0.0003,
+      "confidence": "high",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0458",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_oversold",
+        "utc_session": "session_london"
+      },
+      "label": "rsi_zone:rsi_oversold + utc_session:session_london",
+      "n": 76,
+      "win_count": 48,
+      "loss_count": 28,
+      "win_rate": 63.2,
+      "delta_pp": 17.1,
+      "ci_low": 51.9,
+      "ci_high": 73.1,
+      "z_score": 2.99,
+      "p_value": 0.0028,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0211",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_neg",
+        "rsi_zone": "rsi_depressed"
+      },
+      "label": "funding_regime:fund_extreme_neg + rsi_zone:rsi_depressed",
+      "n": 69,
+      "win_count": 20,
+      "loss_count": 49,
+      "win_rate": 29.0,
+      "delta_pp": -17.1,
+      "ci_low": 19.6,
+      "ci_high": 40.6,
+      "z_score": -2.84,
+      "p_value": 0.0045,
+      "confidence": "high",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0537",
+      "depth": 2,
+      "condition": {
+        "utc_session": "session_ny",
+        "vwap_zone": "vwap_below"
+      },
+      "label": "utc_session:session_ny + vwap_zone:vwap_below",
+      "n": 141,
+      "win_count": 41,
+      "loss_count": 100,
+      "win_rate": 29.1,
+      "delta_pp": -17.0,
+      "ci_low": 22.2,
+      "ci_high": 37.0,
+      "z_score": -4.04,
+      "p_value": 0.0001,
+      "confidence": "high",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0443",
+      "depth": 2,
+      "condition": {
+        "rsi_zone": "rsi_overbought",
+        "setup": "bos_fvg"
+      },
+      "label": "rsi_zone:rsi_overbought + setup:bos_fvg",
+      "n": 41,
+      "win_count": 26,
+      "loss_count": 15,
+      "win_rate": 63.4,
+      "delta_pp": 17.4,
+      "ci_low": 48.1,
+      "ci_high": 76.4,
+      "z_score": 2.23,
+      "p_value": 0.0257,
+      "confidence": "medium",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0367",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_strong",
+        "rsi_zone": "rsi_elevated"
+      },
+      "label": "rs_btc_zone:rs_btc_strong + rsi_zone:rsi_elevated",
+      "n": 57,
+      "win_count": 36,
+      "loss_count": 21,
+      "win_rate": 63.2,
+      "delta_pp": 17.1,
+      "ci_low": 50.2,
+      "ci_high": 74.5,
+      "z_score": 2.59,
+      "p_value": 0.0095,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0281",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "vwap_zone": "vwap_below"
+      },
+      "label": "funding_regime:fund_negative + vwap_zone:vwap_below",
+      "n": 108,
+      "win_count": 68,
+      "loss_count": 40,
+      "win_rate": 63.0,
+      "delta_pp": 16.9,
+      "ci_low": 53.6,
+      "ci_high": 71.5,
+      "z_score": 3.53,
+      "p_value": 0.0004,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0296",
+      "depth": 2,
+      "condition": {
+        "mtf_bull_tier": "mtf_bull_weak",
+        "rs_btc_zone": "rs_btc_neg"
+      },
+      "label": "mtf_bull_tier:mtf_bull_weak + rs_btc_zone:rs_btc_neg",
+      "n": 28,
+      "win_count": 8,
+      "loss_count": 20,
+      "win_rate": 28.6,
+      "delta_pp": -17.5,
+      "ci_low": 15.3,
+      "ci_high": 47.1,
+      "z_score": -1.86,
+      "p_value": 0.0636,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0366",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neg",
+        "rsi_zone": "rsi_neutral"
+      },
+      "label": "rs_btc_zone:rs_btc_neg + rsi_zone:rsi_neutral",
+      "n": 28,
+      "win_count": 8,
+      "loss_count": 20,
+      "win_rate": 28.6,
+      "delta_pp": -17.5,
+      "ci_low": 15.3,
+      "ci_high": 47.1,
+      "z_score": -1.86,
+      "p_value": 0.0636,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0427",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_neg",
+        "vwap_zone": "vwap_far_below"
+      },
+      "label": "rs_btc_zone:rs_btc_neg + vwap_zone:vwap_far_below",
+      "n": 28,
+      "win_count": 8,
+      "loss_count": 20,
+      "win_rate": 28.6,
+      "delta_pp": -17.5,
+      "ci_low": 15.3,
+      "ci_high": 47.1,
+      "z_score": -1.86,
+      "p_value": 0.0636,
+      "confidence": "low",
+      "verdict": "NEGATIVE"
+    },
+    {
+      "id": "H0388",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_strong",
+        "setup": "bos_fvg"
+      },
+      "label": "rs_btc_zone:rs_btc_strong + setup:bos_fvg",
+      "n": 56,
+      "win_count": 35,
+      "loss_count": 21,
+      "win_rate": 62.5,
+      "delta_pp": 16.5,
+      "ci_low": 49.4,
+      "ci_high": 74.0,
+      "z_score": 2.47,
+      "p_value": 0.0135,
+      "confidence": "medium",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0411",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_pos",
+        "vwap_zone": "vwap_above"
+      },
+      "label": "rs_btc_zone:rs_btc_pos + vwap_zone:vwap_above",
+      "n": 98,
+      "win_count": 61,
+      "loss_count": 37,
+      "win_rate": 62.2,
+      "delta_pp": 16.2,
+      "ci_low": 52.4,
+      "ci_high": 71.2,
+      "z_score": 3.22,
+      "p_value": 0.0013,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0267",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_extreme_neg",
+        "vwap_zone": "vwap_below"
+      },
+      "label": "funding_regime:fund_extreme_neg + vwap_zone:vwap_below",
+      "n": 54,
+      "win_count": 16,
+      "loss_count": 38,
+      "win_rate": 29.6,
+      "delta_pp": -16.4,
+      "ci_low": 19.1,
+      "ci_high": 42.8,
+      "z_score": -2.42,
+      "p_value": 0.0155,
+      "confidence": "medium",
+      "verdict": "STRONG_NEGATIVE"
+    },
+    {
+      "id": "H0349",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_pos",
+        "rsi_zone": "rsi_elevated"
+      },
+      "label": "rs_btc_zone:rs_btc_pos + rsi_zone:rsi_elevated",
+      "n": 108,
+      "win_count": 67,
+      "loss_count": 41,
+      "win_rate": 62.0,
+      "delta_pp": 16.0,
+      "ci_low": 52.6,
+      "ci_high": 70.6,
+      "z_score": 3.33,
+      "p_value": 0.0009,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0203",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "rs_btc_zone": "rs_btc_neutral"
+      },
+      "label": "funding_regime:fund_negative + rs_btc_zone:rs_btc_neutral",
+      "n": 142,
+      "win_count": 88,
+      "loss_count": 54,
+      "win_rate": 62.0,
+      "delta_pp": 15.9,
+      "ci_low": 53.8,
+      "ci_high": 69.5,
+      "z_score": 3.81,
+      "p_value": 0.0001,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0391",
+      "depth": 2,
+      "condition": {
+        "rs_btc_zone": "rs_btc_pos",
+        "utc_session": "session_london"
+      },
+      "label": "rs_btc_zone:rs_btc_pos + utc_session:session_london",
+      "n": 123,
+      "win_count": 76,
+      "loss_count": 47,
+      "win_rate": 61.8,
+      "delta_pp": 15.7,
+      "ci_low": 53.0,
+      "ci_high": 69.9,
+      "z_score": 3.5,
+      "p_value": 0.0005,
+      "confidence": "high",
+      "verdict": "STRONG_POSITIVE"
+    },
+    {
+      "id": "H0282",
+      "depth": 2,
+      "condition": {
+        "funding_regime": "fund_negative",
+        "vwap_zone": "vwap_near"
+      },
+      "label": "funding_regime:fund_negative + vwap_zone:vwap_near",
+      "n": 65,
+      "win_count": 40,
+      "loss_count": 25,
+      "win_rate": 61.5,
+      "delta_pp": 15.5,
+      "ci_low": 49.4,
+      "ci_high": 72.4,
+      "z_score": 2.51,
+      "p_value": 0.0122,
+      "confidence": "medium",
+      "verdict": "STRONG_POSITIVE"
+    }
+  ],
+  "setup_profiles": {
+    "breakout": {
+      "n": 516,
+      "win_count": 237,
+      "win_rate": 45.9,
+      "ci_low": 41.7,
+      "ci_high": 50.2,
+      "best_sub_conditions": [
+        [
+          "vwap_zone:vwap_near",
+          60,
+          65.0,
+          19.1
+        ],
+        [
+          "choch_bull_1h:choch=1",
+          33,
+          60.6,
+          14.7
+        ],
+        [
+          "rsi_zone:rsi_oversold",
+          43,
+          58.1,
+          12.2
+        ],
+        [
+          "cvd_kline_zone:cvdk_pos",
+          114,
+          54.4,
+          8.5
+        ]
+      ],
+      "worst_sub_conditions": [
+        [
+          "mtf_bull_tier:mtf_bull_weak",
+          49,
+          30.6,
+          -15.3
+        ],
+        [
+          "rs_btc_zone:rs_btc_neg",
+          16,
+          31.2,
+          -14.7
+        ],
+        [
+          "mtf_bear_tier:mtf_bear_moderate",
+          49,
+          32.7,
+          -13.3
+        ],
+        [
+          "rsi_zone:rsi_neutral",
+          58,
+          36.2,
+          -9.7
+        ],
+        [
+          "funding_regime:fund_negative",
+          33,
+          36.4,
+          -9.6
+        ],
+        [
+          "funding_regime:fund_extreme_neg",
+          76,
+          36.8,
+          -9.1
+        ]
+      ]
+    },
+    "bos_fvg": {
+      "n": 727,
+      "win_count": 361,
+      "win_rate": 49.7,
+      "ci_low": 46.0,
+      "ci_high": 53.3,
+      "best_sub_conditions": [
+        [
+          "choch_bull_1h:choch=1",
+          9,
+          77.8,
+          28.1
+        ],
+        [
+          "vwap_zone:vwap_far_above",
+          29,
+          72.4,
+          22.8
+        ],
+        [
+          "funding_regime:fund_negative",
+          47,
+          70.2,
+          20.6
+        ],
+        [
+          "rsi_zone:rsi_overbought",
+          41,
+          63.4,
+          13.8
+        ],
+        [
+          "rs_btc_zone:rs_btc_strong",
+          56,
+          62.5,
+          12.8
+        ],
+        [
+          "funding_regime:fund_extreme_pos",
+          32,
+          59.4,
+          9.7
+        ]
+      ],
+      "worst_sub_conditions": [
+        [
+          "rs_btc_zone:rs_btc_neg",
+          47,
+          34.0,
+          -15.6
+        ],
+        [
+          "oi_regime:oi_capitulation",
+          23,
+          39.1,
+          -10.5
+        ],
+        [
+          "vwap_zone:vwap_far_below",
+          84,
+          40.5,
+          -9.2
+        ],
+        [
+          "score_band:score<90",
+          39,
+          41.0,
+          -8.6
+        ],
+        [
+          "rsi_zone:rsi_oversold",
+          63,
+          41.3,
+          -8.4
+        ]
+      ]
+    },
+    "squeeze": {
+      "n": 522,
+      "win_count": 243,
+      "win_rate": 46.6,
+      "ci_low": 42.3,
+      "ci_high": 50.8,
+      "best_sub_conditions": [
+        [
+          "rsi_zone:rsi_oversold",
+          60,
+          80.0,
+          33.4
+        ],
+        [
+          "mtf_bull_tier:mtf_bull_weak",
+          91,
+          68.1,
+          21.6
+        ],
+        [
+          "utc_session:session_asia",
+          122,
+          59.8,
+          13.3
+        ],
+        [
+          "utc_session:session_london",
+          116,
+          58.6,
+          12.1
+        ],
+        [
+          "mtf_bear_tier:mtf_bear_strong",
+          219,
+          58.4,
+          11.9
+        ],
+        [
+          "funding_regime:fund_negative",
+          145,
+          57.9,
+          11.4
+        ]
+      ],
+      "worst_sub_conditions": [
+        [
+          "choch_bull_1h:choch=1",
+          7,
+          14.3,
+          -32.3
+        ],
+        [
+          "oi_regime:oi_surge",
+          71,
+          23.9,
+          -22.6
+        ],
+        [
+          "rs_btc_zone:rs_btc_weak",
+          55,
+          25.5,
+          -21.1
+        ],
+        [
+          "oi_regime:oi_expanding",
+          57,
+          28.1,
+          -18.5
+        ],
+        [
+          "funding_regime:fund_positive",
+          6,
+          33.3,
+          -13.2
+        ],
+        [
+          "utc_session:session_ny",
+          203,
+          34.0,
+          -12.6
+        ]
+      ]
+    },
+    "range_sweep": {
+      "n": 11,
+      "win_count": 5,
+      "win_rate": 45.5,
+      "ci_low": 21.3,
+      "ci_high": 72.0,
+      "best_sub_conditions": [
+        [
+          "funding_regime:fund_neutral",
+          5,
+          80.0,
+          34.5
+        ],
+        [
+          "score_band:score90-110",
+          5,
+          60.0,
+          14.5
+        ]
+      ],
+      "worst_sub_conditions": [
+        [
+          "oi_regime:oi_contracting",
+          5,
+          20.0,
+          -25.5
+        ],
+        [
+          "mtf_bull_tier:mtf_bull_weak",
+          5,
+          20.0,
+          -25.5
+        ],
+        [
+          "ema_bull_1h:ema1h=0",
+          7,
+          28.6,
+          -16.9
+        ]
+      ]
+    },
+    "short_dist": {
+      "n": 374,
+      "win_count": 144,
+      "win_rate": 38.5,
+      "ci_low": 33.7,
+      "ci_high": 43.5,
+      "best_sub_conditions": [
+        [
+          "funding_regime:fund_negative",
+          7,
+          85.7,
+          47.2
+        ],
+        [
+          "rs_btc_zone:rs_btc_weak",
+          9,
+          77.8,
+          39.3
+        ],
+        [
+          "vwap_zone:vwap_far_above",
+          17,
+          64.7,
+          26.2
+        ],
+        [
+          "rs_btc_zone:rs_btc_strong",
+          42,
+          52.4,
+          13.9
+        ],
+        [
+          "oi_regime:oi_capitulation",
+          31,
+          51.6,
+          13.1
+        ],
+        [
+          "rsi_zone:rsi_overbought",
+          10,
+          50.0,
+          11.5
+        ]
+      ],
+      "worst_sub_conditions": [
+        [
+          "ema_bull_4h:ema4h=1",
+          72,
+          29.2,
+          -9.3
+        ],
+        [
+          "rs_btc_zone:rs_btc_neg",
+          10,
+          30.0,
+          -8.5
+        ]
+      ]
+    }
+  },
+  "time_patterns": {
+    "session_london": {
+      "n": 462,
+      "win_count": 243,
+      "win_rate": 52.6,
+      "delta_pp": 6.6,
+      "ci_low": 48.0,
+      "ci_high": 57.1,
+      "p_value": 0.0047
+    },
+    "session_ny": {
+      "n": 773,
+      "win_count": 319,
+      "win_rate": 41.3,
+      "delta_pp": -4.8,
+      "ci_low": 37.8,
+      "ci_high": 44.8,
+      "p_value": 0.0077
+    },
+    "session_off": {
+      "n": 412,
+      "win_count": 174,
+      "win_rate": 42.2,
+      "delta_pp": -3.8,
+      "ci_low": 37.6,
+      "ci_high": 47.1,
+      "p_value": 0.1204
+    },
+    "session_asia": {
+      "n": 503,
+      "win_count": 254,
+      "win_rate": 50.5,
+      "delta_pp": 4.5,
+      "ci_low": 46.1,
+      "ci_high": 54.8,
+      "p_value": 0.0452
+    }
+  }
+}
