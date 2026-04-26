@@ -32,6 +32,13 @@ try:
 except ImportError:
     _OBS_AVAILABLE = False
 
+# RCA engine (опционально — не ломает трекер если файл отсутствует)
+try:
+    from rca_engine import analyze_trade as _rca_analyze, store_rca as _rca_store
+    _RCA_AVAILABLE = True
+except ImportError:
+    _RCA_AVAILABLE = False
+
 # ─────────────────────────────────────────────────────────────
 # Пути
 # ─────────────────────────────────────────────────────────────
@@ -516,6 +523,14 @@ def check_and_resolve(silent: bool = False) -> int:
 
                 # Запись в CSV когда оба горизонта закрыты (или только 24h если 4h уже был)
                 _append_csv(entry)
+                # RCA — run after both horizons are resolved
+                if _RCA_AVAILABLE:
+                    try:
+                        _rca_store(_rca_analyze(entry, "24h"))
+                        if entry.get("outcome_4h"):
+                            _rca_store(_rca_analyze(entry, "4h"))
+                    except Exception:
+                        pass
                 if not silent:
                     print(f"  [24h] {entry['symbol']:<14} {pct:+.1f}%  "
                           f"MFE{mfe_pct:+.1f}/MAE{mae_pct:+.1f}  {outcome}")
