@@ -141,6 +141,13 @@ except Exception:
     _TLDB_FILTERS     = []
     _TLDB_AVAILABLE   = False
 
+# Streak monitor / Audit Mode (AVEVA-50)
+try:
+    import streak_monitor as _streak
+    _STREAK_AVAILABLE = True
+except ImportError:
+    _STREAK_AVAILABLE = False
+
 BASE = "https://api.bybit.com"
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "BybitFuturesScreener/1.1"})
@@ -3179,8 +3186,19 @@ def score_symbol(symbol, ticker, oi_hist,
 
 # ─── TRADE_LEARNINGS_DB gate (injected after score_symbol result is built) ───
 
+# Score adjustments derived from backtested pattern WR deltas.
+# Prohibited conditions (is_prohibited) zero the score to exclude from output.
+# Rule penalty capped at 30 pts to avoid over-penalising overlapping conditions.
+# Confirmation filter bonus capped at 16 pts (2 filters × 8 pts each).
+_TLDB_PENALTY_MAP = {"HIGH": 20, "MEDIUM": 12, "LOW": 6}
+_TLDB_MAX_PENALTY = 30
+_TLDB_BONUS_PER_FILTER = 8
+_TLDB_MAX_BONUS = 16
+
+
 def _apply_tldb_gate(result: dict) -> dict:
-    """Attach TLDB prohibited/rule flags to a score_symbol result dict."""
+    """Apply TLDB: penalise score for anti-patterns, block prohibited conditions,
+    boost score for confirmed high-WR filter matches."""
     if not _TLDB_AVAILABLE:
         return result
     try:
@@ -3188,16 +3206,54 @@ def _apply_tldb_gate(result: dict) -> dict:
             result,
             prohibited=_TLDB_PROHIBITED,
             rules=_TLDB_RULES,
+            filters=_TLDB_FILTERS,
         )
         result["tldb_prohibited"]    = gate["is_prohibited"]
         result["tldb_penalty_level"] = gate["penalty_level"]
         result["tldb_prohibited_ids"]= [h["id"] for h in gate["prohibited_hits"]]
         result["tldb_rule_ids"]      = [h["id"] for h in gate["rule_hits"]]
+        result["tldb_filter_ids"]    = [h["id"] for h in gate.get("filter_hits", [])]
+
+        sym        = result.get("symbol", "?")
+        orig_score = int(result.get("score", 0) or 0)
+
+        # ── Prohibited condition: zero out score ─────────────────────────────
+        if gate["is_prohibited"]:
+            result["score"] = 0
+            ids = ", ".join(h["id"] for h in gate["prohibited_hits"])
+            print(f"[TLDB] 🚫 {sym} PROHIBITED ({ids}) — score {orig_score}→0")
+            return result
+
+        current = orig_score
+
+        # ── Score penalty from correction rules ──────────────────────────────
+        if gate["rule_hits"]:
+            raw_penalty = sum(
+                _TLDB_PENALTY_MAP.get(h["priority"], 0)
+                for h in gate["rule_hits"]
+            )
+            penalty = min(raw_penalty, _TLDB_MAX_PENALTY)
+            current = max(0, current - penalty)
+            result["score"] = current
+            ids = ", ".join(h["id"] for h in gate["rule_hits"])
+            print(f"[TLDB] ⬇ {sym} penalised -{penalty}pt ({ids}): {orig_score}→{current}")
+
+        # ── Score bonus from confirmation filters ────────────────────────────
+        filter_hits = gate.get("filter_hits", [])
+        if filter_hits:
+            bonus = min(_TLDB_BONUS_PER_FILTER * len(filter_hits), _TLDB_MAX_BONUS)
+            pre   = current
+            current += bonus
+            result["score"] = current
+            ids = ", ".join(h["id"] for h in filter_hits)
+            print(f"[TLDB] ⬆ {sym} boosted +{bonus}pt ({ids}): {pre}→{current}")
+
     except Exception:
         result["tldb_prohibited"]    = False
         result["tldb_penalty_level"] = "NONE"
         result["tldb_prohibited_ids"]= []
         result["tldb_rule_ids"]      = []
+        result["tldb_filter_ids"]    = []
     return result
 
 
@@ -5143,7 +5199,7 @@ def _fetch_and_score(sym, tickers, btc_chg_24h, bnb_map=None,
     if result is not None and _BNB_AVAILABLE and bnb_map is not None:
         _bnb.apply_cross_bonus(result, bnb_map.get(sym))
 
-    # TRADE_LEARNINGS_DB gate — attach prohibited/penalty flags (non-blocking)
+    # TRADE_LEARNINGS_DB gate — apply score penalties / bonuses / prohibition
     if result is not None:
         result = _apply_tldb_gate(result)
 
@@ -5242,6 +5298,22 @@ def run_screener(top_n=50, min_score=35,
     # Ждём сеть перед любыми API-запросами (защита от DNS-краша при запуске)
     if not wait_for_network():
         print("[ERROR] Нет сети — скан пропущен.")
+        return []
+
+    # ── Audit Mode gate (AVEVA-50) ────────────────────────────────────────────
+    if _STREAK_AVAILABLE and _streak.is_audit_mode():
+        state = _streak.get_audit_state()
+        print(f"\n{'='*72}")
+        print("  🚨 AUDIT MODE — SCREENER ЗАБЛОКИРОВАН")
+        print(f"{'='*72}")
+        print(f"  Причина   : {state.get('trigger_reason', '?')}")
+        print(f"  Активирован: {(state.get('activated_at') or '')[:19]} UTC")
+        print(f"  Серия     : {state.get('streak_count', 0)} убытков подряд  |  "
+              f"Просадка: {state.get('drawdown_r', 0):.2f}R")
+        for r in state.get("restrictions", []):
+            print(f"    • {r}")
+        print(f"\n  Для выхода: python3 streak_monitor.py --exit")
+        print(f"{'='*72}\n")
         return []
 
     print("Загружаю тикеры Bybit...")
@@ -5798,6 +5870,11 @@ def run_screener(top_n=50, min_score=35,
         resolved = _ot.check_and_resolve(silent=True)
         if resolved:
             print(f"[Tracker] Закрыто исходов: {resolved} → outcome_tracker.py stats")
+            # After resolving trades, check for losing streak / drawdown (AVEVA-50)
+            if _STREAK_AVAILABLE:
+                newly_activated = _streak.check_and_activate(silent=False)
+                if newly_activated:
+                    print("[Streak] 🚨 Audit Mode активирован — следующий скан будет заблокирован")
         # Сохраняем текущие сигналы как pending (кроме HARD_BLOCK часов — WR < 30%)
         if _utc_hour in HARD_BLOCK_HOURS:
             print(f"[HARD BLOCK] UTC {_utc_hour:02d}:xx — WR={'18' if _utc_hour==18 else '17.5'}% < 30%."

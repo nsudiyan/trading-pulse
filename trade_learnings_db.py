@@ -607,18 +607,20 @@ def check_tldb_gate(
     r: dict,
     prohibited: Optional[list] = None,
     rules: Optional[list] = None,
+    filters: Optional[list] = None,
     path: Path = DB_PATH,
 ) -> dict:
     """
     Check a score_symbol result dict against TRADE_LEARNINGS_DB.
 
-    Loads prohibited conditions and correction rules from disk if not supplied
-    (callers in the screener pass the pre-loaded module-level lists to avoid I/O).
+    Loads prohibited conditions, correction rules, and confirmation filters from
+    disk if not supplied (callers in the screener pass pre-loaded lists to avoid I/O).
 
     Returns:
       {
         "prohibited_hits": [{"id", "condition", "reason"}, ...],
         "rule_hits":       [{"id", "rule", "priority"}, ...],
+        "filter_hits":     [{"id", "filter", "description"}, ...],
         "is_prohibited":   bool,
         "penalty_level":   "HIGH" | "MEDIUM" | "LOW" | "NONE",
         "tokens":          set[str],    # featurized token set (for debugging)
@@ -628,6 +630,8 @@ def check_tldb_gate(
         prohibited = get_prohibited_conditions(path)
     if rules is None:
         rules = get_active_correction_rules(path)
+    if filters is None:
+        filters = get_confirmation_filters(path)
 
     tokens = _featurize_result(r)
 
@@ -646,6 +650,12 @@ def check_tldb_gate(
         if _matches(_rule_to_label(rv.get("rule", "")))
     ]
 
+    filter_hits = [
+        {"id": f["id"], "filter": f["filter"], "description": f.get("description", "")}
+        for f in filters
+        if _matches(f.get("filter", ""))
+    ]
+
     is_prohibited = bool(prohibited_hits)
     if rule_hits:
         prios = [rv["priority"] for rv in rule_hits]
@@ -656,6 +666,7 @@ def check_tldb_gate(
     return {
         "prohibited_hits": prohibited_hits,
         "rule_hits":       rule_hits,
+        "filter_hits":     filter_hits,
         "is_prohibited":   is_prohibited,
         "penalty_level":   penalty_level,
         "tokens":          tokens,
