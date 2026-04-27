@@ -5867,6 +5867,92 @@ def run_screener(top_n=50, min_score=35,
     if _fk_blocked:
         print(f"[FallingKnife] Заблокировано {_fk_blocked} squeeze-сигналов (vwap_dev<-8%, WR=21.6%)")
 
+    # ── AVEVA-57: Hard Confluence Gate ────────────────────────────────────────
+    # Сигнал без хотя бы 1 жёсткого подтверждения = шум, не сетап.
+    # Требуем: CHoCH ИЛИ (в FVG/OB зоне) ИЛИ sweep ИЛИ экстр. фандинг.
+    def _has_hard_signal(r: dict) -> bool:
+        setup   = r.get("setup", "")
+        sdir    = "short" if setup == "short_dist" else "long"
+        choch   = r.get("choch_1h", "—")
+        sweep   = r.get("sweep", "—")
+        fund    = r.get("fund_%", 0) or 0
+        if sdir == "long":
+            return (
+                choch == "bull_choch"                 or
+                bool(r.get("in_bfvg")) or bool(r.get("in_bob")) or
+                fund < -0.05                          or
+                ("↓" in sweep and sweep != "—")       # ликвидность снята снизу
+            )
+        else:  # short
+            return (
+                choch == "bear_choch"                 or
+                bool(r.get("in_sfvg")) or bool(r.get("in_sob")) or
+                fund > 0.05                           or
+                ("↑" in sweep and sweep != "—")
+            )
+
+    _before_hcg = len(_tg_candidates)
+    _tg_candidates = [r for r in _tg_candidates if _has_hard_signal(r)]
+    _hcg_blocked = _before_hcg - len(_tg_candidates)
+    if _hcg_blocked:
+        print(f"[HardGate] Заблокировано {_hcg_blocked} сигналов — нет CHoCH/FVG/OB/sweep/exfund")
+
+    # ── AVEVA-57: squeeze только в нижней части диапазона (pos_% ≤ 45) ───────
+    # Squeeze вне дисконта = покупка на середине/вершине = не сквиз.
+    # Данные: BOT(<-3% VWAP)=54.1% WR vs MID=50.1% WR
+    _before_sq = len(_tg_candidates)
+    _tg_candidates = [
+        r for r in _tg_candidates
+        if not (r.get("setup") == "squeeze"
+                and (r.get("pos_%") or 100) > 45)
+    ]
+    _sq_blocked = _before_sq - len(_tg_candidates)
+    if _sq_blocked:
+        print(f"[SqueezeZone] Заблокировано {_sq_blocked} squeeze вне дисконта (pos%>45)")
+
+    # ── AVEVA-57: breakout — минимальный score 120 ───────────────────────────
+    # Breakout score 80-119: WR=46% (хуже squeeze). В хорошие часы нормально,
+    # но низкий скор = неподтверждённый пробой = ложный сигнал.
+    _before_bo = len(_tg_candidates)
+    _tg_candidates = [
+        r for r in _tg_candidates
+        if not (r.get("setup") == "breakout"
+                and r.get("score", 0) < 120)
+    ]
+    _bo_blocked = _before_bo - len(_tg_candidates)
+    if _bo_blocked:
+        print(f"[BreakoutFloor] Заблокировано {_bo_blocked} breakout score<120")
+
+    # ── AVEVA-57: R:R минимум 1.5 ────────────────────────────────────────────
+    # При WR=54% нужен R:R ≥ 1.5 для положительного мат.ожидания.
+    # build_trade_plan вызывается здесь — план уже строится заново при отправке.
+    _before_rr = len(_tg_candidates)
+    _rr_passed = []
+    for _r in _tg_candidates:
+        try:
+            _plan = build_trade_plan(_r)
+            if _plan["side"] in ("long", "short") and 0 < _plan["rr"] < 1.5:
+                print(f"[RRGate] {_r['symbol']} R:R={_plan['rr']:.2f} < 1.5 → блок")
+                continue
+        except Exception:
+            pass  # fail-open: если план не строится — пропускаем в TG
+        _rr_passed.append(_r)
+    _tg_candidates = _rr_passed
+    _rr_blocked = _before_rr - len(_tg_candidates)
+    if _rr_blocked:
+        print(f"[RRGate] Итого заблокировано {_rr_blocked} сигналов R:R<1.5")
+
+    # ── AVEVA-57: Sector concentration warning ────────────────────────────────
+    if _tg_candidates:
+        _sector_count: dict = {}
+        for _r in _tg_candidates:
+            _sec = classify_sector(_r["symbol"])
+            if _sec != "Other":
+                _sector_count.setdefault(_sec, []).append(_r["symbol"])
+        for _sec, _syms in _sector_count.items():
+            if len(_syms) >= 2:
+                print(f"[SectorWarn] ⚠ {_sec}: {', '.join(_syms)} — концентрация в секторе!")
+
     # ── Cooldown фильтр: 8h между сигналами по одной паре ─────────────────────
     if bypass_cooldown:
         _cd_blocked = []

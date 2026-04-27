@@ -178,6 +178,11 @@ def _grade_emoji(grade: str) -> str:
     return {"A+": "🏆", "A": "🟢", "B+": "🔵", "B": "🟡", "C": "🟠", "D": "🔴"}.get(grade, "⚪")
 
 
+def _grade_risk(grade: str) -> float:
+    """Риск на сделку по грейду (AVEVA-57). A+=2.5%, A=1.5%, B=0.75%, rest=1%."""
+    return {"A+": 0.025, "A": 0.015, "B": 0.0075}.get(grade, 0.01)
+
+
 def _setup_emoji(setup: str) -> str:
     return {
         "squeeze":     "⚡",
@@ -363,15 +368,16 @@ def format_watchlist(filtered: list, max_symbols: int = 5,
             f"  TP2: <code>{_fmt_price(tp2)}</code>"
         )
 
-        # Размер позиции (1% риска от депозита)
+        # Размер позиции — grade-based риск (AVEVA-57)
         if deposit_usd and r["price"] > 0:
-            risk_usd   = deposit_usd * risk_per_trade
+            _g_risk    = _grade_risk(grade)
+            risk_usd   = deposit_usd * _g_risk
             sl_dist    = abs(entry_l - stop) if abs(entry_l - stop) > 0 else atr_abs * 0.65
             qty        = risk_usd / sl_dist if sl_dist > 0 else 0
             pos_size   = qty * r["price"]
             lev_approx = round(pos_size / deposit_usd, 1)
             lines.append(
-                f"   💰 Размер: <b>{qty:.4g}</b> конт  "
+                f"   💰 Размер [{grade}, риск {_g_risk*100:.2g}%]: <b>{qty:.4g}</b> конт  "
                 f"(≈ ${pos_size:.0f}  |  ~{lev_approx}×)"
             )
 
@@ -580,16 +586,17 @@ def format_deep_dive(r: dict, signals: list, verdict: str,
             f"   TP1:   <code>{t1}</code>  TP2: <code>{t2}</code>",
             f"   R:R: <b>{rr:.2f}</b>",
         ]
-        # Размер позиции (1% риска)
+        # Размер позиции — grade-based риск (AVEVA-57)
         if deposit_usd and r.get("price", 0) > 0:
             sl_dist = abs(plan.get("entry_low", r["price"]) - plan.get("stop", r["price"]))
             if sl_dist > 0:
-                risk_usd  = deposit_usd * risk_per_trade
+                _g_risk   = _grade_risk(grade)
+                risk_usd  = deposit_usd * _g_risk
                 qty       = risk_usd / sl_dist
                 pos_size  = qty * r["price"]
                 lev_approx = round(pos_size / deposit_usd, 1)
                 plan_lines.append(
-                    f"   💰 Размер: <b>{qty:.4g}</b> конт  "
+                    f"   💰 Размер [{grade}, риск {_g_risk*100:.2g}%]: <b>{qty:.4g}</b> конт  "
                     f"(≈ ${pos_size:.0f}  |  ~{lev_approx}×)"
                 )
         plan_lines.append("")
