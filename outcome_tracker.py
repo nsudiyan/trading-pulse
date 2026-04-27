@@ -39,6 +39,13 @@ try:
 except ImportError:
     _RCA_AVAILABLE = False
 
+# Learning generator (опционально — AVEVA-49)
+try:
+    from learning_generator import process_and_store as _lg_process
+    _LG_AVAILABLE = True
+except ImportError:
+    _LG_AVAILABLE = False
+
 # ─────────────────────────────────────────────────────────────
 # Пути
 # ─────────────────────────────────────────────────────────────
@@ -526,7 +533,13 @@ def check_and_resolve(silent: bool = False) -> int:
                 # RCA — run after both horizons are resolved
                 if _RCA_AVAILABLE:
                     try:
-                        _rca_store(_rca_analyze(entry, "24h"))
+                        rca_24h = _rca_analyze(entry, "24h")
+                        _rca_store(rca_24h)
+                        if _LG_AVAILABLE:
+                            try:
+                                _lg_process(rca_24h)
+                            except Exception:
+                                pass
                         if entry.get("outcome_4h"):
                             _rca_store(_rca_analyze(entry, "4h"))
                     except Exception:

@@ -204,9 +204,9 @@ def export_report(
 
             # Базовые метрики
             chg   = r.get("change_24h", 0)
-            vol   = r.get("volume_24h_usd", 0)
-            oi    = r.get("oi_change_pct", 0)
-            fund  = r.get("funding_rate", 0)
+            vol   = r.get("turnover24h", 0) or r.get("volume_24h_usd", 0)
+            oi    = r.get("oi24h_%", 0)   or r.get("oi_change_pct", 0)
+            fund  = r.get("fund_%", 0)    or r.get("funding_rate", 0)
             lines.append(f"- Изм 24h: {'+'if chg>=0 else ''}{chg:.1f}%  |  Объём 24h: ${vol:,.0f}  |  OI изм: {oi:.1f}%  |  Funding: {fund*100:.4f}%")
 
             # RSI
@@ -540,6 +540,151 @@ def disable(cfg: Optional[dict] = None) -> dict:
     cfg["enabled"] = False
     save_config(cfg)
     return cfg
+
+
+# ─────────────────────────────────────────────────────────────
+# Coin note refresh (автоматическое обновление Монеты/*.md)
+# ─────────────────────────────────────────────────────────────
+
+_OUTCOME_ICON = {"TP1": "✅TP1", "WIN": "🟢WIN", "FLAT": "⚪FLAT",
+                 "LOSS": "🔴LOSS", "STOP": "❌STOP"}
+_SETUP_SHORT  = {"squeeze": "SQZ", "bos_fvg": "BOS/FVG", "range_sweep": "SWEEP",
+                 "breakout": "PUMP", "short_dist": "DIST"}
+_DIR_ICON     = {"ЛОНГ": "🟢ЛОНГ", "ШОРТ": "🔴ШОРТ"}
+
+
+def refresh_coin_note(symbol: str, cfg: Optional[dict] = None) -> Optional[Path]:
+    """
+    Пересоздаёт заметку Монеты/{symbol}.md из resolved.csv + pending.json.
+    Вызывается из outcome_tracker после каждого сохранения/резолва.
+    Возвращает путь к файлу или None если Obsidian не настроен.
+    """
+    import csv as _csv
+
+    if cfg is None:
+        cfg = load_config()
+    if not cfg.get("enabled") or not cfg.get("vault_path"):
+        return None
+
+    vault     = Path(cfg["vault_path"])
+    coins_dir = _trading_root(cfg) / "Результаты сделок" / "Монеты"
+    coins_dir.mkdir(parents=True, exist_ok=True)
+    note_path = coins_dir / f"{symbol}.md"
+
+    base_dir      = Path(__file__).parent
+    resolved_csv  = base_dir / "outcomes" / "resolved.csv"
+    pending_json  = base_dir / "outcomes" / "pending.json"
+
+    # Читаем resolved строки для этого символа
+    resolved = []
+    if resolved_csv.exists():
+        with open(resolved_csv, "r", encoding="utf-8") as f:
+            for row in _csv.DictReader(f):
+                if row.get("symbol") == symbol:
+                    resolved.append(row)
+
+    # Читаем pending записи для этого символа
+    pending = []
+    if pending_json.exists():
+        try:
+            data = json.loads(pending_json.read_text(encoding="utf-8"))
+            pending = [e for e in data if e.get("symbol") == symbol]
+        except Exception:
+            pass
+
+    if not resolved and not pending:
+        return None
+
+    # ── Статистика (по outcome_24h, fallback outcome_4h) ──
+    tp1_n = win_n = flat_n = loss_n = stop_n = 0
+    changes = []
+    for r in resolved:
+        out = r.get("outcome_24h") or r.get("outcome_4h") or ""
+        if out == "TP1":        tp1_n  += 1
+        elif out == "WIN":      win_n  += 1
+        elif out == "FLAT":     flat_n += 1
+        elif out == "LOSS":     loss_n += 1
+        elif out == "STOP":     stop_n += 1
+        try:
+            chg = float(r.get("change_24h_pct") or r.get("change_4h_pct") or "0")
+            changes.append(chg)
+        except (ValueError, TypeError):
+            pass
+
+    total_res = tp1_n + win_n + flat_n + loss_n + stop_n
+    wr = round((tp1_n + win_n) / total_res * 100) if total_res else 0
+    best  = f"+{max(changes):.1f}%" if changes else "—"
+    worst = f"{min(changes):.1f}%"  if changes else "—"
+    total_sig = total_res + len(pending)
+    base_sym  = symbol.replace("USDT", "").lower()
+
+    # ── Frontmatter + заголовок ──
+    lines = [
+        "---",
+        f'symbol: "{symbol}"',
+        f"signals: {total_sig}",
+        f"win_rate_24h: {wr}",
+        f"tags: [trading, results, {base_sym}]",
+        "---",
+        "",
+        f"# {symbol}",
+        "",
+        f"**Сигналов:** {total_sig}  |  **Win Rate (24h):** {wr}%  |  **Лучшее:** {best}  |  **Худшее:** {worst}",
+        "",
+        "| ✅TP1 | 🟢WIN | ⚪FLAT | 🔴LOSS | ❌STOP |",
+        "|------|------|------|------|------|",
+        f"| {tp1_n} | {win_n} | {flat_n} | {loss_n} | {stop_n} |",
+        "",
+        "## История сигналов",
+        "",
+        "| Дата | Напр. | Сетап | Score | Вход | Стоп | TP1 | Рез. 4h | Рез. 24h | Изм% 24h |",
+        "|------|-------|-------|-------|------|------|-----|---------|----------|----------|",
+    ]
+
+    def _fmt_price(v):
+        try:
+            return f"`{float(v):.4g}`" if v else "—"
+        except (ValueError, TypeError):
+            return "—"
+
+    def _fmt_chg(v):
+        try:
+            f = float(v)
+            return f"+{f:.1f}%" if f >= 0 else f"{f:.1f}%"
+        except (ValueError, TypeError):
+            return "—"
+
+    def _out_icon(v):
+        return _OUTCOME_ICON.get(v, "—")
+
+    def _dir_icon(v):
+        return _DIR_ICON.get(v, v or "—")
+
+    for r in resolved:
+        ts      = (r.get("run_ts") or "")[:16].replace("T", " ")
+        dirn    = _dir_icon(r.get("direction", ""))
+        setup   = _SETUP_SHORT.get(r.get("setup", ""), r.get("setup", "—"))
+        score   = r.get("score", "—")
+        entry   = _fmt_price(r.get("price_entry"))
+        stop    = _fmt_price(r.get("stop"))
+        tp1_p   = _fmt_price(r.get("tp1"))
+        out4    = _out_icon(r.get("outcome_4h", ""))
+        out24   = _out_icon(r.get("outcome_24h", ""))
+        chg     = _fmt_chg(r.get("change_24h_pct") or r.get("change_4h_pct"))
+        lines.append(f"| {ts} | {dirn} | {setup} | {score} | {entry} | {stop} | {tp1_p} | {out4} | {out24} | {chg} |")
+
+    # ── Pending ──
+    if pending:
+        lines += ["", "## ⏳ Ожидают резолва", ""]
+        for e in pending:
+            ts   = (e.get("run_ts") or "")[:16].replace("T", " ")
+            dirn = _dir_icon(e.get("direction", ""))
+            sc   = e.get("score", "—")
+            ep   = e.get("price_entry", "—")
+            lines.append(f"- {ts}  {dirn}  score={sc}  entry=`{ep}`")
+
+    note_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return note_path
 
 
 # ─────────────────────────────────────────────────────────────

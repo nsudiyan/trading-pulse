@@ -20,3 +20,22 @@ last_scan_cache.json
 
 # outcomes/ — КОММИТИМ (данные бэктеста хранятся в репо)
 # !outcomes/
+
+# Переменные окружения (СЕКРЕТЫ — никогда не коммитить)
+.env
+channel_signals_cache.json
+liqtracker.log
+liqtracker_error.log
+channelreader.log
+channelreader_error.log
+liquidations.db
+
+# Дополнительные логи
+
+# Большой лог ликвидаций
+liquidations.db
+bot.log
+
+# run_*.sh wrapper-скрипты НЕ коммитим — они рядом с .env
+# (раскомментируй следующую строку если хочешь их исключить):
+# run_*.sh

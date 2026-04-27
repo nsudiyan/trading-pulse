@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "db_version": 2,
+  "db_version": 17,
   "generated_at": "2026-04-26T19:04:26Z",
-  "last_updated": "2026-04-26T19:04:26Z",
+  "last_updated": "2026-04-27T10:54:39Z",
   "source_rca": "/Users/nikitasudian/Desktop/трейдинг/outcomes/rca_results.json",
   "source_patterns": "/Users/nikitasudian/Desktop/трейдинг/outcomes/pattern_report.json",
   "losing_patterns": [
@@ -2033,6 +2033,62 @@
       "source": "pattern_engine",
       "created_at": "2026-04-26T19:04:26Z",
       "hypothesis": "H0502"
+    },
+    {
+      "id": "CR-027",
+      "rule": "Reduce position size or tighten stop — stop too wide for acceptable R:R",
+      "priority": "HIGH",
+      "source": "learning_generator",
+      "created_at": "2026-04-27T10:54:39Z"
+    },
+    {
+      "id": "CR-028",
+      "rule": "Block entry when OI_24h_pct > +20% — over-leveraged market flush risk",
+      "priority": "HIGH",
+      "source": "learning_generator",
+      "created_at": "2026-04-27T10:54:39Z"
+    },
+    {
+      "id": "CR-029",
+      "rule": "Widen stop to ATR x 1.8 minimum — current stop too tight, liquidity sweep risk",
+      "priority": "HIGH",
+      "source": "learning_generator",
+      "created_at": "2026-04-27T10:54:39Z"
+    },
+    {
+      "id": "CR-030",
+      "rule": "Require R:R >= 1.5 before entry — current setup offers poor expected value",
+      "priority": "HIGH",
+      "source": "learning_generator",
+      "created_at": "2026-04-27T10:54:39Z"
+    },
+    {
+      "id": "CR-031",
+      "rule": "Require MTF consensus: abort if mtf_bull >= 1 AND mtf_bear >= 3 simultaneously",
+      "priority": "HIGH",
+      "source": "learning_generator",
+      "created_at": "2026-04-27T10:54:39Z"
+    },
+    {
+      "id": "CR-032",
+      "rule": "Wait for CHoCH confirmation on 1H before entry — structure shift not yet confirmed",
+      "priority": "HIGH",
+      "source": "learning_generator",
+      "created_at": "2026-04-27T10:54:39Z"
+    },
+    {
+      "id": "CR-033",
+      "rule": "Require CVD agreement: skip if kline-CVD and trade-CVD conflict by > 10pp",
+      "priority": "HIGH",
+      "source": "learning_generator",
+      "created_at": "2026-04-27T10:54:39Z"
+    },
+    {
+      "id": "CR-034",
+      "rule": "Avoid squeeze entries in 100-140 score band — U-shaped WR curve, weakest zone",
+      "priority": "HIGH",
+      "source": "learning_generator",
+      "created_at": "2026-04-27T10:54:39Z"
     }
   ],
   "prohibited_entry_conditions": [
@@ -2147,6 +2203,34 @@
       "source": "pattern_engine",
       "created_at": "2026-04-26T19:04:26Z",
       "hypothesis": "H0502"
+    },
+    {
+      "id": "PEC-015",
+      "condition": "oi_regime:oi_surge",
+      "reason": "FLAT — trade resolved within noise band; neither TP1 nor stop reached",
+      "source": "learning_generator",
+      "created_at": "2026-04-27T10:54:39Z"
+    },
+    {
+      "id": "PEC-016",
+      "condition": "mtf_bull_tier:mtf_bull_moderate + mtf_bear_tier:mtf_bear_moderate",
+      "reason": "FLAT — trade resolved within noise band; neither TP1 nor stop reached",
+      "source": "learning_generator",
+      "created_at": "2026-04-27T10:54:39Z"
+    },
+    {
+      "id": "PEC-017",
+      "condition": "cvd_kline_zone:cvdk_strong_neg + cvd_trade_zone:cvdt_strong_pos",
+      "reason": "FLAT — trade resolved within noise band; neither TP1 nor stop reached",
+      "source": "learning_generator",
+      "created_at": "2026-04-27T10:54:39Z"
+    },
+    {
+      "id": "PEC-018",
+      "condition": "setup:squeeze + score_band:score110-130",
+      "reason": "FLAT — trade resolved within noise band; neither TP1 nor stop reached",
+      "source": "learning_generator",
+      "created_at": "2026-04-27T10:54:39Z"
     }
   ],
   "confirmation_filters": [
@@ -2461,6 +2545,27 @@
       "source": "pattern_engine",
       "created_at": "2026-04-26T19:04:26Z",
       "hypothesis": "H0016"
+    },
+    {
+      "id": "CF-040",
+      "filter": "Verify ATR-based stop distance before entry (ATR x 0.65 min, ATR x 1.8 for volatile alts)",
+      "description": "Prevents RISK_MGMT_ERROR — AXSUSDT squeeze",
+      "source": "learning_generator",
+      "created_at": "2026-04-27T10:54:39Z"
+    },
+    {
+      "id": "CF-041",
+      "filter": "Wait for CHoCH on 1H — adds +12pp WR when confirmed",
+      "description": "Prevents FILTERING_ERROR — TRUMPUSDT squeeze",
+      "source": "learning_generator",
+      "created_at": "2026-04-27T10:54:39Z"
+    },
+    {
+      "id": "CF-042",
+      "filter": "Require MTF consensus >= 3 aligned timeframes before entry",
+      "description": "Prevents SIGNAL_ERROR — 1000PEPEUSDT bos_fvg",
+      "source": "learning_generator",
+      "created_at": "2026-04-27T10:54:39Z"
     }
   ],
   "statistics": {

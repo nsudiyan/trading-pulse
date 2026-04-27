@@ -31,17 +31,51 @@ import requests
 
 DIR         = Path(__file__).parent
 CONFIG_PATH = DIR / "telegram_config.json"
+
+
+# ─── .env loader ─────────────────────────────────────────────────────────────
+
+def _load_dotenv():
+    dotenv_path = DIR / ".env"
+    if not dotenv_path.exists():
+        return
+    with open(dotenv_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip(); val = val.strip()
+            if val and val[0] in ('"', "'") and val[-1] == val[0]:
+                val = val[1:-1]
+            os.environ.setdefault(key, val)
+
+
+_load_dotenv()
 CACHE_PATH  = DIR / "last_scan_cache.json"   # кэш последнего скана для /top
 LOG_PATH    = DIR / "bot.log"
 
 # ─── Импорт скринера ─────────────────────────────────────────────────────────
 
+_SCREENER_ERR = ""  # default: no error
 try:
     import screener as _screener
     _SCREENER_OK = True
 except ImportError as e:
     _SCREENER_OK = False
     _SCREENER_ERR = str(e)
+
+try:
+    import liquidation_tracker as _liq
+    _LIQ_OK = True
+except ImportError:
+    _LIQ_OK = False
+
+try:
+    import channel_reader as _ch
+    _CH_OK = True
+except ImportError:
+    _CH_OK = False
 
 TG_BASE = "https://api.telegram.org"
 
@@ -50,13 +84,17 @@ TG_BASE = "https://api.telegram.org"
 _scan_lock   = threading.Lock()
 _scan_active = False        # идёт ли скан прямо сейчас
 _last_update = 0            # timestamp последнего /run
+_daemon_mode = False        # в daemon-режиме stdout уже идёт в лог-файл — не писать дважды
 
 # ─── Логирование ─────────────────────────────────────────────────────────────
 
 def _log(msg: str):
-    ts  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ts   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = f"[{ts}] {msg}"
-    print(line, flush=True)
+    if not _daemon_mode:
+        # Обычный режим: печатаем в консоль
+        print(line, flush=True)
+    # Всегда пишем в файл (в daemon-режиме не дублируем — stdout уже НЕ redirected)
     try:
         with open(LOG_PATH, "a", encoding="utf-8") as f:
             f.write(line + "\n")
@@ -67,10 +105,19 @@ def _log(msg: str):
 # ─── Конфиг ──────────────────────────────────────────────────────────────────
 
 def load_config() -> dict:
-    if not CONFIG_PATH.exists():
-        return {}
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+    cfg: dict = {}
+    if CONFIG_PATH.exists():
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    # Переменные окружения имеют приоритет над JSON-файлом
+    env_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    env_chat  = os.environ.get("TELEGRAM_CHAT_ID")
+    if env_token:
+        cfg["bot_token"] = env_token
+        cfg["enabled"]   = True
+    if env_chat:
+        cfg["chat_id"] = env_chat
+    return cfg
 
 
 # ─── Telegram API ─────────────────────────────────────────────────────────────
@@ -118,7 +165,11 @@ def tg_send(token: str, chat_id: str, text: str, parse_mode: str = "HTML") -> bo
     return ok
 
 
-def tg_get_updates(token: str, offset: int, timeout: int = 30) -> list:
+def tg_get_updates(token: str, offset: int, timeout: int = 30) -> Optional[list]:
+    """
+    Возвращает список обновлений или None при ошибке.
+    None позволяет основному циклу применить экспоненциальный backoff.
+    """
     try:
         r = requests.get(
             f"{TG_BASE}/bot{token}/getUpdates",
@@ -128,9 +179,17 @@ def tg_get_updates(token: str, offset: int, timeout: int = 30) -> list:
         data = r.json()
         if data.get("ok"):
             return data.get("result", [])
+        _log(f"getUpdates API error: {data.get('description')}")
+        return None
+    except requests.exceptions.Timeout:
+        _log("getUpdates timeout (сеть медленная или недоступна)")
+        return None
+    except requests.exceptions.ConnectionError as e:
+        _log(f"getUpdates connection error: {e}")
+        return None
     except Exception as e:
         _log(f"getUpdates error: {e}")
-    return []
+        return None
 
 
 # ─── Кэш последнего скана ─────────────────────────────────────────────────────
@@ -214,6 +273,10 @@ def format_top(filtered: list, n: int = 5, ts: str = "") -> str:
             f"  OI24h: {oi:+.1f}%"
             f"{bnb_str}"
         )
+        conf = r.get("channel_conf", [])
+        if conf:
+            src = "  ".join(f"@{c}" for c in conf[:3])
+            lines.append(f"   📡 {_esc(src)}")
         lines.append("")
 
     return "\n".join(lines)
@@ -258,6 +321,7 @@ def _run_scan_thread(token: str, chat_id: str):
             min_score=35,
             watchlist_size=5,
             deep_dive_size=3,
+            bypass_cooldown=True,
         )
         _last_update = time.time()
         if filtered:
@@ -294,9 +358,10 @@ def handle_command(text: str, token: str, chat_id: str, authorized_chat_id: str)
             tg_send(token, chat_id,
                     f"❌ Screener не загружен: <code>{_esc(_SCREENER_ERR)}</code>")
             return
-        if _scan_active:
-            tg_send(token, chat_id, "⏳ Скан уже запущен, подожди...")
-            return
+        with _scan_lock:
+            if _scan_active:
+                tg_send(token, chat_id, "⏳ Скан уже запущен, подожди...")
+                return
 
         # Антифлуд: не чаще раза в 2 минуты
         cooldown = 120
@@ -337,6 +402,103 @@ def handle_command(text: str, token: str, chat_id: str, authorized_chat_id: str)
     elif cmd in ("/status", "/s"):
         tg_send(token, chat_id, format_status())
 
+    elif cmd == "/liq":
+        # /liq              → сводка топ-15 монет за 24h
+        # /liq BTCUSDT      → хитмап BTC за 4h
+        # /liq large        → крупные ликвидации за 1h
+        # /liq BTCUSDT 1h   → хитмап BTC за 1h (суффикс h — часы)
+        # /liq large 4h     → крупные ликвидации за 4h
+        if not _LIQ_OK:
+            tg_send(token, chat_id,
+                    "❌ liquidation_tracker не загружен.\n"
+                    "<code>pip install websockets</code> и перезапусти бота.")
+            return
+
+        con  = _liq.init_db()
+        args = text.split()[1:]   # всё после /liq
+
+        # Парсим опциональное окно вида "4h" / "1h" / "24h"
+        window_h = None
+        filtered_args = []
+        for a in args:
+            if a.endswith("h") and a[:-1].replace(".", "").isdigit():
+                window_h = float(a[:-1])
+            else:
+                filtered_args.append(a)
+        args = filtered_args
+
+        sub = args[0].lower() if args else ""
+
+        if sub == "large":
+            wh = window_h or 1.0
+            reply = _liq.tg_format_large(con, min_usd=50_000, window_h=wh)
+        elif sub and sub != "stats":
+            # Интерпретируем как символ (напр. BTC или BTCUSDT)
+            sym = sub.upper()
+            if not sym.endswith("USDT"):
+                sym += "USDT"
+            wh = window_h or 4.0
+            reply = _liq.tg_format_heatmap(con, sym, window_h=wh)
+        else:
+            # Общая сводка
+            wh = window_h or 24.0
+            reply = _liq.tg_format_stats(con, window_h=wh)
+
+        tg_send(token, chat_id, reply)
+
+    elif cmd in ("/channels", "/ch"):
+        # Показать сигналы из кэша каналов (без сетевого запроса)
+        # /channels scan — запустить новый скан прямо сейчас (async)
+        if not _CH_OK:
+            tg_send(token, chat_id,
+                    "❌ channel_reader не загружен.\n"
+                    "<code>pip install telethon</code> и убедись что channel_reader.py рядом.")
+            return
+
+        args = text.split()[1:]
+        if args and args[0].lower() == "scan":
+            # Запускаем скан в фоне
+            import asyncio
+            def _do_scan():
+                try:
+                    cfg = _ch.load_cfg()
+                    if not cfg.get("api_id"):
+                        tg_send(token, chat_id,
+                                "❌ Канал-ридер не настроен.\n"
+                                "Запусти: <code>python3 channel_reader.py setup</code>")
+                        return
+                    tg_send(token, chat_id, "📡 Читаю каналы…")
+                    channel_results = asyncio.run(_ch.scan_channels_async(cfg))
+                    _ch.save_cache(channel_results)
+                    verified = _ch.cross_verify(channel_results)
+                    msg = _ch.format_channel_insights(verified)
+                    tg_send(token, chat_id, msg)
+                except Exception as exc:
+                    tg_send(token, chat_id, f"❌ Ошибка скана каналов: {exc}")
+            threading.Thread(target=_do_scan, daemon=True).start()
+        else:
+            # Показать результаты из кэша
+            cache_path = _ch.CACHE_PATH
+            if not cache_path.exists():
+                tg_send(token, chat_id,
+                        "ℹ️ Нет кэша каналов.\n"
+                        "Отправь <code>/channels scan</code> для первого скана\n"
+                        "или запусти: <code>python3 channel_reader.py scan</code>")
+                return
+            try:
+                import json as _json
+                cache = _json.loads(cache_path.read_text(encoding="utf-8"))
+                channel_results = cache.get("results", {})
+                verified = _ch.cross_verify(
+                    {ch: items for ch, items in channel_results.items()}
+                )
+                ts = cache.get("ts", "")[:16].replace("T", " ")
+                msg = _ch.format_channel_insights(verified)
+                msg = f"<i>Кэш от {ts}</i>\n\n" + msg
+                tg_send(token, chat_id, msg)
+            except Exception as exc:
+                tg_send(token, chat_id, f"❌ Ошибка чтения кэша: {exc}")
+
     elif cmd in ("/help", "/start"):
         text_out = (
             "<b>📈 Screener Bot — Команды</b>\n\n"
@@ -344,8 +506,21 @@ def handle_command(text: str, token: str, chat_id: str, authorized_chat_id: str)
             "/top — топ-5 из последнего скана\n"
             "/top 10 — топ-10 из последнего скана\n"
             "/status — статус системы и кэша\n"
+            "\n"
+            "<b>📡 Сигналы Telegram каналов</b>\n"
+            "/channels — последние сигналы из кэша\n"
+            "/channels scan — прочитать каналы прямо сейчас\n"
+            "\n"
+            "<b>💥 Ликвидации (требует сборщик)</b>\n"
+            "/liq — топ-15 монет за 24h\n"
+            "/liq BTCUSDT — хитмап BTC за 4h\n"
+            "/liq BTCUSDT 1h — хитмап BTC за 1h\n"
+            "/liq large — крупные ликвидации за 1h\n"
+            "/liq large 4h — крупные ликвидации за 4h\n"
+            "\n"
             "/help — эта справка\n\n"
-            "<i>Автоматические сканы идут каждые 4ч (00, 04, 08, 12, 16, 20 UTC).</i>"
+            "<i>Автоматические сканы идут каждые 4ч (00, 04, 08, 12, 16, 20 UTC).\n"
+            "Сборщик ликвидаций: python3 liquidation_tracker.py</i>"
         )
         tg_send(token, chat_id, text_out)
 
@@ -382,11 +557,19 @@ def run_bot():
             f"/help — команды")
 
     offset = 0
+    _fail_count = 0         # счётчик последовательных ошибок getUpdates
     _log("Начинаю long-polling...")
 
     while True:
         try:
             updates = tg_get_updates(token, offset, timeout=30)
+            if updates is None:
+                # tg_get_updates вернул None → ошибка сети, применяем backoff
+                _fail_count += 1
+                wait = min(5 * _fail_count, 60)  # 5, 10, 15, … макс 60 сек
+                time.sleep(wait)
+                continue
+            _fail_count = 0   # успех — сбрасываем счётчик
             for upd in updates:
                 offset = upd["update_id"] + 1
                 msg    = upd.get("message", {})
@@ -401,7 +584,8 @@ def run_bot():
             break
         except Exception as e:
             _log(f"Ошибка polling: {e}")
-            time.sleep(5)   # backoff при сетевой ошибке
+            _fail_count += 1
+            time.sleep(min(5 * _fail_count, 60))
 
 
 # ─── CLI ─────────────────────────────────────────────────────────────────────
@@ -423,9 +607,10 @@ def main():
         return
 
     if args and args[0] == "daemon":
-        # Перенаправляем stdout/stderr в лог-файл при запуске как daemon
-        sys.stdout = open(LOG_PATH, "a", encoding="utf-8", buffering=1)
-        sys.stderr = sys.stdout
+        # Устанавливаем флаг daemon-режима — логи только в файл, не в консоль.
+        # НЕ перенаправляем sys.stdout: _log() сам пишет в файл без дублирования.
+        global _daemon_mode
+        _daemon_mode = True
 
     run_bot()
 
