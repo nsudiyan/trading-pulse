@@ -2280,8 +2280,19 @@ def score_symbol(symbol, ticker, oi_hist,
     if poc_dist is not None and abs(poc_dist) < 1.0:
         s2 += 8; n2.append(f"POC {poc_dist:+.1f}%")
 
-    if cvd_bull_aligned: s2 += 8; n2.append("CVD↑")
-    elif cvd_bear_aligned: s2 += 8; n2.append("CVD↓")
+    # CVD direction-aware для bos_fvg (AVEVA-56):
+    # LONG bos_fvg: CVD↑ = подтверждение (+12), CVD↓ = контра (-8)
+    # SHORT bos_fvg: CVD↓ = подтверждение (+12), CVD↑ = контра (-8)
+    # Данные: CVD>+15 = 58.0% WR vs CVD<-5 = 50.0% WR (delta +8pp)
+    if trend_bull_aligned:
+        if cvd_bull_aligned:   s2 += 12; n2.append("CVD↑")
+        elif cvd_bear_aligned: s2 -= 8;  n2.append("CVD↓⚠")
+    elif trend_bear_aligned:
+        if cvd_bear_aligned:   s2 += 12; n2.append("CVD↓")
+        elif cvd_bull_aligned: s2 -= 8;  n2.append("CVD↑⚠")
+    else:
+        if cvd_bull_aligned:   s2 += 8;  n2.append("CVD↑")
+        elif cvd_bear_aligned: s2 += 8;  n2.append("CVD↓")
 
     # RS vs BTC
     if rs_btc is not None and rs_btc > 1.5:

@@ -307,6 +307,10 @@ def _direction_from_result(r: dict) -> str:
 
     if setup in ("squeeze", "breakout"):
         return "ЛОНГ"
+    # short_dist — всегда ШОРТ: это дистрибуция/шорт-давление по определению.
+    # Ранее падало на MTF-тайбрейкер → 103 сигнала помечались ЛОНГ (WR=32%).
+    if setup == "short_dist":
+        return "ШОРТ"
     if setup == "range_sweep":
         sweep_dir = r.get("sweep_dir")
         if sweep_dir == "long":
@@ -315,16 +319,10 @@ def _direction_from_result(r: dict) -> str:
             return "ШОРТ"
         cvd = r.get("cvd_k%", 0)
         return "ЛОНГ" if cvd > 0 else "ШОРТ"
-    # bos_fvg / short_dist: смотрим на MTF
+    # bos_fvg: смотрим на MTF, тайбрейкер → ЛОНГ (BOS/FVG бычий паттерн)
     if bull > bear:
         return "ЛОНГ"
     elif bear > bull:
-        return "ШОРТ"
-    # Нейтральный MTF (bull == bear): тайбрейкер по сетапу.
-    # short_dist — распределение/давление продаж → всегда ШОРТ.
-    # bos_fvg без MTF → ЛОНГ (BOS/FVG сам по себе бычий паттерн).
-    # ЖДАТЬ устранён: он создавал баг в outcome_tracker (LONG-план + SHORT-оценка).
-    if setup == "short_dist":
         return "ШОРТ"
     return "ЛОНГ"
 
