@@ -59,13 +59,14 @@ MAX_MOVE_24H_ABS = 0.50        # исключить пары с |move| > 50% з�
 SYMBOL_BLACKLIST = {"WETUSDT", "LABUSDT", "TONUSDT", "ASTERUSDT", "ARIAUSDT"}
 
 # Часы UTC с хорошим историческим WR (> 50%): 05,09,10,20 — лучшие окна
-GOOD_SIGNAL_HOURS = {1, 2, 5, 9, 10, 13, 15, 16, 20, 21}  # убран 14 (WR=36%)
-# Часы UTC с плохим WR (35-40%) — поднимаем порог score для TG
-BAD_SIGNAL_HOURS  = {12, 14, 17, 18, 19, 22, 23, 0}  # +12(38%), +14(36%)
-# Часы UTC с катастрофическим WR (< 30%) — жёсткий блок: не сохранять в pending.json
-HARD_BLOCK_HOURS  = {18, 19}  # 18UTC=18% WR, 19UTC=17.5% WR (worst hour)
+GOOD_SIGNAL_HOURS = {1, 5, 9, 10, 20}   # 2510-trade audit: 55-64% WR (AVEVA-55)
+# Часы UTC с плохим WR (38-41%) — поднимаем порог score для TG
+BAD_SIGNAL_HOURS  = {12, 14, 23, 0}     # 12=40.6%, 14=38.6%
+# Часы UTC с катастрофическим WR (< 37%) — полный хард-блок TG + pending
+# 17=36.5%, 18=28.6%, 19=21.4%, 22=32.8%
+HARD_BLOCK_HOURS  = {17, 18, 19, 22}
 # В плохие часы сигнал идёт в TG только если score >= BAD_HOUR_MIN_SCORE
-BAD_HOUR_MIN_SCORE = 130
+BAD_HOUR_MIN_SCORE = 165                # было 130; данные: 663 сигнала WR=34.5%
 # FIX 8: Saturday WR=24.5% vs Thursday WR=64.0% — поднимаем порог на 50%
 SATURDAY_MIN_SCORE = 195  # round(BAD_HOUR_MIN_SCORE * 1.5)
 # FINDING 7: Friday/Tuesday also show lower WR — moderate threshold increases (n=26/n=small, not hard block)
@@ -5815,6 +5816,14 @@ def run_screener(top_n=50, min_score=35,
                   f"Осталось: {len(_tg_candidates)}")
         else:
             print(f"[TimeGate] Вторник — пониженный WR, но все {len(_tg_candidates)} выше порога {TUESDAY_MIN_SCORE}.")
+    elif _utc_hour in HARD_BLOCK_HOURS:
+        # WR 21–37% — полный хард-блок TG-алертов (AVEVA-55)
+        _n_before_hb = len(_tg_candidates)
+        _tg_candidates = []
+        wr_map = {17: "36.5%", 18: "28.6%", 19: "21.4%", 22: "32.8%"}
+        _wr_str = wr_map.get(_utc_hour, "<37%")
+        print(f"[TimeGate] UTC {_utc_hour:02d}:xx — HARD BLOCK (WR={_wr_str}). "
+              f"Заблокировано {_n_before_hb} сигналов. TG не отправляется.")
     elif _utc_hour in BAD_SIGNAL_HOURS:
         _before_tg = len(_tg_candidates)
         _tg_candidates = [r for r in _tg_candidates if r["score"] >= BAD_HOUR_MIN_SCORE]
@@ -5827,6 +5836,25 @@ def run_screener(top_n=50, min_score=35,
             print(f"[TimeGate] UTC {_utc_hour:02d}:xx — плохой час, но все {len(_tg_candidates)} выше порога.")
     elif _utc_hour in GOOD_SIGNAL_HOURS:
         print(f"[TimeGate] UTC {_utc_hour:02d}:xx — хороший час ✓")
+
+    # ── Fix 2: Grade-фильтр — B+/C/D не уходят в TG (AVEVA-55) ───────────────
+    _before_grade = len(_tg_candidates)
+    _tg_candidates = [r for r in _tg_candidates
+                      if r.get("grade", "B") not in ("B+", "C", "D", "X")]
+    _grade_blocked = _before_grade - len(_tg_candidates)
+    if _grade_blocked:
+        print(f"[GradeGate] Заблокировано {_grade_blocked} сигналов (grade B+/C/D/X, WR≤42%)")
+
+    # ── Fix 3: squeeze falling knife — vwap_dev < -8% = не входить (AVEVA-55) ─
+    _before_fk = len(_tg_candidates)
+    _tg_candidates = [
+        r for r in _tg_candidates
+        if not (r.get("setup") == "squeeze"
+                and (r.get("vwap_dev") or 0) < -8.0)
+    ]
+    _fk_blocked = _before_fk - len(_tg_candidates)
+    if _fk_blocked:
+        print(f"[FallingKnife] Заблокировано {_fk_blocked} squeeze-сигналов (vwap_dev<-8%, WR=21.6%)")
 
     # ── Cooldown фильтр: 8h между сигналами по одной паре ─────────────────────
     if bypass_cooldown:
