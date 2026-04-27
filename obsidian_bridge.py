@@ -691,6 +691,115 @@ def refresh_coin_note(symbol: str, cfg: Optional[dict] = None) -> Optional[Path]
 # CLI
 # ─────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────
+# Devlog: запись системных изменений из git commit
+# ─────────────────────────────────────────────────────────────
+
+def export_devlog(
+    commit_hash: Optional[str] = None,
+    cfg: Optional[dict] = None,
+) -> Optional[Path]:
+    """
+    Читает последний git commit и пишет devlog-ноту в Obsidian.
+    Папка: крипта/Системные изменения/
+    Формат файла: YYYY-MM-DD — <тема>.md
+    """
+    import subprocess
+
+    if cfg is None:
+        cfg = load_config()
+    if not cfg.get("enabled") or not cfg.get("vault_path"):
+        return None
+
+    repo_root = Path(__file__).parent
+
+    def _git(*git_args) -> str:
+        try:
+            return subprocess.check_output(
+                ["git", "-C", str(repo_root), *git_args],
+                stderr=subprocess.DEVNULL,
+                text=True,
+            ).strip()
+        except Exception:
+            return ""
+
+    ref = commit_hash or "HEAD"
+
+    hash_short  = _git("log", "-1", "--format=%h",   ref)
+    author      = _git("log", "-1", "--format=%an",  ref)
+    date_str    = _git("log", "-1", "--format=%ci",  ref)[:10]
+    full_msg    = _git("log", "-1", "--format=%B",   ref).strip()
+    first_line  = full_msg.splitlines()[0] if full_msg else hash_short
+    body_lines  = full_msg.splitlines()[2:] if len(full_msg.splitlines()) > 2 else []
+    body        = "\n".join(body_lines).strip()
+
+    changed_raw = _git("diff-tree", "--no-commit-id", "-r", "--name-only", ref)
+    changed     = [f for f in changed_raw.splitlines() if f]
+
+    aveva_match = re.search(r"AVEVA-(\d+)", first_line, re.IGNORECASE)
+    aveva_tag   = f"AVEVA-{aveva_match.group(1)}" if aveva_match else ""
+    aveva_link  = f"\n**Ticket:** #{aveva_match.group(1)}" if aveva_match else ""
+
+    topic = re.sub(r"^(feat|fix|chore|refactor|docs|test)\([^)]+\):\s*", "", first_line)
+    topic = re.sub(r"AVEVA-\d+\s*[:\-–]?\s*", "", topic, flags=re.IGNORECASE).strip()
+    if not topic:
+        topic = first_line[:60]
+
+    tags = ["devlog", "screener"]
+    if aveva_tag:
+        tags.append(aveva_tag.lower())
+    for f in changed:
+        base = Path(f).stem
+        if base not in tags and len(base) < 30:
+            tags.append(base)
+
+    files_md = "\n".join(f"- `{f}`" for f in changed) if changed else "_нет_"
+    body_md  = f"\n### Описание\n```\n{body}\n```\n" if body else ""
+
+    note = f"""---
+date: "{date_str}"
+tags: [{", ".join(tags)}]
+---
+
+# {date_str} — {topic}
+
+| | |
+|---|---|
+| **Коммит** | `{hash_short}` |
+| **Автор** | {author} |{aveva_link} |
+
+## Изменения
+
+```
+{first_line}
+```
+{body_md}
+## Изменённые файлы
+
+{files_md}
+
+---
+*Авто-сгенерировано obsidian_bridge.py из git commit*
+"""
+
+    root = _trading_root(cfg)
+    devlog_dir = root / "Системные изменения"
+    devlog_dir.mkdir(parents=True, exist_ok=True)
+
+    safe_topic = _slug(topic)[:80]
+    filename   = f"{date_str} — {safe_topic}.md"
+    dest       = devlog_dir / filename
+
+    if dest.exists():
+        existing = dest.read_text(encoding="utf-8")
+        append_block = f"\n---\n\n## {hash_short}: {first_line}\n\n{files_md}\n"
+        dest.write_text(existing + append_block, encoding="utf-8")
+    else:
+        dest.write_text(note, encoding="utf-8")
+
+    return dest
+
+
 def main():
     args = sys.argv[1:]
     cmd  = args[0] if args else "status"
@@ -773,6 +882,16 @@ def main():
             print(f"[Obsidian] Тестовый отчёт сохранён: {path}")
         else:
             print("[Obsidian] Экспорт не выполнен (проверь конфиг).")
+
+    elif cmd == "devlog":
+        # Вызывается из git post-commit хука: python3 obsidian_bridge.py devlog
+        import subprocess
+        cfg = load_config()
+        if not cfg.get("enabled") or not cfg.get("vault_path"):
+            sys.exit(0)  # молча выходим если vault не настроен
+        path = export_devlog(cfg=cfg)
+        if path:
+            print(f"[Obsidian] Devlog записан: {path}")
 
     else:
         print(__doc__)
