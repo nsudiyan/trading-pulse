@@ -4026,40 +4026,74 @@ def calc_mtf_grade(r, setup_dir="long"):
     """
     Full MTF grade A+/A/B+/B/C/D with weekly hard-block Grade X.
 
-    Grade X: Weekly + Daily both oppose signal direction — hard counter-trend.
-    Grade A+: score ≥ 90 + MTF_ext ≥ 2 + trend aligned + CVD confirms + weekly aligned.
-    Grade A:  score ≥ 80 + MTF ≥ 2  OR  score ≥ 90.
+    Grade X:  Weekly + Daily both oppose signal direction.
+    Grade A+: score ≥ 90 + MTF ≥ 2 + aligned + CVD directional + weekly aligned
+              + rs_btc ≥ 0 + not squeeze with score > 150 + not short.
+    Grade A:  score ≥ 80 + MTF ≥ 2  OR  score ≥ 90, subject to rs_btc / squeeze guards.
     Grade B+: score ≥ 70 + MTF ≥ 1.
     Grade B:  score ≥ 55.
     Grade C:  score ≥ 35.
     Grade D:  < 35.
+
+    Data-driven fixes (AVEVA-54, 2026-04-27):
+    - CVD must confirm direction (positive for LONG, negative for SHORT);
+      using abs() was awarding A+ to falling-knife longs with heavy sell CVD.
+    - squeeze + score > 150 capped at B+: WR inverts above 150 for squeeze
+      (38% at 160–179, 33% at 180–199) because high score = squeeze already done.
+    - rs_btc < 0 capped at B+: A-grade signals averaged rs_btc = -2.76
+      vs +2.62 for ungraded — grader was rewarding BTC underperformers.
+    - Shorts excluded from A+: 24.1% WR on short A-signals.
     """
-    score   = r["score"]
-    mtf     = max(r.get("bull_mtf_ext", r.get("mtf_b", 0)),
-                  r.get("bear_mtf_ext", r.get("mtf_s", 0)))
-    aligned = (r.get("d_htf") != "range" and r.get("h4_htf") != "range"
-               and r.get("d_htf") == r.get("h4_htf"))
-    cvd_ok  = abs(r.get("cvd_k%", 0)) > 15
+    score        = r["score"]
+    setup        = r.get("setup", "")
+    mtf          = max(r.get("bull_mtf_ext", r.get("mtf_b", 0)),
+                       r.get("bear_mtf_ext", r.get("mtf_s", 0)))
+    aligned      = (r.get("d_htf") != "range" and r.get("h4_htf") != "range"
+                    and r.get("d_htf") == r.get("h4_htf"))
+    cvd          = r.get("cvd_k%", 0) or 0
     weekly_trend = r.get("weekly_trend", "unknown")
     daily_trend  = r.get("d_htf", "range")
+    rs_btc       = r.get("rs_btc")
+
     # Grade X: both senior TFs oppose signal
     if weekly_trend != "unknown":
-        if setup_dir == "long" and weekly_trend == "bear" and daily_trend == "bear":
+        if setup_dir == "long"  and weekly_trend == "bear" and daily_trend == "bear":
             return "X"
         if setup_dir == "short" and weekly_trend == "bull" and daily_trend == "bull":
             return "X"
-    # Weekly alignment bonus for A+
+
+    # ── Data-driven guards that cap grade at B+ ──────────────────────────────
+    # 1. squeeze inverted correlation above score 150
+    squeeze_overheat = (setup == "squeeze" and score > 150)
+    # 2. coin underperforming BTC → not A-quality long
+    rs_weak = (rs_btc is not None and rs_btc < 0)
+    # Hard cap: squeeze overheat or underperformer → max B+
+    hard_cap_bplus = squeeze_overheat or rs_weak
+
+    # Weekly alignment for A+
     weekly_aligned = (
         (setup_dir == "long"  and weekly_trend == "bull") or
         (setup_dir == "short" and weekly_trend == "bear") or
         weekly_trend == "unknown"
     )
-    if score >= 90 and mtf >= 2 and aligned and cvd_ok and weekly_aligned:
+    # CVD must confirm direction (was abs() — fixed to be directional)
+    cvd_confirms = (
+        (setup_dir == "long"  and cvd >  15) or
+        (setup_dir == "short" and cvd < -15)
+    )
+
+    # A+ excluded for shorts (24.1% WR) and hard-capped setups
+    aplus_eligible = (setup_dir == "long") and not hard_cap_bplus
+
+    if aplus_eligible and score >= 90 and mtf >= 2 and aligned and cvd_confirms and weekly_aligned:
         return "A+"
-    if score >= 80 and mtf >= 2:
-        return "A"
-    if score >= 90:
-        return "A"
+
+    if not hard_cap_bplus:
+        if score >= 80 and mtf >= 2:
+            return "A"
+        if score >= 90:
+            return "A"
+
     if score >= 70 and mtf >= 1:
         return "B+"
     if score >= 55:
