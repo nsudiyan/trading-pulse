@@ -49,6 +49,9 @@ LIQ_DB_PATH = Path(__file__).parent / "liquidations.db"
 OUTCOMES_CSV = Path(__file__).parent / "outcomes" / "resolved.csv"
 COOLDOWN_PATH = Path(__file__).parent / "cooldown_cache.json"
 
+# ── Timestamp cache: side-effect of fetch_klines, (symbol, interval) → open_ts_sec ──
+_kl_open_ts: dict = {}
+
 # ── Quality & time filter constants ──────────────────────────────────────────
 COOLDOWN_HOURS   = 8          # минимум часов между сигналами по одной паре
 MIN_TURNOVER_24H = 50_000_000  # минимальный оборот $50M/сутки
@@ -276,6 +279,8 @@ def fetch_klines(symbol, interval="60", limit=102):
         "limit":    limit,
     })
     candles = list(reversed(result["list"]))
+    if len(candles) >= 2:
+        _kl_open_ts[(symbol, interval)] = float(candles[-2][0]) / 1000
     opens   = [float(c[1]) for c in candles]
     highs   = [float(c[2]) for c in candles]
     lows    = [float(c[3]) for c in candles]
@@ -3193,6 +3198,7 @@ def score_symbol(symbol, ticker, oi_hist,
         "cp_score":      _cp_score,
         "lc_sentiment":  _lc_sent,
         "lc_galaxy":     _lc_galaxy,
+        "kline_1h_ts":   _kl_open_ts.get((symbol, "60"), 0.0),
     }
 
 
@@ -5952,6 +5958,34 @@ def run_screener(top_n=50, min_score=35,
         for _sec, _syms in _sector_count.items():
             if len(_syms) >= 2:
                 print(f"[SectorWarn] ⚠ {_sec}: {', '.join(_syms)} — концентрация в секторе!")
+
+    # ── AVEVA-58: OI exhaustion — блокируем дистрибуцию и шорт в сильный тренд ──
+    _oi58_before = len(_tg_candidates)
+    def _oi58_ok(r: dict) -> bool:
+        _oi_div = r.get("oi_div", "—")
+        if r.get("setup") == "short_dist":
+            return _oi_div != "strong_bull"  # не шортим в здоровый аптренд (новые лонги)
+        else:
+            return _oi_div != "bear_div"     # не лонгуем при дистрибуции (цена↑, OI↓)
+    _tg_candidates = [r for r in _tg_candidates if _oi58_ok(r)]
+    _oi58_blocked = _oi58_before - len(_tg_candidates)
+    if _oi58_blocked:
+        print(f"[Filter] OI exhaustion: заблокировано {_oi58_blocked} сигналов "
+              f"(bear_div на ЛОНГ или strong_bull на ШОРТ)")
+
+    # ── AVEVA-58: Staleness TTL — аномально старые kline данные ───────────────
+    _stale58_before = len(_tg_candidates)
+    _now58 = time.time()
+    _MAX_KLINE_AGE_SEC = 3 * 3600  # 3 часа: последняя закрытая 1H свеча не может быть старше
+    _tg_candidates = [
+        r for r in _tg_candidates
+        if r.get("kline_1h_ts", _now58) == 0.0
+           or (_now58 - r.get("kline_1h_ts", _now58)) < _MAX_KLINE_AGE_SEC
+    ]
+    _stale58_blocked = _stale58_before - len(_tg_candidates)
+    if _stale58_blocked:
+        print(f"[Filter] Staleness TTL: заблокировано {_stale58_blocked} сигналов "
+              f"(данные kline старше 3h — возможна аномалия API)")
 
     # ── Cooldown фильтр: 8h между сигналами по одной паре ─────────────────────
     if bypass_cooldown:
