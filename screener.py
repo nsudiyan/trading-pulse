@@ -129,6 +129,18 @@ try:
 except ImportError:
     _FD_AVAILABLE = False
 
+try:
+    import trade_learnings_db as _tldb
+    _TLDB_PROHIBITED  = _tldb.get_prohibited_conditions()
+    _TLDB_RULES       = _tldb.get_active_correction_rules()
+    _TLDB_FILTERS     = _tldb.get_confirmation_filters()
+    _TLDB_AVAILABLE   = True
+except Exception:
+    _TLDB_PROHIBITED  = []
+    _TLDB_RULES       = []
+    _TLDB_FILTERS     = []
+    _TLDB_AVAILABLE   = False
+
 BASE = "https://api.bybit.com"
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "BybitFuturesScreener/1.1"})
@@ -3165,6 +3177,30 @@ def score_symbol(symbol, ticker, oi_hist,
     }
 
 
+# ─── TRADE_LEARNINGS_DB gate (injected after score_symbol result is built) ───
+
+def _apply_tldb_gate(result: dict) -> dict:
+    """Attach TLDB prohibited/rule flags to a score_symbol result dict."""
+    if not _TLDB_AVAILABLE:
+        return result
+    try:
+        gate = _tldb.check_tldb_gate(
+            result,
+            prohibited=_TLDB_PROHIBITED,
+            rules=_TLDB_RULES,
+        )
+        result["tldb_prohibited"]    = gate["is_prohibited"]
+        result["tldb_penalty_level"] = gate["penalty_level"]
+        result["tldb_prohibited_ids"]= [h["id"] for h in gate["prohibited_hits"]]
+        result["tldb_rule_ids"]      = [h["id"] for h in gate["rule_hits"]]
+    except Exception:
+        result["tldb_prohibited"]    = False
+        result["tldb_penalty_level"] = "NONE"
+        result["tldb_prohibited_ids"]= []
+        result["tldb_rule_ids"]      = []
+    return result
+
+
 # ─── Signal Interpretation ───────────────────────────────────────────────────
 
 def interpret_signals(r):
@@ -5106,6 +5142,10 @@ def _fetch_and_score(sym, tickers, btc_chg_24h, bnb_map=None,
     # Кросс-биржевое подтверждение (Binance)
     if result is not None and _BNB_AVAILABLE and bnb_map is not None:
         _bnb.apply_cross_bonus(result, bnb_map.get(sym))
+
+    # TRADE_LEARNINGS_DB gate — attach prohibited/penalty flags (non-blocking)
+    if result is not None:
+        result = _apply_tldb_gate(result)
 
     return result
 
