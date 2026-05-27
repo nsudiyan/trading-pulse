@@ -1,0 +1,117 @@
+{
+  "generated_at": "2026-05-27T15:33:23.551479Z",
+  "period": {
+    "start": "2024-05-01",
+    "end": "2026-05-27"
+  },
+  "symbols": [],
+  "klines": {
+    "5m": {
+      "symbol_detail": {}
+    },
+    "15m": {
+      "symbol_detail": {}
+    },
+    "1h": {
+      "symbol_detail": {}
+    }
+  },
+  "funding": {},
+  "open_interest": {},
+  "liquidations": {},
+  "causal_attribution": {
+    "stablecoin_flows": {
+      "file": "catalyst_data/stablecoin_flows.csv",
+      "source": "DefiLlama /stablecoincharts/all",
+      "coverage": "2024-05-01 \u2192 2026-05-27 (daily)",
+      "columns": [
+        "date",
+        "timestamp",
+        "total_usd_supply",
+        "delta_usd_1d"
+      ],
+      "rows": 758
+    },
+    "macro_events": {
+      "file": "catalyst_data/macro_events.csv",
+      "source": "alternative.me Fear & Greed Index",
+      "coverage": "2024-05-01 \u2192 2026-05-27 (daily)",
+      "columns": [
+        "date",
+        "timestamp",
+        "value",
+        "value_classification"
+      ],
+      "rows": 756
+    },
+    "sweep_clusters": {
+      "file": "catalyst_data/sweep_clusters.csv",
+      "source": "liquidations.db (live Bybit tracker)",
+      "coverage": "2026-04-14 \u2192 2026-05-27 (1h buckets)",
+      "coverage_gap": "2024-05-01 \u2192 2026-04-14 not available (live tracker start)",
+      "columns": [
+        "hour_ts",
+        "datetime",
+        "symbol",
+        "side",
+        "liq_count",
+        "liq_usd_total"
+      ],
+      "rows": 34990
+    },
+    "token_unlocks": {
+      "file": "catalyst_data/token_unlocks.csv",
+      "source": "outcomes/unlock_schedule.json (manual curation)",
+      "coverage": "near-term unlocks only (curated 2026-05-26)",
+      "coverage_gap": "Free API sources (token.unlocks.app, DefiLlama emissions) require subscription as of 2026",
+      "columns": [
+        "symbol",
+        "unlock_date",
+        "pct_of_supply",
+        "usd_value",
+        "type",
+        "note"
+      ],
+      "rows": 1
+    },
+    "news_signals": {
+      "file": "catalyst_data/news_signals.csv",
+      "source": "outcomes/resolved.csv (screener signal log)",
+      "coverage": "2026-04-12 \u2192 2026-05-26",
+      "coverage_gap": "2024-05-01 \u2192 2026-04-12 not available (screener started Apr 2026)",
+      "columns": [
+        "run_ts",
+        "symbol",
+        "setup",
+        "score",
+        "grade",
+        "pump_score",
+        "direction",
+        "price_entry",
+        "funding",
+        "oi_24h_pct",
+        "outcome_4h",
+        "outcome_24h",
+        "change_4h_pct",
+        "change_24h_pct",
+        "channel_conf",
+        "whale_flag"
+      ],
+      "rows": 3042
+    },
+    "whale_positions": {
+      "file": null,
+      "source": "Binance /futures/data/topLongShortPositionRatio",
+      "coverage": "no_coverage",
+      "coverage_gap": "Binance top-trader L/S ratio endpoints reject startTime \u2014 only last 1 datapoint available (real-time)",
+      "rows": 0
+    },
+    "orderbook_imbalance": {
+      "file": null,
+      "source": "orderbook_imbalance.py (live orderbook)",
+      "coverage": "no_coverage",
+      "coverage_gap": "Real-time orderbook snapshot only \u2014 no historical depth data stored",
+      "rows": 0
+    }
+  }
+}
