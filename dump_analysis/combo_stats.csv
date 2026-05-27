@@ -1,0 +1,16 @@
+features,n_flagged,tp,fp,fn,precision,recall,f1,lift
+vol_spike_count+vol_ratio_1h,407,117,290,145,0.2875,0.4466,0.3498,1.6963
+vol_spike_count+vol_trend_slope,420,118,302,144,0.281,0.4504,0.346,1.6578
+vol_ratio_1h+vol_trend_slope,617,152,465,110,0.2464,0.5802,0.3458,1.4537
+vol_ratio_1h+price_momentum_4h,394,97,297,165,0.2462,0.3702,0.2957,1.4527
+vol_ratio_1h+funding_rate,346,87,259,175,0.2514,0.3321,0.2862,1.4837
+vol_ratio_1h+oi_chg_4h,430,95,335,167,0.2209,0.3626,0.2746,1.3037
+vol_trend_slope+funding_rate,347,80,267,182,0.2305,0.3053,0.2627,1.3604
+vol_trend_slope+price_momentum_4h,355,80,275,182,0.2254,0.3053,0.2593,1.3297
+vol_trend_slope+oi_chg_4h,425,89,336,173,0.2094,0.3397,0.2591,1.2357
+vol_spike_count+oi_chg_4h,217,58,159,204,0.2673,0.2214,0.2422,1.5772
+vol_spike_count+price_momentum_4h,202,55,147,207,0.2723,0.2099,0.2371,1.6066
+vol_spike_count+funding_rate,194,53,141,209,0.2732,0.2023,0.2325,1.6121
+price_momentum_4h+oi_chg_4h,433,80,353,182,0.1848,0.3053,0.2302,1.0902
+funding_rate+price_momentum_4h,290,62,228,200,0.2138,0.2366,0.2246,1.2615
+funding_rate+oi_chg_4h,311,63,248,199,0.2026,0.2405,0.2199,1.1953

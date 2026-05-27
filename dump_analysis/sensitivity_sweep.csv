@@ -1,0 +1,3 @@
+dump_type,base_rate,lift_vol_spike_count,lift_vol_ratio_1h,lift_vol_trend_slope,lift_funding_rate,lift_price_momentum_4h
+standard,0.1152,1.3753,1.2268,1.1678,1.3276,1.2395
+fast,0.0653,1.7042,1.4281,1.3384,1.5353,1.0689
