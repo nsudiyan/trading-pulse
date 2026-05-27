@@ -1,41 +1,67 @@
 {
-  "generated_at": "2026-05-27T18:54:21.807973+00:00",
+  "generated_at": "2026-05-27T19:00:59.204388+00:00",
   "total_pumps": 677,
-  "no_catalyst_pct": 53.18,
-  "multi_catalyst_pct": 3.4,
+  "methodology": "Event study uses control_windows.csv (pre-built negative windows). Confidence = HIGH/MEDIUM/LOW/NONE based on lift+p-value per category. whale_positions and orderbook have no_coverage. token_unlock has 0 real rows (only _EXAMPLE placeholder). news_signal = screener output NOT external news/listing events. macro_extreme = Fear & Greed Index NOT FOMC/CPI.",
   "by_category": {
     "liq_sweep": {
-      "count": 6,
-      "pct_of_pumps": 0.89
+      "coverage": "partial 2026-04-14+",
+      "pumps_in_window": 189,
+      "n_hits": 15,
+      "pct_of_covered": 7.9,
+      "event_study_lift": 18.492,
+      "event_study_interp": "малая выборка, не интерпретировать"
     },
     "macro_extreme": {
-      "count": 271,
-      "pct_of_pumps": 40.03
+      "coverage": "full (Fear/Greed index, NOT FOMC/CPI)",
+      "n_pumps_with_hit": 271,
+      "pct_of_total": 40.0,
+      "event_study_lift": 1.001,
+      "event_study_interp": "статистически не подтверждено"
     },
     "stablecoin_inflow": {
-      "count": 39,
-      "pct_of_pumps": 5.76
+      "coverage": "full",
+      "n_pumps_with_hit": 43,
+      "pct_of_total": 6.4,
+      "event_study_lift": 2.722,
+      "event_study_interp": "HIGH confidence"
     },
     "news_signal": {
-      "count": 24,
-      "pct_of_pumps": 3.55
+      "coverage": "partial 2026-04-12+ (screener output, NOT external news)",
+      "pumps_in_window": 193,
+      "n_hits": 24,
+      "pct_of_covered": 12.4,
+      "event_study_lift": 2.557,
+      "event_study_interp": "MEDIUM confidence"
     },
     "token_unlock": {
-      "count": 0,
-      "pct_of_pumps": 0.0
+      "coverage": "no_coverage",
+      "n_hits": 0
+    },
+    "whale_positions": {
+      "coverage": "no_coverage",
+      "n_hits": 0
+    },
+    "orderbook": {
+      "coverage": "no_coverage",
+      "n_hits": 0
     }
   },
-  "by_confidence": {
-    "HIGH": 0,
-    "MEDIUM": 23,
-    "LOW": 294,
-    "NONE": 360
+  "aggregate": {
+    "pumps_with_any_catalyst": 330,
+    "pct_with_any_catalyst": 48.7,
+    "pumps_no_catalyst_established": 347,
+    "pct_no_catalyst_established": 51.3
   },
-  "coverage_notes": {
-    "liq_sweep": "Coverage: 2026-04-14 \u2192 2026-05-27 (live DB only)",
-    "news_signal": "Coverage: 2026-04-12 \u2192 2026-05-27 (screener started Apr 2026)",
-    "token_unlock": "Only placeholder data \u2014 0 real unlocks",
-    "whale_pos": "Skipped: no historical coverage",
-    "orderbook": "Skipped: no historical coverage"
+  "confidence_breakdown": {
+    "HIGH": 43,
+    "MEDIUM": 24,
+    "LOW": 263,
+    "NONE": 347
+  },
+  "thresholds": {
+    "stablecoin_2sigma_usd": 1339663518,
+    "fear_greed_extreme_lo": 25,
+    "fear_greed_extreme_hi": 75,
+    "liq_sweep_sigma": 3
   }
 }
