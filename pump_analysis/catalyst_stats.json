@@ -1,0 +1,41 @@
+{
+  "generated_at": "2026-05-27T18:54:21.807973+00:00",
+  "total_pumps": 677,
+  "no_catalyst_pct": 53.18,
+  "multi_catalyst_pct": 3.4,
+  "by_category": {
+    "liq_sweep": {
+      "count": 6,
+      "pct_of_pumps": 0.89
+    },
+    "macro_extreme": {
+      "count": 271,
+      "pct_of_pumps": 40.03
+    },
+    "stablecoin_inflow": {
+      "count": 39,
+      "pct_of_pumps": 5.76
+    },
+    "news_signal": {
+      "count": 24,
+      "pct_of_pumps": 3.55
+    },
+    "token_unlock": {
+      "count": 0,
+      "pct_of_pumps": 0.0
+    }
+  },
+  "by_confidence": {
+    "HIGH": 0,
+    "MEDIUM": 23,
+    "LOW": 294,
+    "NONE": 360
+  },
+  "coverage_notes": {
+    "liq_sweep": "Coverage: 2026-04-14 \u2192 2026-05-27 (live DB only)",
+    "news_signal": "Coverage: 2026-04-12 \u2192 2026-05-27 (screener started Apr 2026)",
+    "token_unlock": "Only placeholder data \u2014 0 real unlocks",
+    "whale_pos": "Skipped: no historical coverage",
+    "orderbook": "Skipped: no historical coverage"
+  }
+}

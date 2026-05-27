@@ -1,0 +1,6 @@
+catalyst,label,coverage_start,coverage_end,coverage_pumps,n_with_catalyst,pct_with_catalyst,base_rate_pct,lift,p_value,note
+liq_sweep,Liquidation Sweep (>3σ),2026-04-14,2026-05-27,185,6,3.24,0.89,3.659,0.006485,significant
+macro_extreme,Macro F&G Extreme (<25 or >75),2024-05-01,2026-05-27,673,271,40.27,40.03,1.006,0.906094,not_significant (p>0.05)
+stablecoin_inflow,Stablecoin Net Inflow (>2σ),2024-05-01,2026-05-27,673,39,5.79,5.76,1.006,0.934061,not_significant (p>0.05)
+news_signal,News/Screener Signal,2026-04-12,2026-05-27,189,23,12.17,3.55,3.433,0.0,significant
+token_unlock,"Token Unlock [-7d,+1d]",2024-05-01,2026-05-27,673,0,0.0,0.0,,,insufficient_data
