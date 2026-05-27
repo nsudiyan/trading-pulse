@@ -140,6 +140,8 @@ def build_manifest() -> dict:
         "klines":        {
             tf: {
                 **base.get("klines", {}).get(tf, {}),
+                "total_rows": sum(v["rows"] for v in klines_detail.get(tf, {}).values()),
+                "symbol_count": len(klines_detail.get(tf, {})),
                 "symbol_detail": klines_detail.get(tf, {}),
             }
             for tf in ["5m", "15m", "1h"]

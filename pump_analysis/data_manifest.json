@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-05-27T18:37:36.653988Z",
+  "generated_at": "2026-05-27T18:38:22.672054Z",
   "period": {
     "start": "2024-05-01",
     "end": "2026-05-27"
@@ -195,7 +195,9 @@
           "period_start": "2024-05-01",
           "period_end": "2026-05-27"
         }
-      }
+      },
+      "total_rows": 5178792,
+      "symbol_count": 31
     },
     "15m": {
       "symbol_detail": {
@@ -354,7 +356,9 @@
           "period_start": "2024-05-01",
           "period_end": "2026-05-27"
         }
-      }
+      },
+      "total_rows": 1677182,
+      "symbol_count": 31
     },
     "1h": {
       "symbol_detail": {
@@ -513,7 +517,9 @@
           "period_start": "2024-05-01",
           "period_end": "2026-05-27"
         }
-      }
+      },
+      "total_rows": 419312,
+      "symbol_count": 31
     }
   },
   "funding": {
