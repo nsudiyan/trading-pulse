@@ -39,3 +39,12 @@ bot.log
 # run_*.sh wrapper-скрипты НЕ коммитим — они рядом с .env
 # (раскомментируй следующую строку если хочешь их исключить):
 # run_*.sh
+
+# pump_analysis generated data (large files)
+pump_analysis/klines_5m/
+pump_analysis/klines_15m/
+pump_analysis/klines_1h/
+pump_analysis/funding.csv
+pump_analysis/open_interest.csv
+pump_analysis/liquidations_summary.csv
+pump_analysis/fetch_historical.log
