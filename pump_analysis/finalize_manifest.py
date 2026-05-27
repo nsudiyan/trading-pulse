@@ -55,7 +55,11 @@ def build_manifest() -> dict:
     if manifest_path.exists():
         base = json.loads(manifest_path.read_text())
 
+    # Fall back to actual klines_5m directory if manifest has no symbol list
     symbols = base.get("symbols", [])
+    if not symbols:
+        symbols = sorted(p.name.removesuffix(".csv.gz")
+                         for p in (OUT_DIR / "klines_5m").glob("*.csv.gz"))
 
     # Klines stats per symbol
     klines_detail = {}
@@ -140,9 +144,21 @@ def build_manifest() -> dict:
             }
             for tf in ["5m", "15m", "1h"]
         },
-        "funding":       base.get("funding", {}),
-        "open_interest": base.get("open_interest", {}),
-        "liquidations":  base.get("liquidations", {}),
+        "funding":       base.get("funding", {}) or {
+            "file": "funding.csv",
+            "source": "Binance /fapi/v1/fundingRate",
+            "rows": _count_csv(OUT_DIR / "funding.csv"),
+        },
+        "open_interest": base.get("open_interest", {}) or {
+            "file": "open_interest.csv",
+            "source": "Bybit V5 /v5/market/open-interest (1h)",
+            "rows": _count_csv(OUT_DIR / "open_interest.csv"),
+        },
+        "liquidations":  base.get("liquidations", {}) or {
+            "file": "liquidations_summary.csv",
+            "source": "liquidations.db (live Bybit tracker, Apr-May 2026)",
+            "rows": _count_csv(OUT_DIR / "liquidations_summary.csv"),
+        },
         "causal_attribution": catalyst,
     }
 

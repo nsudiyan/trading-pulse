@@ -1,24 +1,536 @@
 {
-  "generated_at": "2026-05-27T15:33:23.551479Z",
+  "generated_at": "2026-05-27T18:37:36.653988Z",
   "period": {
     "start": "2024-05-01",
     "end": "2026-05-27"
   },
-  "symbols": [],
+  "symbols": [
+    "1000PEPEUSDT",
+    "ADAUSDT",
+    "ALTUSDT",
+    "BEATUSDT",
+    "BNBUSDT",
+    "BSBUSDT",
+    "BTCUSDT",
+    "DOGEUSDT",
+    "DRIFTUSDT",
+    "ESPORTSUSDT",
+    "ETHUSDT",
+    "FFUSDT",
+    "FILUSDT",
+    "GUAUSDT",
+    "HYPEUSDT",
+    "ICPUSDT",
+    "LABUSDT",
+    "LINKUSDT",
+    "NEARUSDT",
+    "ONDOUSDT",
+    "PAXGUSDT",
+    "PHAUSDT",
+    "PLAYUSDT",
+    "SOLUSDT",
+    "SUIUSDT",
+    "TAOUSDT",
+    "TONUSDT",
+    "UBUSDT",
+    "WLDUSDT",
+    "XRPUSDT",
+    "ZECUSDT"
+  ],
   "klines": {
     "5m": {
-      "symbol_detail": {}
+      "symbol_detail": {
+        "1000PEPEUSDT": {
+          "rows": 217918,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "ADAUSDT": {
+          "rows": 217919,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "ALTUSDT": {
+          "rows": 217933,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "BEATUSDT": {
+          "rows": 56492,
+          "period_start": "2025-11-12",
+          "period_end": "2026-05-27"
+        },
+        "BNBUSDT": {
+          "rows": 217917,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "BSBUSDT": {
+          "rows": 18191,
+          "period_start": "2026-03-25",
+          "period_end": "2026-05-27"
+        },
+        "BTCUSDT": {
+          "rows": 217913,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "DOGEUSDT": {
+          "rows": 217916,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "DRIFTUSDT": {
+          "rows": 162722,
+          "period_start": "2024-11-08",
+          "period_end": "2026-05-27"
+        },
+        "ESPORTSUSDT": {
+          "rows": 87046,
+          "period_start": "2025-07-29",
+          "period_end": "2026-05-27"
+        },
+        "ETHUSDT": {
+          "rows": 217914,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "FFUSDT": {
+          "rows": 69167,
+          "period_start": "2025-09-29",
+          "period_end": "2026-05-27"
+        },
+        "FILUSDT": {
+          "rows": 217916,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "GUAUSDT": {
+          "rows": 45297,
+          "period_start": "2025-12-21",
+          "period_end": "2026-05-27"
+        },
+        "HYPEUSDT": {
+          "rows": 104316,
+          "period_start": "2025-05-30",
+          "period_end": "2026-05-27"
+        },
+        "ICPUSDT": {
+          "rows": 217933,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "LABUSDT": {
+          "rows": 63953,
+          "period_start": "2025-10-17",
+          "period_end": "2026-05-27"
+        },
+        "LINKUSDT": {
+          "rows": 217937,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "NEARUSDT": {
+          "rows": 217915,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "ONDOUSDT": {
+          "rows": 217920,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "PAXGUSDT": {
+          "rows": 122771,
+          "period_start": "2025-03-27",
+          "period_end": "2026-05-27"
+        },
+        "PHAUSDT": {
+          "rows": 147798,
+          "period_start": "2024-12-30",
+          "period_end": "2026-05-27"
+        },
+        "PLAYUSDT": {
+          "rows": 86475,
+          "period_start": "2025-07-31",
+          "period_end": "2026-05-27"
+        },
+        "SOLUSDT": {
+          "rows": 217914,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "SUIUSDT": {
+          "rows": 217917,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "TAOUSDT": {
+          "rows": 217919,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "TONUSDT": {
+          "rows": 217918,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "UBUSDT": {
+          "rows": 74099,
+          "period_start": "2025-09-12",
+          "period_end": "2026-05-27"
+        },
+        "WLDUSDT": {
+          "rows": 217915,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "XRPUSDT": {
+          "rows": 217916,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "ZECUSDT": {
+          "rows": 217915,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        }
+      }
     },
     "15m": {
-      "symbol_detail": {}
+      "symbol_detail": {
+        "1000PEPEUSDT": {
+          "rows": 72646,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "ADAUSDT": {
+          "rows": 72647,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "ALTUSDT": {
+          "rows": 72647,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "BEATUSDT": {
+          "rows": 18838,
+          "period_start": "2025-11-12",
+          "period_end": "2026-05-27"
+        },
+        "BNBUSDT": {
+          "rows": 72646,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "BSBUSDT": {
+          "rows": 6071,
+          "period_start": "2026-03-25",
+          "period_end": "2026-05-27"
+        },
+        "BTCUSDT": {
+          "rows": 72646,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "DOGEUSDT": {
+          "rows": 72646,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "DRIFTUSDT": {
+          "rows": 54248,
+          "period_start": "2024-11-08",
+          "period_end": "2026-05-27"
+        },
+        "ESPORTSUSDT": {
+          "rows": 29023,
+          "period_start": "2025-07-29",
+          "period_end": "2026-05-27"
+        },
+        "ETHUSDT": {
+          "rows": 72646,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "FFUSDT": {
+          "rows": 23057,
+          "period_start": "2025-09-29",
+          "period_end": "2026-05-27"
+        },
+        "FILUSDT": {
+          "rows": 72646,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "GUAUSDT": {
+          "rows": 15101,
+          "period_start": "2025-12-21",
+          "period_end": "2026-05-27"
+        },
+        "HYPEUSDT": {
+          "rows": 34780,
+          "period_start": "2025-05-30",
+          "period_end": "2026-05-27"
+        },
+        "ICPUSDT": {
+          "rows": 72647,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "LABUSDT": {
+          "rows": 21325,
+          "period_start": "2025-10-17",
+          "period_end": "2026-05-27"
+        },
+        "LINKUSDT": {
+          "rows": 72647,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "NEARUSDT": {
+          "rows": 72646,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "ONDOUSDT": {
+          "rows": 72647,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "PAXGUSDT": {
+          "rows": 40925,
+          "period_start": "2025-03-27",
+          "period_end": "2026-05-27"
+        },
+        "PHAUSDT": {
+          "rows": 0,
+          "period_start": "N/A",
+          "period_end": "N/A"
+        },
+        "PLAYUSDT": {
+          "rows": 28832,
+          "period_start": "2025-07-31",
+          "period_end": "2026-05-27"
+        },
+        "SOLUSDT": {
+          "rows": 72646,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "SUIUSDT": {
+          "rows": 72646,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "TAOUSDT": {
+          "rows": 72647,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "TONUSDT": {
+          "rows": 72647,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "UBUSDT": {
+          "rows": 24701,
+          "period_start": "2025-09-12",
+          "period_end": "2026-05-27"
+        },
+        "WLDUSDT": {
+          "rows": 72646,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "XRPUSDT": {
+          "rows": 72646,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "ZECUSDT": {
+          "rows": 72646,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        }
+      }
     },
     "1h": {
-      "symbol_detail": {}
+      "symbol_detail": {
+        "1000PEPEUSDT": {
+          "rows": 18162,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "ADAUSDT": {
+          "rows": 18162,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "ALTUSDT": {
+          "rows": 18162,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "BEATUSDT": {
+          "rows": 4710,
+          "period_start": "2025-11-12",
+          "period_end": "2026-05-27"
+        },
+        "BNBUSDT": {
+          "rows": 18162,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "BSBUSDT": {
+          "rows": 1519,
+          "period_start": "2026-03-25",
+          "period_end": "2026-05-27"
+        },
+        "BTCUSDT": {
+          "rows": 18162,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "DOGEUSDT": {
+          "rows": 18162,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "DRIFTUSDT": {
+          "rows": 13563,
+          "period_start": "2024-11-08",
+          "period_end": "2026-05-27"
+        },
+        "ESPORTSUSDT": {
+          "rows": 7256,
+          "period_start": "2025-07-29",
+          "period_end": "2026-05-27"
+        },
+        "ETHUSDT": {
+          "rows": 18162,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "FFUSDT": {
+          "rows": 5765,
+          "period_start": "2025-09-29",
+          "period_end": "2026-05-27"
+        },
+        "FILUSDT": {
+          "rows": 18162,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "GUAUSDT": {
+          "rows": 3776,
+          "period_start": "2025-12-21",
+          "period_end": "2026-05-27"
+        },
+        "HYPEUSDT": {
+          "rows": 8696,
+          "period_start": "2025-05-30",
+          "period_end": "2026-05-27"
+        },
+        "ICPUSDT": {
+          "rows": 18162,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "LABUSDT": {
+          "rows": 5332,
+          "period_start": "2025-10-17",
+          "period_end": "2026-05-27"
+        },
+        "LINKUSDT": {
+          "rows": 18162,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "NEARUSDT": {
+          "rows": 18162,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "ONDOUSDT": {
+          "rows": 18162,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "PAXGUSDT": {
+          "rows": 10232,
+          "period_start": "2025-03-27",
+          "period_end": "2026-05-27"
+        },
+        "PHAUSDT": {
+          "rows": 0,
+          "period_start": "N/A",
+          "period_end": "N/A"
+        },
+        "PLAYUSDT": {
+          "rows": 7209,
+          "period_start": "2025-07-31",
+          "period_end": "2026-05-27"
+        },
+        "SOLUSDT": {
+          "rows": 18162,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "SUIUSDT": {
+          "rows": 18162,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "TAOUSDT": {
+          "rows": 18162,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "TONUSDT": {
+          "rows": 18162,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "UBUSDT": {
+          "rows": 6176,
+          "period_start": "2025-09-12",
+          "period_end": "2026-05-27"
+        },
+        "WLDUSDT": {
+          "rows": 18162,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "XRPUSDT": {
+          "rows": 18162,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "ZECUSDT": {
+          "rows": 18162,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        }
+      }
     }
   },
-  "funding": {},
-  "open_interest": {},
-  "liquidations": {},
+  "funding": {
+    "file": "funding.csv",
+    "source": "Binance /fapi/v1/fundingRate",
+    "rows": 71278
+  },
+  "open_interest": {
+    "file": "open_interest.csv",
+    "source": "Bybit V5 /v5/market/open-interest (1h)",
+    "rows": 441572
+  },
+  "liquidations": {
+    "file": "liquidations_summary.csv",
+    "source": "liquidations.db (live Bybit tracker, Apr-May 2026)",
+    "rows": 341215
+  },
   "causal_attribution": {
     "stablecoin_flows": {
       "file": "catalyst_data/stablecoin_flows.csv",
