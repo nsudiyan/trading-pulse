@@ -1,7 +1,7 @@
 category,N_dumps_analyzed,N_controls_analyzed,N_dump_with_event,N_ctrl_with_event,P_event_dump,P_event_ctrl,lift_P_ev_dump_vs_ctrl,lift_P_dump_ev_vs_base,p_value,interpretation,coverage_note
-liq_cascade,149,395,15,5,0.1007,0.0127,7.953,2.738,0.0,MEDIUM confidence,partial 2026-04-14->2026-05-27 (long_liq side only)
-macro_event,593,2965,203,1232,0.3423,0.4155,0.824,0.849,0.9996,статистически не подтверждено,"full 2024-05-01->2026-05-27 (Fear/Greed ≤25, NOT FOMC/CPI)"
-stablecoin_outflow,593,2965,11,110,0.0185,0.0371,0.5,0.545,0.9948,статистически не подтверждено,full 2024-05-01->2026-05-27 (net redemption >2σ below mean)
-btc_cascade,593,2965,97,102,0.1636,0.0344,4.755,2.925,0.0,HIGH confidence,full 2024-05-01->2026-05-27 (BTCUSDT 1h drop ≥5%)
-news_negative,150,413,4,12,0.0267,0.0291,0.918,0.938,0.6551,"малая выборка, не интерпретировать","partial 2026-04-12->2026-05-26 (screener SHORT signals, NOT external news)"
+liq_cascade,240,909,20,7,0.0833,0.0077,10.821,3.546,0.0,MEDIUM confidence,partial 2026-04-14->2026-05-27 (long_liq side only)
+macro_event,1473,7365,495,2563,0.336,0.348,0.966,0.971,0.8185,статистически не подтверждено,"full 2024-05-01->2026-05-27 (Fear/Greed ≤25, NOT FOMC/CPI)"
+stablecoin_outflow,1473,7365,41,292,0.0278,0.0396,0.702,0.739,0.9899,статистически не подтверждено,full 2024-05-01->2026-05-27 (net redemption >2σ below mean)
+btc_cascade,1473,7365,268,262,0.1819,0.0356,5.115,3.034,0.0,HIGH confidence,full 2024-05-01->2026-05-27 (BTCUSDT 1h drop ≥5%)
+news_negative,246,945,7,22,0.0285,0.0233,1.222,1.169,0.3907,статистически не подтверждено,"partial 2026-04-12->2026-05-26 (screener SHORT signals, NOT external news)"
 token_unlock,0,0,0,0,,,,,,no_coverage,no_coverage -- 0 real rows in token_unlocks.csv

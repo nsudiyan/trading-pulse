@@ -1,811 +1,810 @@
 {
-  "generated_at": "2026-05-28T00:20:37.402446+00:00",
+  "generated_at": "2026-05-28T00:21:19.475163+00:00",
   "train_end": "2025-11-01",
-  "n_pumps_total": 1664,
-  "n_controls_total": 8320,
+  "n_dumps_total": 1473,
+  "n_controls_total": 7365,
+  "by_type": {
+    "fast": 433,
+    "standard": 1040
+  },
   "by_split": {
     "train": {
-      "n_pumps": 784,
-      "n_controls": 3920,
+      "n_dumps": 781,
+      "n_controls": 3905,
       "base_rate": 0.1667
     },
     "test": {
-      "n_pumps": 880,
-      "n_controls": 4400,
+      "n_dumps": 692,
+      "n_controls": 3460,
       "base_rate": 0.1667
     }
   },
   "by_symbol": {
     "1000LUNCUSDT": {
-      "n_pumps": 28,
-      "n_controls": 140,
+      "n_dumps": 18,
+      "n_controls": 90,
       "base_rate": 0.1667
     },
     "1000PEPEUSDT": {
-      "n_pumps": 19,
+      "n_dumps": 19,
       "n_controls": 95,
       "base_rate": 0.1667
     },
     "1000SHIBUSDT": {
-      "n_pumps": 8,
-      "n_controls": 40,
+      "n_dumps": 11,
+      "n_controls": 55,
       "base_rate": 0.1667
     },
     "AAVEUSDT": {
-      "n_pumps": 14,
-      "n_controls": 70,
+      "n_dumps": 15,
+      "n_controls": 75,
       "base_rate": 0.1667
     },
     "ADAUSDT": {
-      "n_pumps": 14,
-      "n_controls": 70,
-      "base_rate": 0.1667
-    },
-    "ALTUSDT": {
-      "n_pumps": 36,
-      "n_controls": 180,
-      "base_rate": 0.1667
-    },
-    "APTUSDT": {
-      "n_pumps": 13,
+      "n_dumps": 13,
       "n_controls": 65,
       "base_rate": 0.1667
     },
+    "ALTUSDT": {
+      "n_dumps": 28,
+      "n_controls": 140,
+      "base_rate": 0.1667
+    },
+    "APTUSDT": {
+      "n_dumps": 17,
+      "n_controls": 85,
+      "base_rate": 0.1667
+    },
     "ARBUSDT": {
-      "n_pumps": 9,
-      "n_controls": 45,
+      "n_dumps": 21,
+      "n_controls": 105,
       "base_rate": 0.1667
     },
     "ARUSDT": {
-      "n_pumps": 20,
-      "n_controls": 100,
+      "n_dumps": 24,
+      "n_controls": 120,
       "base_rate": 0.1667
     },
     "ASTERUSDT": {
-      "n_pumps": 5,
+      "n_dumps": 5,
       "n_controls": 25,
       "base_rate": 0.1667
     },
     "ATOMUSDT": {
-      "n_pumps": 7,
-      "n_controls": 35,
+      "n_dumps": 13,
+      "n_controls": 65,
       "base_rate": 0.1667
     },
     "AVAXUSDT": {
-      "n_pumps": 4,
-      "n_controls": 20,
+      "n_dumps": 13,
+      "n_controls": 65,
       "base_rate": 0.1667
     },
     "BASUSDT": {
-      "n_pumps": 66,
-      "n_controls": 330,
+      "n_dumps": 67,
+      "n_controls": 335,
       "base_rate": 0.1667
     },
     "BCHUSDT": {
-      "n_pumps": 11,
-      "n_controls": 55,
+      "n_dumps": 8,
+      "n_controls": 40,
       "base_rate": 0.1667
     },
     "BEATUSDT": {
-      "n_pumps": 29,
-      "n_controls": 145,
+      "n_dumps": 40,
+      "n_controls": 200,
       "base_rate": 0.1667
     },
     "BNBUSDT": {
-      "n_pumps": 3,
-      "n_controls": 15,
+      "n_dumps": 2,
+      "n_controls": 10,
       "base_rate": 0.1667
     },
     "BSBUSDT": {
-      "n_pumps": 42,
-      "n_controls": 210,
+      "n_dumps": 43,
+      "n_controls": 215,
+      "base_rate": 0.1667
+    },
+    "BTCUSDT": {
+      "n_dumps": 1,
+      "n_controls": 5,
+      "base_rate": 0.1667
+    },
+    "BZUSDT": {
+      "n_dumps": 1,
+      "n_controls": 5,
       "base_rate": 0.1667
     },
     "CHZUSDT": {
-      "n_pumps": 15,
-      "n_controls": 75,
+      "n_dumps": 14,
+      "n_controls": 70,
+      "base_rate": 0.1667
+    },
+    "CLUSDT": {
+      "n_dumps": 1,
+      "n_controls": 5,
       "base_rate": 0.1667
     },
     "CRCLUSDT": {
-      "n_pumps": 9,
-      "n_controls": 45,
+      "n_dumps": 1,
+      "n_controls": 5,
       "base_rate": 0.1667
     },
     "DASHUSDT": {
-      "n_pumps": 44,
-      "n_controls": 220,
+      "n_dumps": 17,
+      "n_controls": 85,
       "base_rate": 0.1667
     },
     "DOGEUSDT": {
-      "n_pumps": 15,
-      "n_controls": 75,
+      "n_dumps": 12,
+      "n_controls": 60,
       "base_rate": 0.1667
     },
     "DOTUSDT": {
-      "n_pumps": 9,
-      "n_controls": 45,
+      "n_dumps": 14,
+      "n_controls": 70,
       "base_rate": 0.1667
     },
     "DRIFTUSDT": {
-      "n_pumps": 42,
-      "n_controls": 210,
+      "n_dumps": 35,
+      "n_controls": 175,
       "base_rate": 0.1667
     },
     "EDENUSDT": {
-      "n_pumps": 26,
-      "n_controls": 130,
+      "n_dumps": 21,
+      "n_controls": 105,
       "base_rate": 0.1667
     },
     "ENAUSDT": {
-      "n_pumps": 18,
-      "n_controls": 90,
+      "n_dumps": 17,
+      "n_controls": 85,
       "base_rate": 0.1667
     },
     "ESPORTSUSDT": {
-      "n_pumps": 41,
-      "n_controls": 205,
+      "n_dumps": 25,
+      "n_controls": 125,
       "base_rate": 0.1667
     },
     "ETHUSDT": {
-      "n_pumps": 5,
-      "n_controls": 25,
+      "n_dumps": 7,
+      "n_controls": 35,
       "base_rate": 0.1667
     },
     "FETUSDT": {
-      "n_pumps": 22,
+      "n_dumps": 22,
       "n_controls": 110,
       "base_rate": 0.1667
     },
     "FFUSDT": {
-      "n_pumps": 8,
-      "n_controls": 40,
+      "n_dumps": 3,
+      "n_controls": 15,
       "base_rate": 0.1667
     },
     "FILUSDT": {
-      "n_pumps": 11,
-      "n_controls": 55,
+      "n_dumps": 18,
+      "n_controls": 90,
       "base_rate": 0.1667
     },
     "GENIUSUSDT": {
-      "n_pumps": 7,
-      "n_controls": 35,
+      "n_dumps": 3,
+      "n_controls": 15,
       "base_rate": 0.1667
     },
     "GRASSUSDT": {
-      "n_pumps": 44,
-      "n_controls": 220,
+      "n_dumps": 30,
+      "n_controls": 150,
       "base_rate": 0.1667
     },
     "GUAUSDT": {
-      "n_pumps": 18,
-      "n_controls": 90,
+      "n_dumps": 14,
+      "n_controls": 70,
       "base_rate": 0.1667
     },
     "HIGHUSDT": {
-      "n_pumps": 40,
-      "n_controls": 200,
+      "n_dumps": 36,
+      "n_controls": 180,
       "base_rate": 0.1667
     },
     "HYPEUSDT": {
-      "n_pumps": 5,
-      "n_controls": 25,
+      "n_dumps": 3,
+      "n_controls": 15,
       "base_rate": 0.1667
     },
     "ICPUSDT": {
-      "n_pumps": 20,
-      "n_controls": 100,
-      "base_rate": 0.1667
-    },
-    "INJUSDT": {
-      "n_pumps": 13,
-      "n_controls": 65,
-      "base_rate": 0.1667
-    },
-    "INTCUSDT": {
-      "n_pumps": 5,
-      "n_controls": 25,
-      "base_rate": 0.1667
-    },
-    "IOUSDT": {
-      "n_pumps": 18,
+      "n_dumps": 18,
       "n_controls": 90,
       "base_rate": 0.1667
     },
+    "INJUSDT": {
+      "n_dumps": 21,
+      "n_controls": 105,
+      "base_rate": 0.1667
+    },
+    "IOUSDT": {
+      "n_dumps": 21,
+      "n_controls": 105,
+      "base_rate": 0.1667
+    },
     "JTOUSDT": {
-      "n_pumps": 27,
-      "n_controls": 135,
+      "n_dumps": 21,
+      "n_controls": 105,
       "base_rate": 0.1667
     },
     "LABUSDT": {
-      "n_pumps": 67,
-      "n_controls": 335,
+      "n_dumps": 66,
+      "n_controls": 330,
       "base_rate": 0.1667
     },
     "LINKUSDT": {
-      "n_pumps": 8,
-      "n_controls": 40,
+      "n_dumps": 11,
+      "n_controls": 55,
       "base_rate": 0.1667
     },
     "LITUSDT": {
-      "n_pumps": 7,
+      "n_dumps": 7,
       "n_controls": 35,
       "base_rate": 0.1667
     },
     "LTCUSDT": {
-      "n_pumps": 11,
+      "n_dumps": 11,
       "n_controls": 55,
       "base_rate": 0.1667
     },
-    "MSTRUSDT": {
-      "n_pumps": 1,
-      "n_controls": 5,
-      "base_rate": 0.1667
-    },
-    "MUUSDT": {
-      "n_pumps": 3,
-      "n_controls": 15,
-      "base_rate": 0.1667
-    },
     "NEARUSDT": {
-      "n_pumps": 15,
-      "n_controls": 75,
+      "n_dumps": 16,
+      "n_controls": 80,
       "base_rate": 0.1667
     },
     "NILUSDT": {
-      "n_pumps": 33,
-      "n_controls": 165,
+      "n_dumps": 23,
+      "n_controls": 115,
       "base_rate": 0.1667
     },
     "ONDOUSDT": {
-      "n_pumps": 25,
-      "n_controls": 125,
+      "n_dumps": 16,
+      "n_controls": 80,
       "base_rate": 0.1667
     },
     "OPGUSDT": {
-      "n_pumps": 5,
-      "n_controls": 25,
+      "n_dumps": 4,
+      "n_controls": 20,
       "base_rate": 0.1667
     },
     "PENDLEUSDT": {
-      "n_pumps": 19,
-      "n_controls": 95,
+      "n_dumps": 16,
+      "n_controls": 80,
       "base_rate": 0.1667
     },
     "PENGUUSDT": {
-      "n_pumps": 24,
-      "n_controls": 120,
+      "n_dumps": 12,
+      "n_controls": 60,
       "base_rate": 0.1667
     },
     "PLAYUSDT": {
-      "n_pumps": 75,
-      "n_controls": 375,
+      "n_dumps": 54,
+      "n_controls": 270,
       "base_rate": 0.1667
     },
     "PUMPUSDT": {
-      "n_pumps": 7,
-      "n_controls": 35,
+      "n_dumps": 11,
+      "n_controls": 55,
       "base_rate": 0.1667
     },
     "RENDERUSDT": {
-      "n_pumps": 21,
-      "n_controls": 105,
+      "n_dumps": 16,
+      "n_controls": 80,
       "base_rate": 0.1667
     },
     "RIFUSDT": {
-      "n_pumps": 16,
-      "n_controls": 80,
+      "n_dumps": 22,
+      "n_controls": 110,
       "base_rate": 0.1667
     },
     "RIVERUSDT": {
-      "n_pumps": 51,
-      "n_controls": 255,
+      "n_dumps": 53,
+      "n_controls": 265,
       "base_rate": 0.1667
     },
     "RONINUSDT": {
-      "n_pumps": 16,
-      "n_controls": 80,
+      "n_dumps": 13,
+      "n_controls": 65,
       "base_rate": 0.1667
     },
     "SEIUSDT": {
-      "n_pumps": 18,
+      "n_dumps": 18,
       "n_controls": 90,
       "base_rate": 0.1667
     },
     "SKYAIUSDT": {
-      "n_pumps": 72,
-      "n_controls": 360,
-      "base_rate": 0.1667
-    },
-    "SNDKUSDT": {
-      "n_pumps": 4,
-      "n_controls": 20,
+      "n_dumps": 55,
+      "n_controls": 275,
       "base_rate": 0.1667
     },
     "SOLUSDT": {
-      "n_pumps": 10,
-      "n_controls": 50,
+      "n_dumps": 9,
+      "n_controls": 45,
       "base_rate": 0.1667
     },
     "SUIUSDT": {
-      "n_pumps": 13,
-      "n_controls": 65,
+      "n_dumps": 15,
+      "n_controls": 75,
       "base_rate": 0.1667
     },
     "TAOUSDT": {
-      "n_pumps": 23,
-      "n_controls": 115,
+      "n_dumps": 20,
+      "n_controls": 100,
       "base_rate": 0.1667
     },
     "TIAUSDT": {
-      "n_pumps": 23,
+      "n_dumps": 23,
       "n_controls": 115,
       "base_rate": 0.1667
     },
     "TONUSDT": {
-      "n_pumps": 11,
-      "n_controls": 55,
+      "n_dumps": 8,
+      "n_controls": 40,
       "base_rate": 0.1667
     },
     "TRUMPUSDT": {
-      "n_pumps": 11,
-      "n_controls": 55,
-      "base_rate": 0.1667
-    },
-    "TRXUSDT": {
-      "n_pumps": 3,
-      "n_controls": 15,
-      "base_rate": 0.1667
-    },
-    "UBUSDT": {
-      "n_pumps": 40,
-      "n_controls": 200,
-      "base_rate": 0.1667
-    },
-    "UNIUSDT": {
-      "n_pumps": 21,
-      "n_controls": 105,
-      "base_rate": 0.1667
-    },
-    "USUSDT": {
-      "n_pumps": 17,
+      "n_dumps": 17,
       "n_controls": 85,
       "base_rate": 0.1667
     },
+    "TRXUSDT": {
+      "n_dumps": 4,
+      "n_controls": 20,
+      "base_rate": 0.1667
+    },
+    "UBUSDT": {
+      "n_dumps": 41,
+      "n_controls": 205,
+      "base_rate": 0.1667
+    },
+    "UNIUSDT": {
+      "n_dumps": 17,
+      "n_controls": 85,
+      "base_rate": 0.1667
+    },
+    "USUSDT": {
+      "n_dumps": 19,
+      "n_controls": 95,
+      "base_rate": 0.1667
+    },
     "VIRTUALUSDT": {
-      "n_pumps": 23,
-      "n_controls": 115,
+      "n_dumps": 14,
+      "n_controls": 70,
       "base_rate": 0.1667
     },
     "VVVUSDT": {
-      "n_pumps": 42,
-      "n_controls": 210,
+      "n_dumps": 21,
+      "n_controls": 105,
       "base_rate": 0.1667
     },
     "WLDUSDT": {
-      "n_pumps": 22,
-      "n_controls": 110,
+      "n_dumps": 25,
+      "n_controls": 125,
       "base_rate": 0.1667
     },
     "WLFIUSDT": {
-      "n_pumps": 10,
-      "n_controls": 50,
+      "n_dumps": 13,
+      "n_controls": 65,
       "base_rate": 0.1667
     },
     "XAGUSDT": {
-      "n_pumps": 3,
+      "n_dumps": 3,
       "n_controls": 15,
       "base_rate": 0.1667
     },
     "XLMUSDT": {
-      "n_pumps": 23,
-      "n_controls": 115,
+      "n_dumps": 12,
+      "n_controls": 60,
       "base_rate": 0.1667
     },
     "XMRUSDT": {
-      "n_pumps": 8,
-      "n_controls": 40,
+      "n_dumps": 9,
+      "n_controls": 45,
       "base_rate": 0.1667
     },
     "XPLUSDT": {
-      "n_pumps": 13,
-      "n_controls": 65,
+      "n_dumps": 15,
+      "n_controls": 75,
       "base_rate": 0.1667
     },
     "XRPUSDT": {
-      "n_pumps": 20,
-      "n_controls": 100,
+      "n_dumps": 10,
+      "n_controls": 50,
       "base_rate": 0.1667
     },
     "ZECUSDT": {
-      "n_pumps": 40,
-      "n_controls": 200,
+      "n_dumps": 21,
+      "n_controls": 105,
       "base_rate": 0.1667
     }
   },
   "sweep": [
     {
       "window_h": 1,
+      "threshold": 0.07,
+      "vol_mult": 1.5,
+      "n_valid": 1107657,
+      "n_dumps": 1190,
+      "base_rate": 0.001074
+    },
+    {
+      "window_h": 1,
+      "threshold": 0.07,
+      "vol_mult": 2.0,
+      "n_valid": 1107657,
+      "n_dumps": 1139,
+      "base_rate": 0.001028
+    },
+    {
+      "window_h": 1,
+      "threshold": 0.07,
+      "vol_mult": 3.0,
+      "n_valid": 1107657,
+      "n_dumps": 1071,
+      "base_rate": 0.000967
+    },
+    {
+      "window_h": 1,
+      "threshold": 0.1,
+      "vol_mult": 1.5,
+      "n_valid": 1107657,
+      "n_dumps": 478,
+      "base_rate": 0.000432
+    },
+    {
+      "window_h": 1,
       "threshold": 0.1,
       "vol_mult": 2.0,
       "n_valid": 1107657,
-      "n_pumps": 654,
-      "base_rate": 0.00059
+      "n_dumps": 467,
+      "base_rate": 0.000422
     },
     {
       "window_h": 1,
       "threshold": 0.1,
       "vol_mult": 3.0,
       "n_valid": 1107657,
-      "n_pumps": 614,
-      "base_rate": 0.000554
+      "n_dumps": 452,
+      "base_rate": 0.000408
     },
     {
       "window_h": 1,
-      "threshold": 0.1,
-      "vol_mult": 5.0,
+      "threshold": 0.15,
+      "vol_mult": 1.5,
       "n_valid": 1107657,
-      "n_pumps": 549,
-      "base_rate": 0.000496
-    },
-    {
-      "window_h": 1,
-      "threshold": 0.12,
-      "vol_mult": 2.0,
-      "n_valid": 1107657,
-      "n_pumps": 407,
-      "base_rate": 0.000367
-    },
-    {
-      "window_h": 1,
-      "threshold": 0.12,
-      "vol_mult": 3.0,
-      "n_valid": 1107657,
-      "n_pumps": 391,
-      "base_rate": 0.000353
-    },
-    {
-      "window_h": 1,
-      "threshold": 0.12,
-      "vol_mult": 5.0,
-      "n_valid": 1107657,
-      "n_pumps": 352,
-      "base_rate": 0.000318
+      "n_dumps": 156,
+      "base_rate": 0.000141
     },
     {
       "window_h": 1,
       "threshold": 0.15,
       "vol_mult": 2.0,
       "n_valid": 1107657,
-      "n_pumps": 232,
-      "base_rate": 0.000209
+      "n_dumps": 156,
+      "base_rate": 0.000141
     },
     {
       "window_h": 1,
       "threshold": 0.15,
       "vol_mult": 3.0,
       "n_valid": 1107657,
-      "n_pumps": 227,
-      "base_rate": 0.000205
-    },
-    {
-      "window_h": 1,
-      "threshold": 0.15,
-      "vol_mult": 5.0,
-      "n_valid": 1107657,
-      "n_pumps": 212,
-      "base_rate": 0.000191
+      "n_dumps": 154,
+      "base_rate": 0.000139
     },
     {
       "window_h": 1,
       "threshold": 0.2,
+      "vol_mult": 1.5,
+      "n_valid": 1107657,
+      "n_dumps": 58,
+      "base_rate": 5.2e-05
+    },
+    {
+      "window_h": 1,
+      "threshold": 0.2,
       "vol_mult": 2.0,
       "n_valid": 1107657,
-      "n_pumps": 101,
-      "base_rate": 9.1e-05
+      "n_dumps": 58,
+      "base_rate": 5.2e-05
     },
     {
       "window_h": 1,
       "threshold": 0.2,
       "vol_mult": 3.0,
       "n_valid": 1107657,
-      "n_pumps": 100,
-      "base_rate": 9e-05
+      "n_dumps": 58,
+      "base_rate": 5.2e-05
     },
     {
-      "window_h": 1,
-      "threshold": 0.2,
-      "vol_mult": 5.0,
-      "n_valid": 1107657,
-      "n_pumps": 96,
-      "base_rate": 8.7e-05
+      "window_h": 4,
+      "threshold": 0.07,
+      "vol_mult": 1.5,
+      "n_valid": 1107381,
+      "n_dumps": 9631,
+      "base_rate": 0.008697
+    },
+    {
+      "window_h": 4,
+      "threshold": 0.07,
+      "vol_mult": 2.0,
+      "n_valid": 1107381,
+      "n_dumps": 8772,
+      "base_rate": 0.007921
+    },
+    {
+      "window_h": 4,
+      "threshold": 0.07,
+      "vol_mult": 3.0,
+      "n_valid": 1107381,
+      "n_dumps": 6965,
+      "base_rate": 0.00629
+    },
+    {
+      "window_h": 4,
+      "threshold": 0.1,
+      "vol_mult": 1.5,
+      "n_valid": 1107381,
+      "n_dumps": 3378,
+      "base_rate": 0.00305
     },
     {
       "window_h": 4,
       "threshold": 0.1,
       "vol_mult": 2.0,
       "n_valid": 1107381,
-      "n_pumps": 5469,
-      "base_rate": 0.004939
+      "n_dumps": 3158,
+      "base_rate": 0.002852
     },
     {
       "window_h": 4,
       "threshold": 0.1,
       "vol_mult": 3.0,
       "n_valid": 1107381,
-      "n_pumps": 4759,
-      "base_rate": 0.004298
+      "n_dumps": 2764,
+      "base_rate": 0.002496
     },
     {
       "window_h": 4,
-      "threshold": 0.1,
-      "vol_mult": 5.0,
+      "threshold": 0.15,
+      "vol_mult": 1.5,
       "n_valid": 1107381,
-      "n_pumps": 3566,
-      "base_rate": 0.00322
-    },
-    {
-      "window_h": 4,
-      "threshold": 0.12,
-      "vol_mult": 2.0,
-      "n_valid": 1107381,
-      "n_pumps": 3506,
-      "base_rate": 0.003166
-    },
-    {
-      "window_h": 4,
-      "threshold": 0.12,
-      "vol_mult": 3.0,
-      "n_valid": 1107381,
-      "n_pumps": 3132,
-      "base_rate": 0.002828
-    },
-    {
-      "window_h": 4,
-      "threshold": 0.12,
-      "vol_mult": 5.0,
-      "n_valid": 1107381,
-      "n_pumps": 2510,
-      "base_rate": 0.002267
+      "n_dumps": 1158,
+      "base_rate": 0.001046
     },
     {
       "window_h": 4,
       "threshold": 0.15,
       "vol_mult": 2.0,
       "n_valid": 1107381,
-      "n_pumps": 1986,
-      "base_rate": 0.001793
+      "n_dumps": 1115,
+      "base_rate": 0.001007
     },
     {
       "window_h": 4,
       "threshold": 0.15,
       "vol_mult": 3.0,
       "n_valid": 1107381,
-      "n_pumps": 1812,
-      "base_rate": 0.001636
+      "n_dumps": 1020,
+      "base_rate": 0.000921
     },
     {
       "window_h": 4,
-      "threshold": 0.15,
-      "vol_mult": 5.0,
+      "threshold": 0.2,
+      "vol_mult": 1.5,
       "n_valid": 1107381,
-      "n_pumps": 1568,
-      "base_rate": 0.001416
+      "n_dumps": 522,
+      "base_rate": 0.000471
     },
     {
       "window_h": 4,
       "threshold": 0.2,
       "vol_mult": 2.0,
       "n_valid": 1107381,
-      "n_pumps": 944,
-      "base_rate": 0.000852
+      "n_dumps": 512,
+      "base_rate": 0.000462
     },
     {
       "window_h": 4,
       "threshold": 0.2,
       "vol_mult": 3.0,
       "n_valid": 1107381,
-      "n_pumps": 887,
-      "base_rate": 0.000801
+      "n_dumps": 486,
+      "base_rate": 0.000439
     },
     {
-      "window_h": 4,
-      "threshold": 0.2,
-      "vol_mult": 5.0,
-      "n_valid": 1107381,
-      "n_pumps": 794,
-      "base_rate": 0.000717
+      "window_h": 12,
+      "threshold": 0.07,
+      "vol_mult": 1.5,
+      "n_valid": 1106645,
+      "n_dumps": 40570,
+      "base_rate": 0.03666
+    },
+    {
+      "window_h": 12,
+      "threshold": 0.07,
+      "vol_mult": 2.0,
+      "n_valid": 1106645,
+      "n_dumps": 31038,
+      "base_rate": 0.028047
+    },
+    {
+      "window_h": 12,
+      "threshold": 0.07,
+      "vol_mult": 3.0,
+      "n_valid": 1106645,
+      "n_dumps": 17473,
+      "base_rate": 0.015789
     },
     {
       "window_h": 12,
       "threshold": 0.1,
+      "vol_mult": 1.5,
+      "n_valid": 1106645,
+      "n_dumps": 16751,
+      "base_rate": 0.015137
+    },
+    {
+      "window_h": 12,
+      "threshold": 0.1,
       "vol_mult": 2.0,
       "n_valid": 1106645,
-      "n_pumps": 22450,
-      "base_rate": 0.020287
+      "n_dumps": 14292,
+      "base_rate": 0.012915
     },
     {
       "window_h": 12,
       "threshold": 0.1,
       "vol_mult": 3.0,
       "n_valid": 1106645,
-      "n_pumps": 16145,
-      "base_rate": 0.014589
+      "n_dumps": 9642,
+      "base_rate": 0.008713
     },
     {
       "window_h": 12,
-      "threshold": 0.1,
-      "vol_mult": 5.0,
+      "threshold": 0.15,
+      "vol_mult": 1.5,
       "n_valid": 1106645,
-      "n_pumps": 9528,
-      "base_rate": 0.00861
-    },
-    {
-      "window_h": 12,
-      "threshold": 0.12,
-      "vol_mult": 2.0,
-      "n_valid": 1106645,
-      "n_pumps": 15582,
-      "base_rate": 0.01408
-    },
-    {
-      "window_h": 12,
-      "threshold": 0.12,
-      "vol_mult": 3.0,
-      "n_valid": 1106645,
-      "n_pumps": 11971,
-      "base_rate": 0.010817
-    },
-    {
-      "window_h": 12,
-      "threshold": 0.12,
-      "vol_mult": 5.0,
-      "n_valid": 1106645,
-      "n_pumps": 7636,
-      "base_rate": 0.0069
+      "n_dumps": 5185,
+      "base_rate": 0.004685
     },
     {
       "window_h": 12,
       "threshold": 0.15,
       "vol_mult": 2.0,
       "n_valid": 1106645,
-      "n_pumps": 9575,
-      "base_rate": 0.008652
+      "n_dumps": 4720,
+      "base_rate": 0.004265
     },
     {
       "window_h": 12,
       "threshold": 0.15,
       "vol_mult": 3.0,
       "n_valid": 1106645,
-      "n_pumps": 7912,
-      "base_rate": 0.00715
+      "n_dumps": 3865,
+      "base_rate": 0.003493
     },
     {
       "window_h": 12,
-      "threshold": 0.15,
-      "vol_mult": 5.0,
+      "threshold": 0.2,
+      "vol_mult": 1.5,
       "n_valid": 1106645,
-      "n_pumps": 5599,
-      "base_rate": 0.005059
+      "n_dumps": 2402,
+      "base_rate": 0.002171
     },
     {
       "window_h": 12,
       "threshold": 0.2,
       "vol_mult": 2.0,
       "n_valid": 1106645,
-      "n_pumps": 4880,
-      "base_rate": 0.00441
+      "n_dumps": 2262,
+      "base_rate": 0.002044
     },
     {
       "window_h": 12,
       "threshold": 0.2,
       "vol_mult": 3.0,
       "n_valid": 1106645,
-      "n_pumps": 4281,
-      "base_rate": 0.003868
+      "n_dumps": 1994,
+      "base_rate": 0.001802
     },
     {
-      "window_h": 12,
-      "threshold": 0.2,
-      "vol_mult": 5.0,
-      "n_valid": 1106645,
-      "n_pumps": 3400,
-      "base_rate": 0.003072
+      "window_h": 24,
+      "threshold": 0.07,
+      "vol_mult": 1.5,
+      "n_valid": 1105541,
+      "n_dumps": 77055,
+      "base_rate": 0.069699
+    },
+    {
+      "window_h": 24,
+      "threshold": 0.07,
+      "vol_mult": 2.0,
+      "n_valid": 1105541,
+      "n_dumps": 50277,
+      "base_rate": 0.045477
+    },
+    {
+      "window_h": 24,
+      "threshold": 0.07,
+      "vol_mult": 3.0,
+      "n_valid": 1105541,
+      "n_dumps": 24708,
+      "base_rate": 0.022349
     },
     {
       "window_h": 24,
       "threshold": 0.1,
+      "vol_mult": 1.5,
+      "n_valid": 1105541,
+      "n_dumps": 39816,
+      "base_rate": 0.036015
+    },
+    {
+      "window_h": 24,
+      "threshold": 0.1,
       "vol_mult": 2.0,
       "n_valid": 1105541,
-      "n_pumps": 43385,
-      "base_rate": 0.039243
+      "n_dumps": 29190,
+      "base_rate": 0.026403
     },
     {
       "window_h": 24,
       "threshold": 0.1,
       "vol_mult": 3.0,
       "n_valid": 1105541,
-      "n_pumps": 26778,
-      "base_rate": 0.024222
+      "n_dumps": 16498,
+      "base_rate": 0.014923
     },
     {
       "window_h": 24,
-      "threshold": 0.1,
-      "vol_mult": 5.0,
+      "threshold": 0.15,
+      "vol_mult": 1.5,
       "n_valid": 1105541,
-      "n_pumps": 14586,
-      "base_rate": 0.013194
-    },
-    {
-      "window_h": 24,
-      "threshold": 0.12,
-      "vol_mult": 2.0,
-      "n_valid": 1105541,
-      "n_pumps": 33179,
-      "base_rate": 0.030012
-    },
-    {
-      "window_h": 24,
-      "threshold": 0.12,
-      "vol_mult": 3.0,
-      "n_valid": 1105541,
-      "n_pumps": 21988,
-      "base_rate": 0.019889
-    },
-    {
-      "window_h": 24,
-      "threshold": 0.12,
-      "vol_mult": 5.0,
-      "n_valid": 1105541,
-      "n_pumps": 12787,
-      "base_rate": 0.011566
+      "n_dumps": 14661,
+      "base_rate": 0.013261
     },
     {
       "window_h": 24,
       "threshold": 0.15,
       "vol_mult": 2.0,
       "n_valid": 1105541,
-      "n_pumps": 22721,
-      "base_rate": 0.020552
+      "n_dumps": 12255,
+      "base_rate": 0.011085
     },
     {
       "window_h": 24,
       "threshold": 0.15,
       "vol_mult": 3.0,
       "n_valid": 1105541,
-      "n_pumps": 16566,
-      "base_rate": 0.014985
+      "n_dumps": 8730,
+      "base_rate": 0.007897
     },
     {
       "window_h": 24,
-      "threshold": 0.15,
-      "vol_mult": 5.0,
+      "threshold": 0.2,
+      "vol_mult": 1.5,
       "n_valid": 1105541,
-      "n_pumps": 10533,
-      "base_rate": 0.009527
+      "n_dumps": 6218,
+      "base_rate": 0.005624
     },
     {
       "window_h": 24,
       "threshold": 0.2,
       "vol_mult": 2.0,
       "n_valid": 1105541,
-      "n_pumps": 12629,
-      "base_rate": 0.011423
+      "n_dumps": 5637,
+      "base_rate": 0.005099
     },
     {
       "window_h": 24,
       "threshold": 0.2,
       "vol_mult": 3.0,
       "n_valid": 1105541,
-      "n_pumps": 10222,
-      "base_rate": 0.009246
-    },
-    {
-      "window_h": 24,
-      "threshold": 0.2,
-      "vol_mult": 5.0,
-      "n_valid": 1105541,
-      "n_pumps": 7298,
-      "base_rate": 0.006601
+      "n_dumps": 4640,
+      "base_rate": 0.004197
     }
   ]
 }

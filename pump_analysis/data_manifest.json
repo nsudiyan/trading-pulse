@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-05-27T18:38:22.672054Z",
+  "generated_at": "2026-05-28T00:15:43.915806Z",
   "period": {
     "start": "2024-05-01",
     "end": "2026-05-27"
@@ -35,7 +35,76 @@
     "UBUSDT",
     "WLDUSDT",
     "XRPUSDT",
-    "ZECUSDT"
+    "ZECUSDT",
+    "MUUSDT",
+    "XAUUSDT",
+    "CLUSDT",
+    "XAGUSDT",
+    "SNDKUSDT",
+    "SOXLUSDT",
+    "BZUSDT",
+    "XLMUSDT",
+    "EWYUSDT",
+    "CRCLUSDT",
+    "SEIUSDT",
+    "INJUSDT",
+    "NVDAUSDT",
+    "AVAXUSDT",
+    "INTCUSDT",
+    "RENDERUSDT",
+    "FETUSDT",
+    "ENAUSDT",
+    "1000LUNCUSDT",
+    "BILLUSDT",
+    "PUMPUSDT",
+    "MRVLUSDT",
+    "TSLAUSDT",
+    "VIRTUALUSDT",
+    "DOTUSDT",
+    "DRAMUSDT",
+    "TRXUSDT",
+    "RONINUSDT",
+    "VVVUSDT",
+    "AAVEUSDT",
+    "BCHUSDT",
+    "PHAROSUSDT",
+    "LTCUSDT",
+    "CBRSUSDT",
+    "TRUMPUSDT",
+    "UNIUSDT",
+    "MSTRUSDT",
+    "SKYAIUSDT",
+    "TIAUSDT",
+    "GRASSUSDT",
+    "WLFIUSDT",
+    "OPGUSDT",
+    "XMRUSDT",
+    "JTOUSDT",
+    "XPLUSDT",
+    "QQQUSDT",
+    "AMDUSDT",
+    "BASUSDT",
+    "ASTERUSDT",
+    "EDENUSDT",
+    "PENGUUSDT",
+    "NATGASUSDT",
+    "APTUSDT",
+    "NILUSDT",
+    "RIVERUSDT",
+    "GENIUSUSDT",
+    "ARUSDT",
+    "PENDLEUSDT",
+    "HIGHUSDT",
+    "IOUSDT",
+    "ARBUSDT",
+    "XAUTUSDT",
+    "RIFUSDT",
+    "ATOMUSDT",
+    "USUSDT",
+    "LITUSDT",
+    "1000SHIBUSDT",
+    "CHZUSDT",
+    "DASHUSDT"
   ],
   "klines": {
     "5m": {
@@ -194,10 +263,355 @@
           "rows": 217915,
           "period_start": "2024-05-01",
           "period_end": "2026-05-27"
+        },
+        "MUUSDT": {
+          "rows": 14506,
+          "period_start": "2026-04-07",
+          "period_end": "2026-05-27"
+        },
+        "XAUUSDT": {
+          "rows": 48266,
+          "period_start": "2025-12-11",
+          "period_end": "2026-05-27"
+        },
+        "CLUSDT": {
+          "rows": 16287,
+          "period_start": "2026-04-01",
+          "period_end": "2026-05-27"
+        },
+        "XAGUSDT": {
+          "rows": 40467,
+          "period_start": "2026-01-07",
+          "period_end": "2026-05-27"
+        },
+        "SNDKUSDT": {
+          "rows": 14504,
+          "period_start": "2026-04-07",
+          "period_end": "2026-05-27"
+        },
+        "SOXLUSDT": {
+          "rows": 3556,
+          "period_start": "2026-05-15",
+          "period_end": "2026-05-27"
+        },
+        "BZUSDT": {
+          "rows": 16286,
+          "period_start": "2026-04-01",
+          "period_end": "2026-05-27"
+        },
+        "XLMUSDT": {
+          "rows": 217994,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "EWYUSDT": {
+          "rows": 20842,
+          "period_start": "2026-03-16",
+          "period_end": "2026-05-27"
+        },
+        "CRCLUSDT": {
+          "rows": 30906,
+          "period_start": "2026-02-09",
+          "period_end": "2026-05-27"
+        },
+        "SEIUSDT": {
+          "rows": 217997,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "INJUSDT": {
+          "rows": 217997,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "NVDAUSDT": {
+          "rows": 17950,
+          "period_start": "2026-03-26",
+          "period_end": "2026-05-27"
+        },
+        "AVAXUSDT": {
+          "rows": 217998,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "INTCUSDT": {
+          "rows": 32929,
+          "period_start": "2026-02-02",
+          "period_end": "2026-05-27"
+        },
+        "RENDERUSDT": {
+          "rows": 193111,
+          "period_start": "2024-07-26",
+          "period_end": "2026-05-27"
+        },
+        "FETUSDT": {
+          "rows": 217999,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "ENAUSDT": {
+          "rows": 218000,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "1000LUNCUSDT": {
+          "rows": 218001,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "BILLUSDT": {
+          "rows": 5934,
+          "period_start": "2026-05-07",
+          "period_end": "2026-05-27"
+        },
+        "PUMPUSDT": {
+          "rows": 92631,
+          "period_start": "2025-07-10",
+          "period_end": "2026-05-27"
+        },
+        "MRVLUSDT": {
+          "rows": 3560,
+          "period_start": "2026-05-15",
+          "period_end": "2026-05-27"
+        },
+        "TSLAUSDT": {
+          "rows": 34371,
+          "period_start": "2026-01-28",
+          "period_end": "2026-05-27"
+        },
+        "VIRTUALUSDT": {
+          "rows": 153628,
+          "period_start": "2024-12-10",
+          "period_end": "2026-05-27"
+        },
+        "DOTUSDT": {
+          "rows": 218002,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "DRAMUSDT": {
+          "rows": 2699,
+          "period_start": "2026-05-18",
+          "period_end": "2026-05-27"
+        },
+        "TRXUSDT": {
+          "rows": 218003,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "RONINUSDT": {
+          "rows": 218004,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "VVVUSDT": {
+          "rows": 139281,
+          "period_start": "2025-01-29",
+          "period_end": "2026-05-27"
+        },
+        "AAVEUSDT": {
+          "rows": 218004,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "BCHUSDT": {
+          "rows": 218005,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "PHAROSUSDT": {
+          "rows": 3958,
+          "period_start": "2026-05-14",
+          "period_end": "2026-05-27"
+        },
+        "LTCUSDT": {
+          "rows": 218006,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "CBRSUSDT": {
+          "rows": 2468,
+          "period_start": "2026-05-19",
+          "period_end": "2026-05-27"
+        },
+        "TRUMPUSDT": {
+          "rows": 142394,
+          "period_start": "2025-01-18",
+          "period_end": "2026-05-27"
+        },
+        "UNIUSDT": {
+          "rows": 218007,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "MSTRUSDT": {
+          "rows": 30921,
+          "period_start": "2026-02-09",
+          "period_end": "2026-05-27"
+        },
+        "SKYAIUSDT": {
+          "rows": 109314,
+          "period_start": "2025-05-13",
+          "period_end": "2026-05-27"
+        },
+        "TIAUSDT": {
+          "rows": 218008,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "GRASSUSDT": {
+          "rows": 162814,
+          "period_start": "2024-11-08",
+          "period_end": "2026-05-27"
+        },
+        "WLFIUSDT": {
+          "rows": 79955,
+          "period_start": "2025-08-23",
+          "period_end": "2026-05-27"
+        },
+        "OPGUSDT": {
+          "rows": 10175,
+          "period_start": "2026-04-22",
+          "period_end": "2026-05-27"
+        },
+        "XMRUSDT": {
+          "rows": 218009,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "JTOUSDT": {
+          "rows": 218010,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "XPLUSDT": {
+          "rows": 80232,
+          "period_start": "2025-08-22",
+          "period_end": "2026-05-27"
+        },
+        "QQQUSDT": {
+          "rows": 14809,
+          "period_start": "2026-04-06",
+          "period_end": "2026-05-27"
+        },
+        "AMDUSDT": {
+          "rows": 6169,
+          "period_start": "2026-05-06",
+          "period_end": "2026-05-27"
+        },
+        "BASUSDT": {
+          "rows": 79033,
+          "period_start": "2025-08-26",
+          "period_end": "2026-05-27"
+        },
+        "ASTERUSDT": {
+          "rows": 72139,
+          "period_start": "2025-09-19",
+          "period_end": "2026-05-27"
+        },
+        "EDENUSDT": {
+          "rows": 68983,
+          "period_start": "2025-09-30",
+          "period_end": "2026-05-27"
+        },
+        "PENGUUSDT": {
+          "rows": 151577,
+          "period_start": "2024-12-17",
+          "period_end": "2026-05-27"
+        },
+        "NATGASUSDT": {
+          "rows": 16300,
+          "period_start": "2026-04-01",
+          "period_end": "2026-05-27"
+        },
+        "APTUSDT": {
+          "rows": 218013,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "NILUSDT": {
+          "rows": 123681,
+          "period_start": "2025-03-24",
+          "period_end": "2026-05-27"
+        },
+        "RIVERUSDT": {
+          "rows": 64044,
+          "period_start": "2025-10-17",
+          "period_end": "2026-05-27"
+        },
+        "GENIUSUSDT": {
+          "rows": 12051,
+          "period_start": "2026-04-16",
+          "period_end": "2026-05-27"
+        },
+        "ARUSDT": {
+          "rows": 218014,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "PENDLEUSDT": {
+          "rows": 218014,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "HIGHUSDT": {
+          "rows": 218015,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "IOUSDT": {
+          "rows": 206040,
+          "period_start": "2024-06-11",
+          "period_end": "2026-05-27"
+        },
+        "ARBUSDT": {
+          "rows": 218016,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "XAUTUSDT": {
+          "rows": 17976,
+          "period_start": "2026-03-26",
+          "period_end": "2026-05-27"
+        },
+        "RIFUSDT": {
+          "rows": 218016,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "ATOMUSDT": {
+          "rows": 218016,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "USUSDT": {
+          "rows": 47967,
+          "period_start": "2025-12-12",
+          "period_end": "2026-05-27"
+        },
+        "LITUSDT": {
+          "rows": 44718,
+          "period_start": "2025-12-23",
+          "period_end": "2026-05-27"
+        },
+        "1000SHIBUSDT": {
+          "rows": 218016,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "CHZUSDT": {
+          "rows": 218016,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "DASHUSDT": {
+          "rows": 218016,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
         }
       },
-      "total_rows": 5178792,
-      "symbol_count": 31
+      "total_rows": 13494420,
+      "symbol_count": 100
     },
     "15m": {
       "symbol_detail": {
@@ -355,10 +769,355 @@
           "rows": 72646,
           "period_start": "2024-05-01",
           "period_end": "2026-05-27"
+        },
+        "MUUSDT": {
+          "rows": 4836,
+          "period_start": "2026-04-07",
+          "period_end": "2026-05-27"
+        },
+        "XAUUSDT": {
+          "rows": 16089,
+          "period_start": "2025-12-11",
+          "period_end": "2026-05-27"
+        },
+        "CLUSDT": {
+          "rows": 5429,
+          "period_start": "2026-04-01",
+          "period_end": "2026-05-27"
+        },
+        "XAGUSDT": {
+          "rows": 13490,
+          "period_start": "2026-01-07",
+          "period_end": "2026-05-27"
+        },
+        "SNDKUSDT": {
+          "rows": 4836,
+          "period_start": "2026-04-07",
+          "period_end": "2026-05-27"
+        },
+        "SOXLUSDT": {
+          "rows": 1186,
+          "period_start": "2026-05-15",
+          "period_end": "2026-05-27"
+        },
+        "BZUSDT": {
+          "rows": 5430,
+          "period_start": "2026-04-01",
+          "period_end": "2026-05-27"
+        },
+        "XLMUSDT": {
+          "rows": 72665,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "EWYUSDT": {
+          "rows": 6948,
+          "period_start": "2026-03-16",
+          "period_end": "2026-05-27"
+        },
+        "CRCLUSDT": {
+          "rows": 10303,
+          "period_start": "2026-02-09",
+          "period_end": "2026-05-27"
+        },
+        "SEIUSDT": {
+          "rows": 72666,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "INJUSDT": {
+          "rows": 72666,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "NVDAUSDT": {
+          "rows": 5984,
+          "period_start": "2026-03-26",
+          "period_end": "2026-05-27"
+        },
+        "AVAXUSDT": {
+          "rows": 72666,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "INTCUSDT": {
+          "rows": 10977,
+          "period_start": "2026-02-02",
+          "period_end": "2026-05-27"
+        },
+        "RENDERUSDT": {
+          "rows": 64371,
+          "period_start": "2024-07-26",
+          "period_end": "2026-05-27"
+        },
+        "FETUSDT": {
+          "rows": 72667,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "ENAUSDT": {
+          "rows": 72667,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "1000LUNCUSDT": {
+          "rows": 72667,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "BILLUSDT": {
+          "rows": 1978,
+          "period_start": "2026-05-07",
+          "period_end": "2026-05-27"
+        },
+        "PUMPUSDT": {
+          "rows": 30877,
+          "period_start": "2025-07-10",
+          "period_end": "2026-05-27"
+        },
+        "MRVLUSDT": {
+          "rows": 1187,
+          "period_start": "2026-05-15",
+          "period_end": "2026-05-27"
+        },
+        "TSLAUSDT": {
+          "rows": 11457,
+          "period_start": "2026-01-28",
+          "period_end": "2026-05-27"
+        },
+        "VIRTUALUSDT": {
+          "rows": 51210,
+          "period_start": "2024-12-10",
+          "period_end": "2026-05-27"
+        },
+        "DOTUSDT": {
+          "rows": 72668,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "DRAMUSDT": {
+          "rows": 900,
+          "period_start": "2026-05-18",
+          "period_end": "2026-05-27"
+        },
+        "TRXUSDT": {
+          "rows": 72668,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "RONINUSDT": {
+          "rows": 72668,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "VVVUSDT": {
+          "rows": 46427,
+          "period_start": "2025-01-29",
+          "period_end": "2026-05-27"
+        },
+        "AAVEUSDT": {
+          "rows": 72669,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "BCHUSDT": {
+          "rows": 72669,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "PHAROSUSDT": {
+          "rows": 1320,
+          "period_start": "2026-05-14",
+          "period_end": "2026-05-27"
+        },
+        "LTCUSDT": {
+          "rows": 72669,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "CBRSUSDT": {
+          "rows": 823,
+          "period_start": "2026-05-19",
+          "period_end": "2026-05-27"
+        },
+        "TRUMPUSDT": {
+          "rows": 47465,
+          "period_start": "2025-01-18",
+          "period_end": "2026-05-27"
+        },
+        "UNIUSDT": {
+          "rows": 72669,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "MSTRUSDT": {
+          "rows": 10307,
+          "period_start": "2026-02-09",
+          "period_end": "2026-05-27"
+        },
+        "SKYAIUSDT": {
+          "rows": 36439,
+          "period_start": "2025-05-13",
+          "period_end": "2026-05-27"
+        },
+        "TIAUSDT": {
+          "rows": 72670,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "GRASSUSDT": {
+          "rows": 54272,
+          "period_start": "2024-11-08",
+          "period_end": "2026-05-27"
+        },
+        "WLFIUSDT": {
+          "rows": 26652,
+          "period_start": "2025-08-23",
+          "period_end": "2026-05-27"
+        },
+        "OPGUSDT": {
+          "rows": 3392,
+          "period_start": "2026-04-22",
+          "period_end": "2026-05-27"
+        },
+        "XMRUSDT": {
+          "rows": 72670,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "JTOUSDT": {
+          "rows": 72670,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "XPLUSDT": {
+          "rows": 26744,
+          "period_start": "2025-08-22",
+          "period_end": "2026-05-27"
+        },
+        "QQQUSDT": {
+          "rows": 4937,
+          "period_start": "2026-04-06",
+          "period_end": "2026-05-27"
+        },
+        "AMDUSDT": {
+          "rows": 2057,
+          "period_start": "2026-05-06",
+          "period_end": "2026-05-27"
+        },
+        "BASUSDT": {
+          "rows": 26345,
+          "period_start": "2025-08-26",
+          "period_end": "2026-05-27"
+        },
+        "ASTERUSDT": {
+          "rows": 24047,
+          "period_start": "2025-09-19",
+          "period_end": "2026-05-27"
+        },
+        "EDENUSDT": {
+          "rows": 22995,
+          "period_start": "2025-09-30",
+          "period_end": "2026-05-27"
+        },
+        "PENGUUSDT": {
+          "rows": 50526,
+          "period_start": "2024-12-17",
+          "period_end": "2026-05-27"
+        },
+        "NATGASUSDT": {
+          "rows": 5434,
+          "period_start": "2026-04-01",
+          "period_end": "2026-05-27"
+        },
+        "APTUSDT": {
+          "rows": 72671,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "NILUSDT": {
+          "rows": 41227,
+          "period_start": "2025-03-24",
+          "period_end": "2026-05-27"
+        },
+        "RIVERUSDT": {
+          "rows": 21348,
+          "period_start": "2025-10-17",
+          "period_end": "2026-05-27"
+        },
+        "GENIUSUSDT": {
+          "rows": 4017,
+          "period_start": "2026-04-16",
+          "period_end": "2026-05-27"
+        },
+        "ARUSDT": {
+          "rows": 72672,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "PENDLEUSDT": {
+          "rows": 72672,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "HIGHUSDT": {
+          "rows": 72672,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "IOUSDT": {
+          "rows": 68680,
+          "period_start": "2024-06-11",
+          "period_end": "2026-05-27"
+        },
+        "ARBUSDT": {
+          "rows": 72672,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "XAUTUSDT": {
+          "rows": 5992,
+          "period_start": "2026-03-26",
+          "period_end": "2026-05-27"
+        },
+        "RIFUSDT": {
+          "rows": 72672,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "ATOMUSDT": {
+          "rows": 72672,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "USUSDT": {
+          "rows": 15989,
+          "period_start": "2025-12-12",
+          "period_end": "2026-05-27"
+        },
+        "LITUSDT": {
+          "rows": 14906,
+          "period_start": "2025-12-23",
+          "period_end": "2026-05-27"
+        },
+        "1000SHIBUSDT": {
+          "rows": 72672,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "CHZUSDT": {
+          "rows": 72672,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "DASHUSDT": {
+          "rows": 72672,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
         }
       },
-      "total_rows": 1677182,
-      "symbol_count": 31
+      "total_rows": 4449084,
+      "symbol_count": 100
     },
     "1h": {
       "symbol_detail": {
@@ -516,21 +1275,366 @@
           "rows": 18162,
           "period_start": "2024-05-01",
           "period_end": "2026-05-27"
+        },
+        "MUUSDT": {
+          "rows": 1210,
+          "period_start": "2026-04-07",
+          "period_end": "2026-05-27"
+        },
+        "XAUUSDT": {
+          "rows": 4023,
+          "period_start": "2025-12-11",
+          "period_end": "2026-05-27"
+        },
+        "CLUSDT": {
+          "rows": 1358,
+          "period_start": "2026-04-01",
+          "period_end": "2026-05-27"
+        },
+        "XAGUSDT": {
+          "rows": 3373,
+          "period_start": "2026-01-07",
+          "period_end": "2026-05-27"
+        },
+        "SNDKUSDT": {
+          "rows": 1210,
+          "period_start": "2026-04-07",
+          "period_end": "2026-05-27"
+        },
+        "SOXLUSDT": {
+          "rows": 297,
+          "period_start": "2026-05-15",
+          "period_end": "2026-05-27"
+        },
+        "BZUSDT": {
+          "rows": 1358,
+          "period_start": "2026-04-01",
+          "period_end": "2026-05-27"
+        },
+        "XLMUSDT": {
+          "rows": 18167,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "EWYUSDT": {
+          "rows": 1738,
+          "period_start": "2026-03-16",
+          "period_end": "2026-05-27"
+        },
+        "CRCLUSDT": {
+          "rows": 2577,
+          "period_start": "2026-02-09",
+          "period_end": "2026-05-27"
+        },
+        "SEIUSDT": {
+          "rows": 18167,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "INJUSDT": {
+          "rows": 18167,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "NVDAUSDT": {
+          "rows": 1497,
+          "period_start": "2026-03-26",
+          "period_end": "2026-05-27"
+        },
+        "AVAXUSDT": {
+          "rows": 18167,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "INTCUSDT": {
+          "rows": 2745,
+          "period_start": "2026-02-02",
+          "period_end": "2026-05-27"
+        },
+        "RENDERUSDT": {
+          "rows": 16093,
+          "period_start": "2024-07-26",
+          "period_end": "2026-05-27"
+        },
+        "FETUSDT": {
+          "rows": 18167,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "ENAUSDT": {
+          "rows": 18167,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "1000LUNCUSDT": {
+          "rows": 18167,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "BILLUSDT": {
+          "rows": 495,
+          "period_start": "2026-05-07",
+          "period_end": "2026-05-27"
+        },
+        "PUMPUSDT": {
+          "rows": 7720,
+          "period_start": "2025-07-10",
+          "period_end": "2026-05-27"
+        },
+        "MRVLUSDT": {
+          "rows": 297,
+          "period_start": "2026-05-15",
+          "period_end": "2026-05-27"
+        },
+        "TSLAUSDT": {
+          "rows": 2865,
+          "period_start": "2026-01-28",
+          "period_end": "2026-05-27"
+        },
+        "VIRTUALUSDT": {
+          "rows": 12803,
+          "period_start": "2024-12-10",
+          "period_end": "2026-05-27"
+        },
+        "DOTUSDT": {
+          "rows": 18167,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "DRAMUSDT": {
+          "rows": 225,
+          "period_start": "2026-05-18",
+          "period_end": "2026-05-27"
+        },
+        "TRXUSDT": {
+          "rows": 18167,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "RONINUSDT": {
+          "rows": 18167,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "VVVUSDT": {
+          "rows": 11607,
+          "period_start": "2025-01-29",
+          "period_end": "2026-05-27"
+        },
+        "AAVEUSDT": {
+          "rows": 18168,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "BCHUSDT": {
+          "rows": 18168,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "PHAROSUSDT": {
+          "rows": 331,
+          "period_start": "2026-05-14",
+          "period_end": "2026-05-27"
+        },
+        "LTCUSDT": {
+          "rows": 18168,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "CBRSUSDT": {
+          "rows": 207,
+          "period_start": "2026-05-19",
+          "period_end": "2026-05-27"
+        },
+        "TRUMPUSDT": {
+          "rows": 11867,
+          "period_start": "2025-01-18",
+          "period_end": "2026-05-27"
+        },
+        "UNIUSDT": {
+          "rows": 18168,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "MSTRUSDT": {
+          "rows": 2578,
+          "period_start": "2026-02-09",
+          "period_end": "2026-05-27"
+        },
+        "SKYAIUSDT": {
+          "rows": 9111,
+          "period_start": "2025-05-13",
+          "period_end": "2026-05-27"
+        },
+        "TIAUSDT": {
+          "rows": 18168,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "GRASSUSDT": {
+          "rows": 13569,
+          "period_start": "2024-11-08",
+          "period_end": "2026-05-27"
+        },
+        "WLFIUSDT": {
+          "rows": 6664,
+          "period_start": "2025-08-23",
+          "period_end": "2026-05-27"
+        },
+        "OPGUSDT": {
+          "rows": 849,
+          "period_start": "2026-04-22",
+          "period_end": "2026-05-27"
+        },
+        "XMRUSDT": {
+          "rows": 18168,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "JTOUSDT": {
+          "rows": 18168,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "XPLUSDT": {
+          "rows": 6687,
+          "period_start": "2025-08-22",
+          "period_end": "2026-05-27"
+        },
+        "QQQUSDT": {
+          "rows": 1235,
+          "period_start": "2026-04-06",
+          "period_end": "2026-05-27"
+        },
+        "AMDUSDT": {
+          "rows": 515,
+          "period_start": "2026-05-06",
+          "period_end": "2026-05-27"
+        },
+        "BASUSDT": {
+          "rows": 6587,
+          "period_start": "2025-08-26",
+          "period_end": "2026-05-27"
+        },
+        "ASTERUSDT": {
+          "rows": 6012,
+          "period_start": "2025-09-19",
+          "period_end": "2026-05-27"
+        },
+        "EDENUSDT": {
+          "rows": 5749,
+          "period_start": "2025-09-30",
+          "period_end": "2026-05-27"
+        },
+        "PENGUUSDT": {
+          "rows": 12632,
+          "period_start": "2024-12-17",
+          "period_end": "2026-05-27"
+        },
+        "NATGASUSDT": {
+          "rows": 1359,
+          "period_start": "2026-04-01",
+          "period_end": "2026-05-27"
+        },
+        "APTUSDT": {
+          "rows": 18168,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "NILUSDT": {
+          "rows": 10307,
+          "period_start": "2025-03-24",
+          "period_end": "2026-05-27"
+        },
+        "RIVERUSDT": {
+          "rows": 5338,
+          "period_start": "2025-10-17",
+          "period_end": "2026-05-27"
+        },
+        "GENIUSUSDT": {
+          "rows": 1005,
+          "period_start": "2026-04-16",
+          "period_end": "2026-05-27"
+        },
+        "ARUSDT": {
+          "rows": 18168,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "PENDLEUSDT": {
+          "rows": 18168,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "HIGHUSDT": {
+          "rows": 18168,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "IOUSDT": {
+          "rows": 17170,
+          "period_start": "2024-06-11",
+          "period_end": "2026-05-27"
+        },
+        "ARBUSDT": {
+          "rows": 18168,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "XAUTUSDT": {
+          "rows": 1498,
+          "period_start": "2026-03-26",
+          "period_end": "2026-05-27"
+        },
+        "RIFUSDT": {
+          "rows": 18168,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "ATOMUSDT": {
+          "rows": 18168,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "USUSDT": {
+          "rows": 3998,
+          "period_start": "2025-12-12",
+          "period_end": "2026-05-27"
+        },
+        "LITUSDT": {
+          "rows": 3727,
+          "period_start": "2025-12-23",
+          "period_end": "2026-05-27"
+        },
+        "1000SHIBUSDT": {
+          "rows": 18168,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "CHZUSDT": {
+          "rows": 18168,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
+        },
+        "DASHUSDT": {
+          "rows": 18168,
+          "period_start": "2024-05-01",
+          "period_end": "2026-05-27"
         }
       },
-      "total_rows": 419312,
-      "symbol_count": 31
+      "total_rows": 1112324,
+      "symbol_count": 100
     }
   },
   "funding": {
     "file": "funding.csv",
     "source": "Binance /fapi/v1/fundingRate",
-    "rows": 71278
+    "rows": 193686
   },
   "open_interest": {
     "file": "open_interest.csv",
     "source": "Bybit V5 /v5/market/open-interest (1h)",
-    "rows": 441572
+    "rows": 1064503
   },
   "liquidations": {
     "file": "liquidations_summary.csv",
@@ -631,5 +1735,10 @@
       "coverage_gap": "Real-time orderbook snapshot only \u2014 no historical depth data stored",
       "rows": 0
     }
+  },
+  "batch_checkpoint": {
+    "last_batch_at": "2026-05-28T00:15:43.915821Z",
+    "total_symbols": 100,
+    "batches_run": 3
   }
 }

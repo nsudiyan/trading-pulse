@@ -1,8 +1,8 @@
 category,N_pumps_analyzed,N_controls_analyzed,N_pump_with_event,N_ctrl_with_event,P_event_pump,P_event_ctrl,lift_P_ev_pump_vs_ctrl,lift_P_pump_ev_vs_base,p_value,interpretation,coverage_note
-liq_sweep,189,466,15,2,0.0794,0.0043,18.492,3.058,0.0,"малая выборка, не интерпретировать",partial 2026-04-14->2026-05-27
-macro_extreme,677,3385,271,1354,0.4003,0.4,1.001,1.001,0.5107,статистически не подтверждено,"full 2024-05-01->2026-05-27 (Fear/Greed index, NOT FOMC/CPI)"
-stablecoin_inflow,677,3385,43,79,0.0635,0.0233,2.722,2.115,0.0,HIGH confidence,full 2024-05-01->2026-05-27
-news_signal,193,473,24,23,0.1244,0.0486,2.557,1.762,0.0008,MEDIUM confidence,"partial 2026-04-12->2026-05-26 (screener output, NOT external news)"
+liq_sweep,352,1099,19,7,0.054,0.0064,8.474,3.012,0.0,MEDIUM confidence,partial 2026-04-14->2026-05-27
+macro_extreme,1664,8320,687,3085,0.4129,0.3708,1.113,1.093,0.0007,статистически не подтверждено,"full 2024-05-01->2026-05-27 (Fear/Greed index, NOT FOMC/CPI)"
+stablecoin_inflow,1664,8320,113,245,0.0679,0.0294,2.306,1.894,0.0,HIGH confidence,full 2024-05-01->2026-05-27
+news_signal,360,1131,38,75,0.1056,0.0663,1.592,1.393,0.0115,MEDIUM confidence,"partial 2026-04-12->2026-05-26 (screener output, NOT external news)"
 token_unlock,0,0,0,0,,,,,,no_coverage,no_coverage -- 0 real rows in token_unlocks.csv
 whale_positions,0,0,0,0,,,,,,no_coverage,no_coverage -- Binance L/S endpoint rejects historical requests
 orderbook,0,0,0,0,,,,,,no_coverage,no_coverage -- real-time only
