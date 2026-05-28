@@ -1683,18 +1683,23 @@
     },
     "token_unlocks": {
       "file": "catalyst_data/token_unlocks.csv",
-      "source": "outcomes/unlock_schedule.json (manual curation)",
-      "coverage": "near-term unlocks only (curated 2026-05-26)",
-      "coverage_gap": "Free API sources (token.unlocks.app, DefiLlama emissions) require subscription as of 2026",
+      "source": "manual_curation_top20 (documented tokenomics for ARB/WLD/APT/SUI/TIA/JTO/ENA/SEI)",
+      "fetcher": "fetch_token_unlocks.py",
+      "coverage": "2024-05-01 → 2026-05-05 (partial — 8 symbols with documented vesting schedules)",
+      "coverage_note": "partial_coverage — DefiLlama /emissions paywalled (HTTP 402 as of 2026-05); tokenunlocks.app has no free public API; manual curation covers top-8 tokens with public tokenomics docs",
+      "coverage_gap": "92 symbols not covered; usd_value=0 for all rows (historical USD not available without subscription)",
+      "defillama_status": "HTTP 402 Paywalled — tried 2026-05-28, requires Pro subscription",
       "columns": [
         "symbol",
         "unlock_date",
         "pct_of_supply",
         "usd_value",
         "type",
-        "note"
+        "source"
       ],
-      "rows": 1
+      "rows": 166,
+      "symbols_covered": ["APTUSDT", "ARBUSDT", "ENAUSDT", "JTOUSDT", "SEIUSDT", "SUIUSDT", "TIAUSDT", "WLDUSDT"],
+      "last_updated": "2026-05-28T17:07:54Z"
     },
     "news_signals": {
       "file": "catalyst_data/news_signals.csv",
