@@ -71,9 +71,25 @@ LOG = logging.getLogger("liq")
 
 # ─── SQLite ───────────────────────────────────────────────────────────────────
 
+RETENTION_DAYS = 14   # FIX 2026-06-02: чистим ликвидации старше N дней (БД росла безгранично, 43МБ)
+
+
+def _prune_old(con: sqlite3.Connection) -> None:
+    """Удаляет ликвидации старше RETENTION_DAYS, чтобы БД не росла бесконечно."""
+    try:
+        import time as _t
+        con.execute("DELETE FROM liquidations WHERE ts < ?",
+                    (int((_t.time() - RETENTION_DAYS * 86400) * 1000),))
+        con.commit()
+    except Exception:
+        pass
+
+
 def init_db(path: str = DB_PATH) -> sqlite3.Connection:
     """Создаёт (или открывает) базу и нужные таблицы/индексы."""
     con = sqlite3.connect(path, check_same_thread=False)
+    con.execute("PRAGMA journal_mode=WAL")    # FIX 2026-06-02: конкурентные читатели (4 демона) без lock-contention
+    con.execute("PRAGMA busy_timeout=5000")
     con.execute("""
         CREATE TABLE IF NOT EXISTS liquidations (
             id      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,6 +105,7 @@ def init_db(path: str = DB_PATH) -> sqlite3.Connection:
     con.execute("CREATE INDEX IF NOT EXISTS idx_ts  ON liquidations(ts)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_sym ON liquidations(symbol, ts)")
     con.commit()
+    _prune_old(con)   # FIX 2026-06-02: retention на старте демона
     return con
 
 
@@ -102,6 +119,9 @@ def _insert(con: sqlite3.Connection, ts: int, symbol: str, side: str,
         (ts, symbol, side, price, qty, usd, source),
     )
     con.commit()
+    _insert._n = getattr(_insert, "_n", 0) + 1   # FIX 2026-06-02: периодический retention в долгой сессии
+    if _insert._n % 5000 == 0:
+        _prune_old(con)
     return usd
 
 
@@ -408,6 +428,7 @@ async def _bybit_batch(symbols: list[str], con: sqlite3.Connection,
     """Одно WS-соединение Bybit на BYBIT_BATCH топиков."""
     topics = [f"allLiquidation.{s}" for s in symbols]
     backoff = 1.0
+    fails = 0
 
     while True:
         try:
@@ -416,8 +437,9 @@ async def _bybit_batch(symbols: list[str], con: sqlite3.Connection,
                 open_timeout=15,
             ) as ws:
                 await ws.send(json.dumps({"op": "subscribe", "args": topics}))
-                LOG.info("[bybit] connected, %d symbols", len(symbols))
+                LOG.debug("[bybit] connected, %d symbols", len(symbols))
                 backoff = 1.0
+                fails = 0
 
                 async for raw in ws:
                     try:
@@ -470,7 +492,9 @@ async def _bybit_batch(symbols: list[str], con: sqlite3.Connection,
                             )
 
         except Exception as e:
-            LOG.warning("[bybit] batch error: %s — retry in %.0fs", e, backoff)
+            fails += 1   # FIX 2026-06-02: шум reconnect → debug; WARNING только при устойчивом сбое (≥3 подряд)
+            (LOG.warning if fails >= 3 else LOG.debug)(
+                "[bybit] batch error (#%d): %s — retry in %.0fs", fails, e, backoff)
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 60)
 
@@ -490,6 +514,7 @@ async def bybit_liq_stream(symbols: list[str], con: sqlite3.Connection,
 async def _hl_batch(coins: list[str], con: sqlite3.Connection, alert_usd: float):
     """Одно WS-соединение Hyperliquid на HL_BATCH монет."""
     backoff = 1.0
+    fails = 0
 
     while True:
         try:
@@ -504,8 +529,9 @@ async def _hl_batch(coins: list[str], con: sqlite3.Connection, alert_usd: float)
                     }
                     await ws.send(json.dumps(sub))
                     await asyncio.sleep(0.15)   # пауза между подписками — HL рвёт при flood
-                LOG.info("[hl] connected, %d coins", len(coins))
+                LOG.debug("[hl] connected, %d coins", len(coins))
                 backoff = 1.0
+                fails = 0
 
                 async for raw in ws:
                     try:
@@ -553,7 +579,9 @@ async def _hl_batch(coins: list[str], con: sqlite3.Connection, alert_usd: float)
                             )
 
         except Exception as e:
-            LOG.warning("[hl] batch error: %s — retry in %.0fs", e, backoff)
+            fails += 1   # FIX 2026-06-02: шум reconnect → debug; WARNING только при устойчивом сбое (≥3 подряд)
+            (LOG.warning if fails >= 3 else LOG.debug)(
+                "[hl] batch error (#%d): %s — retry in %.0fs", fails, e, backoff)
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 60)
 

@@ -151,6 +151,30 @@ def _send_sweep_alert(result: dict, sweep_type: str) -> None:
     if not (tg_cfg.get("enabled") and tg_cfg.get("bot_token") and tg_cfg.get("chat_id")):
         return
 
+    # Claude RT-фильтр перед отправкой sweep-алерта
+    import os as _os
+    _claude_extra = ""
+    if _os.environ.get("CLAUDE_RT_FILTER", "on").lower() in ("on", "true", "1", "yes"):
+        try:
+            from claude_realtime_filter import filter_candidate as _crt
+            _cand = dict(result)
+            _cand["setup"]     = "range_sweep"
+            _cand["direction"] = "LONG" if result.get("direction") == "long" else "SHORT"
+            _cand["funding"]   = result.get("fund_%")
+            _cand["price_chg_4h"] = result.get("change_24h", 0)
+            _cand["signals"]   = [f"Live {sweep_type} sweep detected by WebSocket"]
+            _v = _crt(result["symbol"], _cand, source="sweep_watcher")
+            _act = _v.get("action")
+            LOG.info(f"[RT-Filter] {result['symbol']} sweep_{sweep_type} → {_act} "
+                     f"conf={_v.get('confidence',0):.2f}")
+            if _act != "GO":   # fail-CLOSED: SKIP / WAIT / FAIL_OPEN — не шлём
+                return
+            if _v.get("reasoning"):
+                _claude_extra = f"\n🧠 Claude conf={_v.get('confidence',0):.0%}: {_v['reasoning'][:280]}"
+        except Exception as _e:
+            LOG.warning(f"sweep RT-filter error → fail-CLOSED (не шлём): {_e}")
+            return  # fail-CLOSED на исключении тоже
+
     token  = tg_cfg["bot_token"]
     sym    = result["symbol"]
     score  = result["score"]
@@ -204,6 +228,8 @@ def _send_sweep_alert(result: dict, sweep_type: str) -> None:
     )
     if notes:
         text += f"<i>{notes}</i>\n"
+    if _claude_extra:
+        text += _claude_extra
 
     all_targets = [str(tg_cfg["chat_id"])]
     for extra in tg_cfg.get("extra_chat_ids", []):
@@ -435,6 +461,8 @@ if __name__ == "__main__":
         handlers=[logging.StreamHandler(sys.stdout)],
     )
 
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     try:
         asyncio.run(main(top_n=args.top_n))
     except KeyboardInterrupt:

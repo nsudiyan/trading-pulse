@@ -33,11 +33,13 @@ SESSION.headers.update({
 
 TTL_ETF   = 3600      # 1 час — Farside обновляется раз в день
 TTL_MACRO = 6 * 3600  # 6 часов — календарь на неделю
-TTL_OPT   = 15 * 60   # 15 минут — опционы двигаются быстрее
+TTL_OPT   = 30 * 60   # 30 минут — опционы (Deribit нестабилен, реже ретраи)
 TTL_TREND = 30 * 60   # 30 минут — trending на CoinGecko обновляется небыстро
 TTL_BNB   = 2 * 60    # 2 минуты — ордербук и ликвидации меняются быстро
+TTL_MEXC  = 2 * 60    # 2 минуты — MEXC orderbook
 
 BINANCE_FAPI = "https://fapi.binance.com"
+MEXC_BASE    = "https://contract.mexc.com"
 
 
 def _cache_load() -> dict:
@@ -56,6 +58,17 @@ def _cache_save(cache: dict) -> None:
         LOG.debug("cache save failed: %s", e)
 
 
+def _cache_put(key: str, value) -> None:
+    """FIX 2026-06-02: сохраняет ТОЛЬКО изменённый ключ под локом (atomic merge).
+    Раньше 12 тредов screener'а + 2-й демон писали весь файл без лока → потеря апдейтов +
+    битый JSON → _cache_load отдавал {} → self-inflicted re-fetch шторм к API."""
+    try:
+        from file_lock import atomic_json_update
+        atomic_json_update(CACHE_FILE, lambda cur: {**(cur or {}), key: value}, default={})
+    except Exception as e:
+        LOG.debug("cache put failed: %s", e)
+
+
 def _cached(key: str, ttl: int, fetcher):
     cache = _cache_load()
     entry = cache.get(key)
@@ -67,8 +80,7 @@ def _cached(key: str, ttl: int, fetcher):
     except Exception as e:
         LOG.warning("%s fetch failed: %s", key, e)
         return entry["data"] if entry else None
-    cache[key] = {"ts": now, "data": data}
-    _cache_save(cache)
+    _cache_put(key, {"ts": now, "data": data})   # FIX 2026-06-02: единичный ключ, locked+atomic
     return data
 
 
@@ -196,12 +208,36 @@ def next_macro_window(minutes_before: int = 30, minutes_after: int = 15) -> Opti
     return None
 
 
+def macro_blackout_status(minutes_before: int = 30, minutes_after: int = 15) -> dict:
+    """FAIL-CLOSED статус макро-блэкаута: {'blocked': bool, 'reason': str}.
+    FIX 2026-05-30: если календарь High-impact US недоступен/устарел (кэш старше TTL_MACRO) →
+    blocked=True — не входим вслепую перед возможным FOMC/CPI (вместо тихого fail-open)."""
+    try:
+        win = next_macro_window(minutes_before, minutes_after)   # FIX 2026-05-30: ПЕРЕД fresh — он рефетчит stale-кэш, иначе ложный blackout на TTL-роловере
+    except Exception:
+        win = None
+    fresh = False
+    try:
+        _ent = _cache_load().get("macro_ff")
+        fresh = bool(_ent and (time.time() - _ent.get("ts", 0)) < TTL_MACRO)
+    except Exception:
+        fresh = False
+    if win:
+        _t = win.get("title") or win.get("event") or win.get("name") or "событие"
+        return {"blocked": True,
+                "reason": f"перед макро-событием «{_t}» (через ~{win.get('minutes_until', '?')} мин) — высокая волатильность"}
+    if not fresh:
+        return {"blocked": True,
+                "reason": "макро-календарь недоступен/устарел — не входим вслепую (возможен FOMC/CPI), защита fail-closed"}
+    return {"blocked": False, "reason": ""}
+
+
 # ─── Deribit опционы ────────────────────────────────────────────────────────
 def _fetch_deribit_summary(currency: str):
     r = SESSION.get(
         "https://www.deribit.com/api/v2/public/get_book_summary_by_currency",
         params={"currency": currency, "kind": "option"},
-        timeout=10,
+        timeout=3,
     )
     r.raise_for_status()
     data = r.json()
@@ -212,7 +248,7 @@ def _fetch_deribit_index(currency: str) -> Optional[float]:
     r = SESSION.get(
         "https://www.deribit.com/api/v2/public/get_index_price",
         params={"index_name": f"{currency.lower()}_usd"},
-        timeout=5,
+        timeout=2,
     )
     r.raise_for_status()
     return r.json().get("result", {}).get("index_price")
@@ -662,6 +698,74 @@ def get_binance_enrichment(symbol: str) -> Optional[dict]:
         return None
     key = f"bnb_enrich_{bnb_sym}"
     return _cached(key, TTL_BNB, lambda: _fetch_bnb_enrichment(bnb_sym))
+
+
+def get_binance_ob_levels(symbol: str, limit: int = 50) -> Optional[dict]:
+    """
+    Raw bid/ask levels from Binance USDT-M futures for cross-exchange wall confirmation.
+    Returns {"bids": [(price, size_usd), ...], "asks": [(price, size_usd), ...]} or None.
+    size_usd = price × base_qty. Cached TTL_BNB (2 min).
+    """
+    bnb_sym = _bybit_sym_to_binance(symbol)
+    if not bnb_sym:
+        return None
+    key = f"bnb_ob_lvl_{bnb_sym}"
+    def _fetch():
+        data = _bnb_get("/fapi/v1/depth", {"symbol": bnb_sym, "limit": limit})
+        if not isinstance(data, dict):
+            return None
+        try:
+            bids = [(float(p), float(p) * float(q)) for p, q in data.get("bids", [])]
+            asks = [(float(p), float(p) * float(q)) for p, q in data.get("asks", [])]
+            return {"bids": bids, "asks": asks}
+        except (ValueError, TypeError):
+            return None
+    return _cached(key, TTL_BNB, _fetch)
+
+
+# ─── MEXC per-symbol orderbook ────────────────────────────────────────────────
+
+def _mexc_get(path: str, timeout: int = 5) -> Optional[dict]:
+    try:
+        r = SESSION.get(f"{MEXC_BASE}{path}", timeout=timeout)
+        r.raise_for_status()
+        return r.json()
+    except Exception:
+        return None
+
+
+def _bybit_sym_to_mexc(sym: str) -> Optional[str]:
+    """BTCUSDT → BTC_USDT, SHIB1000USDT → SHIB1000_USDT. None for non-USDT."""
+    if sym.endswith("USDT"):
+        return sym[:-4] + "_USDT"
+    return None
+
+
+def get_mexc_ob_levels(symbol: str, limit: int = 50) -> Optional[dict]:
+    """
+    Raw bid/ask levels from MEXC linear futures for cross-exchange wall confirmation.
+    Returns {"bids": [(price, size_usd), ...], "asks": [...]} or None.
+    MEXC quantity is in contracts (1 contract ≈ 1 coin), size_usd = price × qty.
+    Cached TTL_MEXC (2 min).
+    """
+    mx_sym = _bybit_sym_to_mexc(symbol)
+    if not mx_sym:
+        return None
+    key = f"mexc_ob_lvl_{mx_sym}"
+    def _fetch():
+        data = _mexc_get(f"/api/v1/contract/depth/{mx_sym}")
+        if not isinstance(data, dict) or not data.get("success"):
+            return None
+        try:
+            ob = data["data"]
+            bids = [(float(row[0]), float(row[0]) * float(row[1]))
+                    for row in ob.get("bids", [])[:limit]]
+            asks = [(float(row[0]), float(row[0]) * float(row[1]))
+                    for row in ob.get("asks", [])[:limit]]
+            return {"bids": bids, "asks": asks}
+        except (IndexError, ValueError, TypeError, KeyError):
+            return None
+    return _cached(key, TTL_MEXC, _fetch)
 
 
 # ─── CLI для быстрой проверки ───────────────────────────────────────────────

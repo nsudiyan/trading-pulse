@@ -20,10 +20,12 @@ import json
 import os
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
+
+from file_lock import atomic_json_update, atomic_json_read
 
 # Obsidian интеграция (опционально)
 try:
@@ -105,6 +107,11 @@ CSV_FIELDS = [
     "hold_time_24h_min",  # minutes from signal to 24h resolution
     "outcome_label_4h",   # profitable / unprofitable / breakeven
     "outcome_label_24h",  # profitable / unprofitable / breakeven
+    # v8: path timing — when did MFE/MAE first occur within the window (S++-2)
+    "time_to_mfe_4h_h",   # hours from signal to when MFE peaked in 4h window
+    "time_to_mae_4h_h",   # hours from signal to when MAE peaked in 4h window
+    "time_to_mfe_24h_h",  # hours from signal to when MFE peaked in 24h window
+    "time_to_mae_24h_h",  # hours from signal to when MAE peaked in 24h window
 ]
 
 
@@ -117,28 +124,22 @@ def _ensure_dirs():
 
 
 def _load_pending() -> list:
-    if not PENDING_FILE.exists():
-        return []
-    try:
-        with open(PENDING_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return []
+    data = atomic_json_read(PENDING_FILE, default=[])
+    return data if isinstance(data, list) else []
 
 
 def _save_pending(entries: list):
     _ensure_dirs()
-    with open(PENDING_FILE, "w", encoding="utf-8") as f:
-        json.dump(entries, f, ensure_ascii=False, indent=2)
+    atomic_json_update(PENDING_FILE, lambda _: entries, default=[])
 
 
 def _fetch_klines_extremes(
     symbol: str, from_dt: datetime, to_dt: datetime
-) -> tuple[float | None, float | None, float | None]:
+) -> tuple[float | None, float | None, float | None, float | None, float | None]:
     """
-    Возвращает (max_high, min_low, close_at_end) по 15m свечам за интервал.
-    Используется вместо точечной цены — определяет, касалась ли цена SL/TP
-    в любой момент внутри окна, а не только в момент проверки.
+    Returns (max_high, min_low, close_at_end, time_to_max_h, time_to_min_h).
+    time_to_max_h / time_to_min_h: hours from from_dt to first occurrence of extreme.
+    Used to compute time_to_mfe / time_to_mae in check_and_resolve.
     """
     try:
         resp = requests.get(
@@ -155,13 +156,61 @@ def _fetch_klines_extremes(
         )
         bars = resp.json()["result"]["list"]  # desc order: newest bar first
         if not bars:
-            return None, None, None
-        highs = [float(b[2]) for b in bars]
-        lows  = [float(b[3]) for b in bars]
-        close_end = float(bars[0][4])  # close of the most-recent bar ≈ price at horizon
-        return max(highs), min(lows), close_end
+            return None, None, None, None, None
+
+        close_end   = float(bars[0][4])
+        from_ts_s   = from_dt.timestamp()
+        max_high_val = max(float(b[2]) for b in bars)
+        min_low_val  = min(float(b[3]) for b in bars)
+
+        # Earliest timestamp when the extreme was first hit
+        max_ts_s = min(float(b[0]) / 1000 for b in bars if float(b[2]) >= max_high_val)
+        min_ts_s = min(float(b[0]) / 1000 for b in bars if float(b[3]) <= min_low_val)
+
+        time_to_max_h = round((max_ts_s - from_ts_s) / 3600, 2)
+        time_to_min_h = round((min_ts_s - from_ts_s) / 3600, 2)
+
+        return max_high_val, min_low_val, close_end, time_to_max_h, time_to_min_h
     except Exception:
-        return None, None, None
+        return None, None, None, None, None
+
+
+def _first_touch_order(symbol: str, from_dt: datetime, to_dt: datetime,
+                       direction: str, stop: float, tp1: float) -> "str | None":
+    """FIX 2026-06-02: честный порядок касания для both-hit по 5m klines (бар-за-баром).
+    Заменяет заражённую пик-эвристику time_to_mfe/mae (время ПИКА ≠ время первого касания УРОВНЯ).
+    Возвращает 'TP1' (тейк раньше), 'STOP' (стоп раньше / один бар коснулся обоих → пессимистично),
+    или None если нет 5m-данных (вызывающий трактует None пессимистично как не-TP1)."""
+    try:
+        resp = requests.get(
+            f"{BASE_URL}/v5/market/kline",
+            params={"category": "linear", "symbol": symbol, "interval": "5",
+                    "start": int(from_dt.timestamp() * 1000),
+                    "end":   int(to_dt.timestamp() * 1000), "limit": 1000},
+            timeout=10,
+        )
+        bars = resp.json().get("result", {}).get("list") or []
+        if not bars:
+            return None
+        bars = sorted(bars, key=lambda b: int(b[0]))   # по возрастанию времени
+        is_long = direction in ("ЛОНГ", "ЖДАТЬ")
+        for b in bars:
+            hi, lo = float(b[2]), float(b[3])
+            if is_long:
+                tp_hit = bool(tp1) and hi >= tp1
+                sl_hit = bool(stop) and lo <= stop
+            else:
+                tp_hit = bool(tp1) and lo <= tp1
+                sl_hit = bool(stop) and hi >= stop
+            if tp_hit and sl_hit:
+                return "STOP"
+            if sl_hit:
+                return "STOP"
+            if tp_hit:
+                return "TP1"
+        return None
+    except Exception:
+        return None
 
 
 def _now_ts() -> str:
@@ -169,12 +218,26 @@ def _now_ts() -> str:
 
 
 def _parse_ts(ts_str: str) -> datetime:
-    return datetime.strptime(ts_str, "%Y-%m-%dT%H:%M:%S")
+    # BUG1 fix (2026-05-30): run_ts хранится как UTC-wall-clock (_now_ts=utcnow()). На не-UTC
+    # хосте (тут MSK+3) naive .timestamp() трактовал его как локальное время → окно klines
+    # сдвигалось на −3ч ([run−3h, run+1h]) → исход считался по ДО-сигнальным свечам. Парсим как UTC-aware.
+    return datetime.strptime(ts_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
 
 
 def _append_csv(row: dict):
     _ensure_dirs()
     exists = RESOLVED_CSV.exists()
+    # Идемпотентность (FIX 2026-06-02): не дублировать (run_ts, symbol). Резолв пишет строку в цикле,
+    # а удаление из pending — после цикла; kill между ними → пере-резолв + дубль (был TAOUSDT 2026-04-24).
+    if exists:
+        key = (str(row.get("run_ts", "")), str(row.get("symbol", "")))
+        try:
+            with open(RESOLVED_CSV, newline="", encoding="utf-8") as f:
+                for r in csv.DictReader(f):
+                    if (r.get("run_ts"), r.get("symbol")) == key:
+                        return  # уже записано — пропуск
+        except Exception:
+            pass
     with open(RESOLVED_CSV, "a", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=CSV_FIELDS, extrasaction="ignore")
         if not exists:
@@ -282,8 +345,21 @@ def save_pending(filtered: list, all_results: list = None) -> int:
         existing_keys.add((sym, now_key))
 
     if new_entries:
-        existing.extend(new_entries)
-        _save_pending(existing)
+        # Атомарный merge: дед-уп по (symbol, run_ts[:16]) против актуального диска,
+        # чтобы параллельный writer не затёр наши записи и не задвоил.
+        def _merge_append(data):
+            if not isinstance(data, list):
+                data = []
+            seen = {(e["symbol"], e["run_ts"][:16]) for e in data}
+            for ne in new_entries:
+                k = (ne["symbol"], ne["run_ts"][:16])
+                if k in seen:
+                    continue
+                data.append(ne)
+                seen.add(k)
+            return data
+
+        atomic_json_update(PENDING_FILE, _merge_append, default=[])
         # Обновляем заметки в Obsidian для новых символов
         if _OBS_AVAILABLE:
             _obs_cfg = _obs.load_config()
@@ -394,7 +470,7 @@ def check_and_resolve(silent: bool = False) -> int:
     if not entries:
         return 0
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)  # BUG1 fix: aware UTC, чтобы сравнивать/вычитать с aware run_dt
     resolved_count = 0
     updated = False
 
@@ -405,7 +481,8 @@ def check_and_resolve(silent: bool = False) -> int:
         # ── 4h исход ──────────────────────────────────────────────────────────
         if elapsed_h >= 4 and entry.get("price_4h") is None:
             h4_end = run_dt + timedelta(hours=4)
-            max_high, min_low, close_end = _fetch_klines_extremes(
+            _win_end = h4_end
+            max_high, min_low, close_end, time_to_max_h, time_to_min_h = _fetch_klines_extremes(
                 entry["symbol"], run_dt, h4_end
             )
             if close_end is not None:
@@ -419,6 +496,9 @@ def check_and_resolve(silent: bool = False) -> int:
                 if direction in ("ЛОНГ", "ЖДАТЬ"):  # ЖДАТЬ: LONG-стиль план (TP выше, стоп ниже)
                     hit_tp1  = bool(max_high and tp1 and max_high >= tp1)
                     hit_stop = bool(min_low  and stop and min_low <= stop)
+                    if hit_tp1 and hit_stop:   # both-hit → честный порядок по 5m first-touch (FIX 2026-06-02, не пик-эвристика)
+                        if _first_touch_order(entry["symbol"], run_dt, _win_end, direction, stop, tp1) != "TP1":
+                            hit_tp1 = False   # STOP раньше TP / нет 5m-данных → пессимистично не TP1
                     outcome  = "TP1" if hit_tp1 else ("STOP" if hit_stop else
                                ("WIN" if pct > 0.5 else ("LOSS" if pct < -0.5 else "FLAT")))
                     # MFE/MAE: для лонга max_high даёт макс. прибыль, min_low — макс. просадку
@@ -427,6 +507,9 @@ def check_and_resolve(silent: bool = False) -> int:
                 else:
                     hit_tp1  = bool(min_low  and tp1 and min_low  <= tp1)
                     hit_stop = bool(max_high and stop and max_high >= stop)
+                    if hit_tp1 and hit_stop:   # both-hit → честный порядок по 5m first-touch (FIX 2026-06-02, не пик-эвристика)
+                        if _first_touch_order(entry["symbol"], run_dt, _win_end, direction, stop, tp1) != "TP1":
+                            hit_tp1 = False   # STOP раньше TP / нет 5m-данных → пессимистично не TP1
                     outcome  = "TP1" if hit_tp1 else ("STOP" if hit_stop else
                                ("WIN" if pct < -0.5 else ("LOSS" if pct > 0.5 else "FLAT")))
                     # Для шорта MFE — движение ВНИЗ (отрицательный %), MAE — ВВЕРХ
@@ -460,6 +543,14 @@ def check_and_resolve(silent: bool = False) -> int:
                     (_parse_ts(resolve_ts_4h) - run_dt).total_seconds() / 60, 1
                 )
                 entry["outcome_label_4h"] = _outcome_label(outcome)
+                # v8: path timing (S++-2) — MFE=max for long, min for short
+                if time_to_max_h is not None and time_to_min_h is not None:
+                    if direction in ("ЛОНГ", "ЖДАТЬ"):
+                        entry["time_to_mfe_4h_h"] = time_to_max_h
+                        entry["time_to_mae_4h_h"] = time_to_min_h
+                    else:
+                        entry["time_to_mfe_4h_h"] = time_to_min_h
+                        entry["time_to_mae_4h_h"] = time_to_max_h
                 resolved_count += 1
                 updated = True
                 if not silent:
@@ -470,7 +561,8 @@ def check_and_resolve(silent: bool = False) -> int:
         # ── 24h исход ─────────────────────────────────────────────────────────
         if elapsed_h >= 24 and entry.get("price_24h") is None:
             h24_end = run_dt + timedelta(hours=24)
-            max_high, min_low, close_end = _fetch_klines_extremes(
+            _win_end = h24_end
+            max_high, min_low, close_end, time_to_max_h, time_to_min_h = _fetch_klines_extremes(
                 entry["symbol"], run_dt, h24_end
             )
             if close_end is not None:
@@ -484,6 +576,9 @@ def check_and_resolve(silent: bool = False) -> int:
                 if direction in ("ЛОНГ", "ЖДАТЬ"):  # ЖДАТЬ: LONG-стиль план (TP выше, стоп ниже)
                     hit_tp1  = bool(max_high and tp1 and max_high >= tp1)
                     hit_stop = bool(min_low  and stop and min_low <= stop)
+                    if hit_tp1 and hit_stop:   # both-hit → честный порядок по 5m first-touch (FIX 2026-06-02, не пик-эвристика)
+                        if _first_touch_order(entry["symbol"], run_dt, _win_end, direction, stop, tp1) != "TP1":
+                            hit_tp1 = False   # STOP раньше TP / нет 5m-данных → пессимистично не TP1
                     outcome  = "TP1" if hit_tp1 else ("STOP" if hit_stop else
                                ("WIN" if pct > 0.5 else ("LOSS" if pct < -0.5 else "FLAT")))
                     mfe_pct = ((max_high - entry_px) / entry_px * 100) if (max_high and entry_px) else 0.0
@@ -491,6 +586,9 @@ def check_and_resolve(silent: bool = False) -> int:
                 else:
                     hit_tp1  = bool(min_low  and tp1 and min_low  <= tp1)
                     hit_stop = bool(max_high and stop and max_high >= stop)
+                    if hit_tp1 and hit_stop:   # both-hit → честный порядок по 5m first-touch (FIX 2026-06-02, не пик-эвристика)
+                        if _first_touch_order(entry["symbol"], run_dt, _win_end, direction, stop, tp1) != "TP1":
+                            hit_tp1 = False   # STOP раньше TP / нет 5m-данных → пессимистично не TP1
                     outcome  = "TP1" if hit_tp1 else ("STOP" if hit_stop else
                                ("WIN" if pct < -0.5 else ("LOSS" if pct > 0.5 else "FLAT")))
                     mfe_pct = ((entry_px - min_low)  / entry_px * 100) if (min_low  and entry_px) else 0.0
@@ -517,12 +615,20 @@ def check_and_resolve(silent: bool = False) -> int:
                 entry["mae_24h_pct"]     = round(mae_pct, 2)
                 entry["r_multiple_24h"]  = r_mult_24h
                 entry["exit_reason_24h"] = exit_rsn_24h
-                # v7: derived fields (AVEA-45)
+                # v7: derived fields (AVEVA-45)
                 entry["exit_price_24h"]    = round(exit_px_24h, 8)
                 entry["hold_time_24h_min"] = round(
                     (_parse_ts(resolve_ts_24h) - run_dt).total_seconds() / 60, 1
                 )
                 entry["outcome_label_24h"] = _outcome_label(outcome)
+                # v8: path timing (S++-2)
+                if time_to_max_h is not None and time_to_min_h is not None:
+                    if direction in ("ЛОНГ", "ЖДАТЬ"):
+                        entry["time_to_mfe_24h_h"] = time_to_max_h
+                        entry["time_to_mae_24h_h"] = time_to_min_h
+                    else:
+                        entry["time_to_mfe_24h_h"] = time_to_min_h
+                        entry["time_to_mae_24h_h"] = time_to_max_h
                 resolved_count += 1
                 updated = True
 
@@ -557,7 +663,29 @@ def check_and_resolve(silent: bool = False) -> int:
             e for e in entries
             if e.get("price_4h") is None or e.get("price_24h") is None
         ]
-        _save_pending(still_pending)
+
+        # Merge с диском: за время _fetch_klines_extremes (минуты) мог добавиться
+        # новый сигнал через save_pending. Берём snapshot-ключи, выкидываем закрытые,
+        # обновляем still_pending, остальное оставляем.
+        snapshot_keys = {(e["symbol"], e["run_ts"]) for e in entries}
+        updates_by_key = {(e["symbol"], e["run_ts"]): e for e in still_pending}
+
+        def _merge_resolve(data):
+            if not isinstance(data, list):
+                return still_pending
+            out = []
+            for item in data:
+                key = (item.get("symbol"), item.get("run_ts"))
+                if key in snapshot_keys:
+                    # Был в snapshot: обновлённая копия в still_pending, либо resolved (выкидываем)
+                    if key in updates_by_key:
+                        out.append(updates_by_key[key])
+                    # else: closed (оба горизонта) — удаляем
+                else:
+                    out.append(item)  # параллельно добавленный сигнал
+            return out
+
+        atomic_json_update(PENDING_FILE, _merge_resolve, default=[])
         # Обновляем accuracy каналов на основе закрытых сигналов
         if newly_closed:
             _update_channel_accuracy(newly_closed)
@@ -671,7 +799,9 @@ def get_stats() -> dict:
         s["total"] += 1
 
         out4 = row.get("outcome_4h", "")
-        if out4 in ("WIN", "TP1"):  s["win_4h"] += 1
+        # FIX 2026-06-02: honest win = достиг TP1 И НЕ выбит стопом (как live-фильтр); close-band WIN не считается
+        if str(row.get("hit_tp1_4h", "")).strip() in ("1", "1.0") and str(row.get("hit_stop_4h", "")).strip() not in ("1", "1.0"):
+            s["win_4h"] += 1
         if out4 == "STOP":          s["stop_4h"] += 1
         if out4 == "TP1":           s["tp1_4h"] += 1
         try:
@@ -680,7 +810,8 @@ def get_stats() -> dict:
             pass
 
         out24 = row.get("outcome_24h", "")
-        if out24 in ("WIN", "TP1"): s["win_24h"] += 1
+        if str(row.get("hit_tp1_24h", "")).strip() in ("1", "1.0") and str(row.get("hit_stop_24h", "")).strip() not in ("1", "1.0"):
+            s["win_24h"] += 1
         if out24 == "STOP":         s["stop_24h"] += 1
         if out24 == "TP1":          s["tp1_24h"] += 1
         try:
@@ -1182,7 +1313,7 @@ def send_weekly_report():
         return
 
     # Строки за последние 7 дней
-    cutoff = datetime.utcnow() - timedelta(days=7)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)   # FIX 2026-05-30: aware (был naive → TypeError vs _parse_ts aware → weekly падал)
     week_rows = [
         r for r in all_rows
         if r.get("run_ts") and _parse_ts(r["run_ts"][:19]) >= cutoff
@@ -1248,7 +1379,7 @@ def print_pending():
         print("Нет ожидающих исходов.")
         return
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)   # FIX 2026-05-30: aware (был naive → TypeError vs _parse_ts aware → CLI pending падал)
     print(f"\n  PENDING ({len(entries)} записей)")
     print(f"  {'Символ':<14} {'Сетап':<10} {'Score':<6} {'Направление':<10} "
           f"{'Цена':<12} {'Прошло':<8} {'4h':<6} {'24h'}")

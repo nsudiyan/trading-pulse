@@ -56,6 +56,69 @@ def _load_dotenv():
 
 _load_dotenv()
 
+_TELEGRAM_PROXY = os.environ.get("TELEGRAM_PROXY")
+_PROXIES = {"http": _TELEGRAM_PROXY, "https": _TELEGRAM_PROXY} if _TELEGRAM_PROXY else {}
+
+
+# ─── Claude realtime filter hook ─────────────────────────────────────────────
+# Перед отправкой сигнала прогоняем через Claude (если ключ есть и не выключено).
+# SKIP/WAIT → не шлём. GO → корректируем TP/SL под R:R стратегию пользователя.
+# Fail-open: если фильтр недоступен или API упал — возвращаем allow=True.
+
+def _apply_claude_filter(r: dict, plan: dict, source: str = "screener") -> tuple[bool, dict]:
+    """
+    Returns (allow_send, verdict_dict). verdict_dict пустой если фильтр выключен.
+    При allow=True и verdict.action=="GO" — может модифицировать plan in-place
+    (новые tp1/stop/rr + claude_reasoning).
+    """
+    if os.environ.get("CLAUDE_RT_FILTER", "on").lower() not in ("on", "true", "1", "yes"):
+        return True, {}
+    try:
+        from claude_realtime_filter import filter_candidate
+    except Exception as e:
+        print(f"[RT-Filter] import failed: {e}", flush=True)
+        return True, {}
+
+    candidate = dict(r)
+    candidate.setdefault("price", plan.get("entry") or r.get("price"))
+    side = (plan.get("side") or r.get("direction") or "").lower()
+    candidate["direction"] = {"long": "LONG", "short": "SHORT"}.get(side, side.upper())
+    candidate["setup"] = r.get("setup") or r.get("best_setup") or "?"
+    # Координируем имена полей с claude_realtime_filter.build_context()
+    candidate.setdefault("funding",     r.get("fund_%") or r.get("funding"))
+    candidate.setdefault("oi_24h_pct",  r.get("oi24h_%"))
+    candidate.setdefault("rsi_1h",      r.get("rsi_1h"))
+    candidate.setdefault("vwap_dev",    r.get("vwap_dev"))
+    candidate.setdefault("rs_btc",      r.get("rs_btc"))
+    candidate.setdefault("cvd_pct",     r.get("cvd_k%") or r.get("cvd_t%"))
+    candidate.setdefault("liq_long_usd",  r.get("liq_long_usd"))
+    candidate.setdefault("liq_short_usd", r.get("liq_short_usd"))
+
+    v = filter_candidate(candidate["symbol"], candidate, source=source)
+    action = v.get("action")
+    sym = candidate.get("symbol", "?")
+    print(f"[RT-Filter] {sym} {candidate['setup']} → {action} "
+          f"conf={v.get('confidence',0):.2f}  {v.get('reasoning','')[:80]}",
+          flush=True)
+
+    if action == "GO":   # fail-CLOSED: FAIL_OPEN (Claude недоступен/общий кошелёк) больше НЕ шлём
+        # Только полноценный GO от Claude переопределяет TP/SL
+        if action == "GO":
+            entry = plan.get("entry") or r.get("price") or 0
+            if entry and v.get("tp_pct") and v.get("sl_pct"):
+                if side == "long":
+                    plan["tp1"]  = entry * (1 + v["tp_pct"] / 100)
+                    plan["stop"] = entry * (1 - v["sl_pct"] / 100)
+                else:
+                    plan["tp1"]  = entry * (1 - v["tp_pct"] / 100)
+                    plan["stop"] = entry * (1 + v["sl_pct"] / 100)
+                plan["rr"] = v["tp_pct"] / v["sl_pct"] if v["sl_pct"] else plan.get("rr", 0)
+            plan["claude_reasoning"]  = v.get("reasoning", "")
+            plan["claude_confidence"] = v.get("confidence", 0)
+            plan["claude_risks"]      = v.get("risks", []) or []
+        return True, v
+    return False, v
+
 
 DEFAULT_CONFIG = {
     "bot_token": None,
@@ -114,6 +177,35 @@ def _esc(text: str) -> str:
             .replace(">", "&gt;"))
 
 
+_last_suppress_notify: dict = {}   # FIX 2026-05-30: rate-limit объяснений блока (reason -> ts)
+
+
+def notify_suppression(reason_key: str, text: str, cfg: Optional[dict] = None, cooldown_h: float = 4.0) -> bool:
+    """В КАНАЛ: почему сигналы придержаны (kill-switch / дневной лимит / макро). Раз на cooldown_h на причину — без флуда.
+
+    NB: rate-limit (_last_suppress_notify) — IN-MEMORY, per-process. Скринер запускается свежим процессом каждые
+    ~4ч (≈ cooldown_h по умолчанию) → дедуп держит ОДИН прогон, между прогонами кулдаун и так истекает. Памп —
+    персист-демон, dict живёт всю жизнь демона (сброс только при рестарте). Для standalone-надёжности вызывающий
+    добавляет upstream-гейт (newly_activated у kill-switch, MAX_DAILY_ALERTS у пампа). Персист на диск НЕ нужен.
+    """
+    now = time.time()
+    if now - _last_suppress_notify.get(reason_key, 0) < cooldown_h * 3600:
+        return False
+    try:
+        if cfg is None:
+            cfg = load_config()
+        token = cfg.get("bot_token")
+        chat  = str(cfg.get("chat_id") or "")
+        if not token or not chat:
+            return False
+        ok = _send(token, chat, text)
+        if ok:
+            _last_suppress_notify[reason_key] = now
+        return ok
+    except Exception:
+        return False
+
+
 def _send(token: str, chat_id: str, text: str, parse_mode: str = "HTML") -> bool:
     """Отправляет одно сообщение. Возвращает True при успехе."""
     try:
@@ -126,6 +218,7 @@ def _send(token: str, chat_id: str, text: str, parse_mode: str = "HTML") -> bool
                 "disable_web_page_preview": True,
             },
             timeout=10,
+            proxies=_PROXIES,
         )
         data = resp.json()
         if not data.get("ok"):
@@ -133,6 +226,25 @@ def _send(token: str, chat_id: str, text: str, parse_mode: str = "HTML") -> bool
         return data.get("ok", False)
     except Exception as e:
         print(f"[TG] Ошибка отправки: {e}")
+        return False
+
+
+def _send_photo(token: str, chat_id: str, photo_bytes: bytes, caption: str = "") -> bool:
+    """Отправляет PNG-изображение с подписью."""
+    try:
+        resp = requests.post(
+            f"{TG_BASE}/bot{token}/sendPhoto",
+            data={"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"},
+            files={"photo": ("chart.png", photo_bytes, "image/png")},
+            timeout=20,
+            proxies=_PROXIES,
+        )
+        data = resp.json()
+        if not data.get("ok"):
+            print(f"[TG] sendPhoto error: {data.get('description')}")
+        return data.get("ok", False)
+    except Exception as e:
+        print(f"[TG] Ошибка отправки фото: {e}")
         return False
 
 
@@ -156,6 +268,209 @@ def _send_long(token: str, chat_id: str, text: str, parse_mode: str = "HTML"):
             print(f"[TG] Не удалось отправить часть {i+1}/{len(chunks)}")
         if i < len(chunks) - 1:
             time.sleep(0.4)  # Telegram rate limit ~30 msg/sec
+
+
+# ─────────────────────────────────────────────────────────────
+# Реал-тайм алерты (signal_monitor.py)
+# ─────────────────────────────────────────────────────────────
+
+def _fmt_ago(ts_str: str) -> str:
+    """'2026-04-28T14:39:00' → '1ч 23м'"""
+    try:
+        from datetime import datetime as _dt
+        delta = _dt.now() - _dt.fromisoformat(ts_str)
+        m = int(delta.total_seconds() / 60)
+        h, mm = divmod(m, 60)
+        return f"{h}ч {mm}м" if h else f"{mm}м"
+    except Exception:
+        return "?"
+
+
+def send_signal_alert(r: dict, plan: dict, cfg: Optional[dict] = None) -> bool:
+    """Немедленный одиночный алерт о новом сигнале (без батча)."""
+    if cfg is None:
+        cfg = load_config()
+    token = cfg.get("bot_token", "")
+    chat_id = str(cfg.get("chat_id", ""))
+    if not token or not chat_id:
+        return False
+
+    # Claude RT-фильтр: либо одобряет с (опционально) новыми TP/SL, либо блокирует
+    _allow, _claude = _apply_claude_filter(r, plan, source="screener")
+    if not _allow:
+        return False
+
+    sym   = r.get("symbol", "?")
+    setup = r.get("setup", r.get("best_setup", "?"))
+    side  = plan.get("side", "?")
+    score = r.get("score", 0)
+    grade = r.get("grade", "—")
+    price = r.get("price", 0)
+
+    SETUP_ICON = {"squeeze": "⚡", "bos_fvg": "📐", "breakout": "🚀",
+                  "short_dist": "📉", "swing": "🌊", "range_sweep": "↔️"}
+    DIR_ICON   = {"long": "▲", "short": "▼"}.get(side, "·")
+    DIR_TXT    = {"long": "ЛОНГ", "short": "ШОРТ"}.get(side, side.upper())
+    si         = SETUP_ICON.get(setup, "📊")
+
+    entry  = plan.get("entry") or price
+    stop   = plan.get("stop")
+    tp1    = plan.get("tp1")
+    tp2    = plan.get("tp2")
+    rr     = plan.get("rr", 0)
+    rr_str = f"⚠️{rr:.1f}" if rr and rr < 1.5 else f"{rr:.1f}" if rr else "—"
+
+    def _p(v):
+        return _fmt_price(v) if v else "—"
+
+    def _pct(a, b):
+        if not a or not b or b == 0:
+            return ""
+        return f"  ({(b - a) / a * 100:+.2f}%)"
+
+    fund   = r.get("fund_%", 0) or 0
+    oi24   = r.get("oi24h_%", 0) or 0
+    mtf_b  = r.get("mtf_b", 0) or 0
+    mtf_br = r.get("mtf_bear", 0) or 0
+    vwap   = r.get("vwap_dev", 0) or 0
+    flags  = r.get("flags", r.get("flag_str", "")) or ""
+
+    now_str = datetime.now().strftime("%H:%M")
+    lines = [
+        f"⚡ <b>НОВЫЙ СИГНАЛ</b>  |  {now_str}",
+        "",
+        f"{si} <b>{_esc(sym)}</b>  {DIR_ICON} <b>{DIR_TXT}</b>  [{_esc(setup)}]"
+        f"  Grade: <b>{grade}</b>  score=<b>{score}</b>",
+        "",
+        f"  Entry    <code>{_p(entry)}</code>{_pct(price, entry)}",
+        f"  Stop     <code>{_p(stop)}</code>{_pct(entry, stop)}",
+        f"  TP1      <code>{_p(tp1)}</code>{_pct(entry, tp1)}",
+        f"  TP2      <code>{_p(tp2)}</code>{_pct(entry, tp2)}",
+        f"  R:R      <b>{rr_str}</b>",
+        "",
+        f"  Fund: <code>{fund:+.3f}%</code>  |  OI 24h: <code>{oi24:+.1f}%</code>"
+        f"  |  VWAP: <code>{vwap:+.1f}%</code>",
+    ]
+    if mtf_b or mtf_br:
+        lines.append(f"  MTF: {mtf_b}↑ / {mtf_br}↓")
+    if flags:
+        lines.append(f"  {_esc(str(flags)[:120])}")
+
+    # Claude reasoning + risks если фильтр прошёл с GO
+    if plan.get("claude_reasoning"):
+        conf = plan.get("claude_confidence", 0)
+        lines += ["", f"🧠 <b>Claude</b> conf={conf:.0%}: {_esc(plan['claude_reasoning'])[:300]}"]
+        for risk in (plan.get("claude_risks") or [])[:3]:
+            lines.append(f"  ⚠ {_esc(str(risk))[:120]}")
+
+    text = "\n".join(lines)
+
+    all_targets = [chat_id] + [str(c) for c in cfg.get("extra_chat_ids", []) if str(c) != chat_id]
+    ok = True
+    for cid in all_targets:
+        ok = _send(token, cid, text) and ok
+        time.sleep(0.3)
+    return ok
+
+
+def send_cancel_alert(signal: dict, reason: str, current_price: float,
+                      cfg: Optional[dict] = None) -> bool:
+    """Алерт об отмене/инвалидации ранее отправленного сигнала."""
+    if cfg is None:
+        cfg = load_config()
+    token   = cfg.get("bot_token", "")
+    chat_id = str(cfg.get("chat_id", ""))
+    if not token or not chat_id:
+        return False
+
+    sym       = signal.get("symbol", "?")
+    setup     = signal.get("setup", "?")
+    direction = signal.get("direction", "?")
+    entry     = signal.get("entry", 0)
+    sent_at   = signal.get("sent_at", "")
+    ago       = _fmt_ago(sent_at) if sent_at else "?"
+
+    DIR_ICON = {"long": "▲", "short": "▼"}.get(direction, "·")
+    DIR_TXT  = {"long": "ЛОНГ", "short": "ШОРТ"}.get(direction, direction.upper())
+    SETUP_ICON = {"squeeze": "⚡", "bos_fvg": "📐", "breakout": "🚀",
+                  "short_dist": "📉", "swing": "🌊", "range_sweep": "↔️"}
+    si = SETUP_ICON.get(setup, "📊")
+
+    price_str = _fmt_price(current_price) if current_price else "—"
+    entry_str = _fmt_price(entry) if entry else "—"
+
+    lines = [
+        f"❌ <b>ОТМЕНА СИГНАЛА</b>",
+        "",
+        f"{si} <b>{_esc(sym)}</b>  {DIR_ICON} <b>{DIR_TXT}</b>  [{_esc(setup)}]",
+        f"  Причина:  <b>{_esc(reason)}</b>",
+        f"  Сейчас:   <code>{price_str}</code>  |  Выслан: {ago} назад (entry {entry_str})",
+        "",
+        f"⛔ Сигнал более не актуален — не торговать",
+    ]
+    text = "\n".join(lines)
+
+    all_targets = [chat_id] + [str(c) for c in cfg.get("extra_chat_ids", []) if str(c) != chat_id]
+    ok = True
+    for cid in all_targets:
+        ok = _send(token, cid, text) and ok
+        time.sleep(0.3)
+    return ok
+
+
+def send_reversal_alert(old_signal: dict, new_r: dict, new_plan: dict,
+                        cfg: Optional[dict] = None) -> bool:
+    """Смена направления: отменяем старый сигнал и объявляем новый."""
+    if cfg is None:
+        cfg = load_config()
+    token   = cfg.get("bot_token", "")
+    chat_id = str(cfg.get("chat_id", ""))
+    if not token or not chat_id:
+        return False
+
+    sym      = old_signal.get("symbol", "?")
+    old_dir  = old_signal.get("direction", "?")
+    old_setup= old_signal.get("setup", "?")
+    old_entry= old_signal.get("entry", 0)
+    old_sc   = old_signal.get("score", 0)
+    sent_at  = old_signal.get("sent_at", "")
+    ago      = _fmt_ago(sent_at)
+
+    new_side = new_plan.get("side", "?")
+    new_setup= new_r.get("setup", new_r.get("best_setup", "?"))
+    new_sc   = new_r.get("score", 0)
+    new_grade= new_r.get("grade", "—")
+
+    DIR_ICON = {"long": "▲", "short": "▼"}
+    DIR_TXT  = {"long": "ЛОНГ", "short": "ШОРТ"}
+    SETUP_ICON = {"squeeze": "⚡", "bos_fvg": "📐", "breakout": "🚀",
+                  "short_dist": "📉", "swing": "🌊", "range_sweep": "↔️"}
+
+    def _p(v): return _fmt_price(v) if v else "—"
+
+    lines = [
+        f"🔄 <b>СМЕНА РЕШЕНИЯ — {_esc(sym)}</b>",
+        "",
+        f"  ❌ Отмена: {SETUP_ICON.get(old_setup,'📊')} "
+        f"{DIR_ICON.get(old_dir,'·')} {DIR_TXT.get(old_dir, old_dir.upper())} "
+        f"score={old_sc}  entry {_p(old_entry)}  ({ago} назад)",
+        "",
+        f"  ✅ Новый:  {SETUP_ICON.get(new_setup,'📊')} "
+        f"{DIR_ICON.get(new_side,'·')} <b>{DIR_TXT.get(new_side, new_side.upper())}</b>"
+        f"  score=<b>{new_sc}</b>  Grade: <b>{new_grade}</b>",
+        f"     Entry  <code>{_p(new_plan.get('entry'))}</code>"
+        f"   Stop  <code>{_p(new_plan.get('stop'))}</code>"
+        f"   TP1  <code>{_p(new_plan.get('tp1'))}</code>"
+        f"   R:R  {new_plan.get('rr', 0):.1f}",
+    ]
+    text = "\n".join(lines)
+
+    all_targets = [chat_id] + [str(c) for c in cfg.get("extra_chat_ids", []) if str(c) != chat_id]
+    ok = True
+    for cid in all_targets:
+        ok = _send(token, cid, text) and ok
+        time.sleep(0.3)
+    return ok
 
 
 # ─────────────────────────────────────────────────────────────
@@ -401,9 +716,15 @@ def format_watchlist(filtered: list, max_symbols: int = 5,
         # Подтверждение из Telegram каналов
         conf     = r.get("channel_conf", [])
         conflict = r.get("channel_conflict", [])
+        ch_adj    = r.get("channel_score_adj", 0)
+        acc_map   = r.get("channel_acc_map", {})
         if conf:
-            src = "  ".join(f"@{c}" for c in conf[:3])
-            lines.append(f"   📡 <b>Канал:</b> {_esc(src)}")
+            src = "  ".join(
+                f"@{c}({acc_map[c]}%)" if c in acc_map else f"@{c}"
+                for c in conf[:3]
+            )
+            adj_str = f" {ch_adj:+d}pts" if ch_adj else ""
+            lines.append(f"   📡 <b>Канал:</b> {_esc(src)}{_esc(adj_str)}")
         elif conflict:
             src = "  ".join(f"@{c}" for c in conflict[:2])
             lines.append(f"   📡 <i>Против: {_esc(src)}</i>")
@@ -624,9 +945,15 @@ def format_deep_dive(r: dict, signals: list, verdict: str,
     # Подтверждение из Telegram каналов
     conf     = r.get("channel_conf", [])
     conflict = r.get("channel_conflict", [])
+    ch_adj  = r.get("channel_score_adj", 0)
+    acc_map = r.get("channel_acc_map", {})
     if conf:
-        src = "  ".join(f"@{c}" for c in conf[:3])
-        lines.append(f"📡 Канал подтверждает: <b>{_esc(src)}</b>")
+        src = "  ".join(
+            f"@{c}({acc_map[c]}%)" if c in acc_map else f"@{c}"
+            for c in conf[:3]
+        )
+        adj_str = f"  [score {ch_adj:+d}]" if ch_adj else ""
+        lines.append(f"📡 Канал подтверждает: <b>{_esc(src)}</b>{_esc(adj_str)}")
     elif conflict:
         src = "  ".join(f"@{c}" for c in conflict[:2])
         lines.append(f"📡 <i>Канал против: {_esc(src)}</i>")
@@ -848,6 +1175,9 @@ def format_top_setups(
     """
     Последнее сообщение отчёта: топ-N сетапов отсортированных по убеждённости.
     Убеждённость = разнообразие независимых сигналов, а не величина одного.
+
+    После сортировки прогоняем кандидатов через Claude RT-фильтр и оставляем
+    только GO. SKIP/WAIT не показываются, чтобы не засорять личку шумом.
     """
     if not filtered:
         return ""
@@ -857,7 +1187,39 @@ def format_top_setups(
         conv, reasons = _conviction_score(r, fg_value)
         scored.append((conv, r, reasons))
     scored.sort(key=lambda x: x[0], reverse=True)
-    top = scored[:top_n]
+    pre_filter = scored[:max(top_n * 3, 8)]   # берём шире, чтобы Claude отобрал
+
+    # Claude RT-фильтр массовая обработка топ-кандидатов
+    rt_enabled = os.environ.get("CLAUDE_RT_FILTER", "on").lower() in ("on", "true", "1", "yes")
+    top: list = []
+    if rt_enabled:
+        try:
+            from claude_realtime_filter import filter_candidate
+            for conv, r, reasons in pre_filter:
+                cand = dict(r)
+                cand["setup"] = r.get("setup") or r.get("best_setup") or "?"
+                cand.setdefault("direction", "LONG" if cand["setup"] in ("squeeze","bos_fvg","breakout") else "SHORT")
+                cand.setdefault("funding",     r.get("fund_%") or r.get("funding"))
+                cand.setdefault("oi_24h_pct",  r.get("oi24h_%"))
+                cand.setdefault("rsi_1h",      r.get("rsi_1h"))
+                cand.setdefault("vwap_dev",    r.get("vwap_dev"))
+                cand.setdefault("rs_btc",      r.get("rs_btc"))
+                cand.setdefault("cvd_pct",     r.get("cvd_k%") or r.get("cvd_t%"))
+                v = filter_candidate(cand["symbol"], cand, source="top_setups")
+                if v.get("action") == "GO":   # fail-CLOSED: FAIL_OPEN не пропускаем
+                    r["_claude_verdict"] = v
+                    top.append((conv, r, reasons))
+                if len(top) >= top_n:
+                    break
+            if not top:
+                print(f"[Top-Setups] Claude отфильтровал все {len(pre_filter)} кандидатов — топ пуст")
+                return ""
+            print(f"[Top-Setups] Claude пропустил {len(top)} из {len(pre_filter)} кандидатов")
+        except Exception as e:
+            print(f"[Top-Setups] RT filter error: {e} — fail-open")
+            top = pre_filter[:top_n]
+    else:
+        top = pre_filter[:top_n]
 
     SETUP_NAME = {
         "squeeze":     "Сквиз",
@@ -935,6 +1297,10 @@ def format_top_setups(
         ]
         if reasons:
             lines.append(f"   ✓ {' · '.join(reasons)}")
+        # Claude reasoning если есть
+        _cv = r.get("_claude_verdict") or {}
+        if _cv.get("reasoning") and _cv.get("verdict") == "GO":
+            lines.append(f"   🧠 conf={_cv.get('confidence',0):.0%}: {_esc(_cv['reasoning'])[:180]}")
         lines.append("")
 
     lines.append(
@@ -978,13 +1344,14 @@ def send_report(
     # Макро-фильтр: если в окне [event-30min ; event+15min] — только snapshot
     # с предупреждением, без watchlist/deep-dive/pump. Управляется alert_macro_blackout.
     in_macro_blackout = False
+    _macro_reason = ""
     if _FD_AVAILABLE and cfg.get("alert_macro_blackout", True):
         try:
-            win = _fd.next_macro_window(minutes_before=30, minutes_after=15)
+            _st = _fd.macro_blackout_status(minutes_before=30, minutes_after=15)  # FIX 2026-05-30: fail-CLOSED + причина в канал
+            in_macro_blackout = bool(_st.get("blocked"))
+            _macro_reason = _st.get("reason", "")
         except Exception:
-            win = None
-        if win:
-            in_macro_blackout = True
+            in_macro_blackout = False
 
     # Все получатели: основной + дополнительные (группы и т.д.)
     all_targets: list[str] = [str(cfg["chat_id"])]
@@ -995,6 +1362,10 @@ def send_report(
 
     # ── Формируем все сообщения ОДИН РАЗ ─────────────────────────────────────
     messages: list[str] = []
+
+    # FIX 2026-05-30: при блокировке объясняем ПОЧЕМУ в канал (чтобы при тишине не путаться)
+    if in_macro_blackout and _macro_reason:
+        messages.append(f"🚫 <b>Сигналы придержаны (макро-защита)</b>\n{_macro_reason}")
 
     if cfg.get("send_snapshot"):
         m = format_snapshot(results, filtered, btc_chg_24h, session_info, fg_value, fg_label)
@@ -1030,10 +1401,47 @@ def send_report(
 
     messages.append(f"✅ <b>Готово</b>  {datetime.now().strftime('%H:%M:%S')}")
 
+    # ── Swing charts (СЕТАП 6): отдельная фото-карточка для каждого сигнала ──
+    swing_charts: list[tuple[str, bytes]] = []   # [(caption, png_bytes)]
+    swing_candidates = [r for r in filtered if r.get("setup") == "swing"]
+    if swing_candidates:
+        try:
+            from swing_chart import generate_swing_chart
+            for r in swing_candidates:
+                sym = r.get("symbol", "?")
+                print(f"[SwingChart] Генерирую H4 чарт для {sym}...")
+                png = generate_swing_chart(sym, r)
+                if png:
+                    direction = r.get("swing_dir", "?")
+                    phase     = r.get("swing_phase", "?")
+                    score_v   = r.get("score", 0)
+                    dir_tag   = "▲ ЛОНГ" if direction == "long" else "▼ ШОРТ"
+                    phase_map = {
+                        "trend_bull": "Тренд ↑", "trend_bear": "Тренд ↓",
+                        "correction_bull": "Коррекция ↑", "correction_bear": "Коррекция ↓",
+                        "range": "Рейндж",
+                    }
+                    caption = (
+                        f"<b>{sym}</b>  {dir_tag}  ·  {phase_map.get(phase, phase)}\n"
+                        f"СЕТАП 6 — Hadiukov Swing  |  score={score_v}"
+                    )
+                    swing_charts.append((caption, png))
+                    print(f"[SwingChart] {sym}: OK ({len(png)//1024}KB)")
+                else:
+                    print(f"[SwingChart] {sym}: не удалось сгенерировать")
+        except ImportError:
+            print("[SwingChart] swing_chart.py не найден — пропускаем")
+        except Exception as _e:
+            print(f"[SwingChart] Ошибка: {_e}")
+
     # ── Рассылаем каждому получателю ─────────────────────────────────────────
     for chat_id in all_targets:
         for msg in messages:
             _send_long(token, chat_id, msg)
+            time.sleep(0.5)
+        # Swing charts отправляем после текстовых сообщений
+        for caption, png in swing_charts:
+            _send_photo(token, chat_id, png, caption)
             time.sleep(0.5)
         if len(all_targets) > 1:
             time.sleep(1.0)   # пауза между чатами
@@ -1060,7 +1468,7 @@ def setup_wizard():
     # Проверка токена
     print("  Проверяю токен...")
     try:
-        resp = requests.get(f"{TG_BASE}/bot{token}/getMe", timeout=8)
+        resp = requests.get(f"{TG_BASE}/bot{token}/getMe", timeout=8, proxies=_PROXIES)
         data = resp.json()
         if data.get("ok"):
             bot_name = data["result"]["username"]

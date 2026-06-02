@@ -41,19 +41,23 @@ import sqlite3
 import requests
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from tabulate import tabulate
 
+from file_lock import atomic_json_update, atomic_json_read
+
 LIQ_DB_PATH = Path(__file__).parent / "liquidations.db"
 OUTCOMES_CSV = Path(__file__).parent / "outcomes" / "resolved.csv"
-COOLDOWN_PATH = Path(__file__).parent / "cooldown_cache.json"
+COOLDOWN_PATH           = Path(__file__).parent / "cooldown_cache.json"
+EXPANSION_COOLDOWN_PATH = Path(__file__).parent / "expansion_cooldown.json"
 
 # ── Timestamp cache: side-effect of fetch_klines, (symbol, interval) → open_ts_sec ──
 _kl_open_ts: dict = {}
 
 # ── Quality & time filter constants ──────────────────────────────────────────
-COOLDOWN_HOURS   = 8          # минимум часов между сигналами по одной паре
+COOLDOWN_HOURS           = 8   # минимум часов между сигналами по одной паре
+EXPANSION_COOLDOWN_HOURS = 6   # anti-chop cooldown for breakout after failed expansion
 MIN_TURNOVER_24H = 50_000_000  # минимальный оборот $50M/сутки
 MAX_MOVE_24H_ABS = 0.50        # исключить пары с |move| > 50% за 24h (памп/дамп)
 
@@ -61,35 +65,46 @@ MAX_MOVE_24H_ABS = 0.50        # исключить пары с |move| > 50% з�
 # WETUSDT=0%, LABUSDT=14%, TONUSDT=15%, ASTERUSDT=18%, ARIAUSDT=22%
 SYMBOL_BLACKLIST = {"WETUSDT", "LABUSDT", "TONUSDT", "ASTERUSDT", "ARIAUSDT"}
 
-# Часы UTC с хорошим историческим WR (> 50%): 05,09,10,20 — лучшие окна
-GOOD_SIGNAL_HOURS = {1, 5, 9, 10, 20}   # 2510-trade audit: 55-64% WR (AVEVA-55)
+# Часы UTC с хорошим историческим WR (> 50%): лучшие окна
+# audit resolved.csv (2026-05-02): 06=62.5%, 10=56.7%, 21=55.0%, 17=55.6%(n=72), 09=47.4%
+# 20 убран: resolved.csv 42.0% (n=81), был 52.7% в старом backtest — живые данные важнее
+# 17 добавлен: resolved.csv 55.6% (n=72) — подтверждён
+GOOD_SIGNAL_HOURS = {5, 10, 21}
 # Часы UTC с плохим WR (38-41%) — поднимаем порог score для TG
-BAD_SIGNAL_HOURS  = {12, 14, 23, 0}     # 12=40.6%, 14=38.6%
+BAD_SIGNAL_HOURS  = {1, 13, 20, 23, 0}   # 20 перенесён сюда (42.0%); 01=40.9%; 14 перенесён в HARD_BLOCK 2026-05-18
 # Часы UTC с катастрофическим WR (< 37%) — полный хард-блок TG + pending
-# 17=36.5%, 18=28.6%, 19=21.4%, 22=32.8%
-HARD_BLOCK_HOURS  = {17, 18, 19, 22}
+# 12=28.6%(n=49), 17=30.2%(n=106), 18=19.1%(n=47), 19=17.5%(n=40); 17 перенесён из GOOD 2026-05-19
+# С Claude RT-фильтром в pipeline эти гейты служат только как pre-filter
+# (экономия Claude API). Catastrophic-only blocking (UTC 18, 19, 22) — реально
+# плохой WR; на остальное Claude сам решает с учётом исторической WR per
+# setup×hour в системном контексте.
+HARD_BLOCK_HOURS  = {18, 19}
 # В плохие часы сигнал идёт в TG только если score >= BAD_HOUR_MIN_SCORE
-BAD_HOUR_MIN_SCORE = 165                # было 130; данные: 663 сигнала WR=34.5%
+BAD_HOUR_MIN_SCORE = 130                # было 165; Claude RT-фильтр режет шум
 # FIX 8: Saturday WR=24.5% vs Thursday WR=64.0% — поднимаем порог на 50%
-SATURDAY_MIN_SCORE = 195  # round(BAD_HOUR_MIN_SCORE * 1.5)
+SATURDAY_MIN_SCORE = 130  # было 195; с Claude RT-фильтром суббота не нуждается в hard gate
 # FINDING 7: Friday/Tuesday also show lower WR — moderate threshold increases (n=26/n=small, not hard block)
-FRIDAY_MIN_SCORE   = 169  # round(BAD_HOUR_MIN_SCORE * 1.3)
-TUESDAY_MIN_SCORE  = 150  # round(BAD_HOUR_MIN_SCORE * 1.15)
+FRIDAY_MIN_SCORE   = 130  # было 169; Claude RT-фильтр решает по контексту
+TUESDAY_MIN_SCORE  = 130  # было 150
 
 # Per-setup Telegram score gates — WR audit 2026-04-24, N=2232 resolved trades.
 # Min score: signals below this are suppressed.
 SETUP_TG_MIN_SCORE = {
-    "squeeze":     80,
-    "bos_fvg":     85,
+    "squeeze":     100,   # raised 80→100 2026-05-18 (claude_analyst)
+    "bos_fvg":     120,   # WR: 120-140=54.1%, >140=55.8%, >150=61.1% (WIN_RATE_ANALYSIS 2026-05-21)
     "breakout":    9999,  # dead-zone logic in _passes_setup_tg_filter(); 9999 = fallback block
     "range_sweep": 9999,  # disabled — real-time detection via sweep_watcher.py (WR=25%)
     "short_dist":  85,
+    "swing":       75,   # Hadiukov W/D/H4 swing: lower threshold, higher-TF conviction
 }
 
 # Per-setup Telegram score ceiling: signals AT OR ABOVE this threshold are suppressed.
 SETUP_TG_MAX_SCORE = {
     "short_dist": 150,  # >150 WR collapses to 23.5% at 4h (inverted correlation)
 }
+
+# Глобальный потолок score — сигналы выше блокируются (WR деградирует при >180)
+MAX_SCORE_GLOBAL = 180  # added 2026-05-18 (claude_analyst)
 
 # Obsidian integration (опционально — не ломает скринер если модуль не найден)
 try:
@@ -104,6 +119,13 @@ try:
     _OT_AVAILABLE = True
 except ImportError:
     _OT_AVAILABLE = False
+
+# Reject tracker — S++-1: gate-rejection analytics engine
+try:
+    import reject_tracker as _rt
+    _RT_AVAILABLE = True
+except ImportError:
+    _RT_AVAILABLE = False
 
 # Telegram alerts (опционально)
 try:
@@ -154,7 +176,14 @@ except ImportError:
 
 BASE = "https://api.bybit.com"
 SESSION = requests.Session()
-SESSION.headers.update({"User-Agent": "BybitFuturesScreener/1.1"})
+SESSION.headers.update({"User-Agent": "BybitFuturesScreener/1.1", "Connection": "close"})
+# FD-leak fix (2026-05-29): pump_detector сканит раз в 300с; Bybit/CloudFront рвёт idle keep-alive →
+# сокеты висли в CLOSE_WAIT и копились до EMFILE ("Too many open files"), бот бричился за ~3ч на
+# дефолтном launchd-лимите (~256). Connection:close закрывает соединение после каждого ответа (никаких
+# висящих keep-alive). + bounded pool. Цена — доп. TLS-handshake на запрос (мизер при скане раз в 5 мин).
+_HTTP_ADAPTER = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=50, max_retries=0)
+SESSION.mount("https://", _HTTP_ADAPTER)
+SESSION.mount("http://", _HTTP_ADAPTER)
 
 
 # ─── .env loader ─────────────────────────────────────────────────────────────
@@ -219,6 +248,7 @@ SETUP_LABELS = {
     "range_sweep": "СЕТАП 3 — Рейндж Sweep",
     "breakout":    "СЕТАП 4 — Breakout / Pre-Pump",
     "short_dist":  "СЕТАП 5 — Дистрибуция / Шорт-давление",
+    "swing":       "СЕТАП 6 — Hadiukov Swing (W/D/H4)",
 }
 
 SETUP_SHORT = {
@@ -227,6 +257,7 @@ SETUP_SHORT = {
     "range_sweep": "SWEEP",
     "breakout":    "PUMP",
     "short_dist":  "DIST",
+    "swing":       "SWING",
 }
 
 
@@ -461,9 +492,8 @@ def detect_funding_extreme(funding_hist):
         return "extreme_pos"    # лонги максимально перегреты
     if current >= 0.05:
         return "high_pos"       # лонги перегреты
-    # Funding на минимуме за период (даже если не достиг порогов)
-    if current == hist_min and current < -0.01:
-        return "period_min"
+    # FIX 2026-05-30: ветка 'period_min' удалена — classify_funding_regime её НЕ читала (мёртвая метка,
+    # case всё равно проваливался в тот же default; не поднимаем до 'pressure' без бэктеста).
     return "normal"
 
 
@@ -482,11 +512,14 @@ def detect_oi_divergence(oi_hist, closes, lookback=5):
     if n < lookback + 2:
         return None
 
-    # Завершённые данные
+    # Завершённые данные — ОБЕ серии на закрытых свечах ([-1] = формирующийся час, исключаем).
+    # FIX 2026-05-30: было oi_end=oi_hist[-1] (форм.час) vs price_end=closes[-2] (закрытый) → рассинхрон
+    # на 1 свечу. Эмпирика (Bybit ts): oi[-1].ts == klines[-1].ts == текущий час. Impact-замер: 0/17 флипов.
+    # Гард выше (n < lookback+2 → None) гарантирует len(oi_hist) ≥ lookback+2, индексы валидны.
     price_start = closes[-(lookback + 2)]
     price_end   = closes[-2]
-    oi_start    = oi_hist[-(lookback + 1)] if len(oi_hist) >= lookback + 1 else oi_hist[0]
-    oi_end      = oi_hist[-1]
+    oi_start    = oi_hist[-(lookback + 2)]
+    oi_end      = oi_hist[-2]
 
     if price_start == 0 or oi_start == 0:
         return None
@@ -757,6 +790,84 @@ def calc_trade_cvd(trades):
     return cvd, (cvd / total * 100 if total > 0 else 0.0)
 
 
+def calc_dwcvd(opens, highs, lows, closes, volumes, lookback=20):
+    """
+    Dollar-weighted CVD with recency-weighted persistence score.
+
+    Uses (close-low)/(high-low) buy pressure ratio instead of binary close>open.
+    Dollar-weights each candle's flow by close price (USD notional on USDT pairs).
+
+    Returns: (dw_cvd_pct, persistence)
+      dw_cvd_pct  : -100..+100, positive = sustained net buying pressure
+      persistence : 0..1, >0.65 = directionally consistent flow
+    """
+    n = min(lookback, len(closes) - 1)
+    if n < 4:
+        return 0.0, 0.5
+    ops = list(opens[-(n + 1):-1])
+    hhs = list(highs[-(n + 1):-1])
+    lls = list(lows[-(n + 1):-1])
+    cls = list(closes[-(n + 1):-1])
+    vls = list(volumes[-(n + 1):-1])
+    dw_deltas = []
+    for o, h, l, c, v in zip(ops, hhs, lls, cls, vls):
+        rng = h - l
+        buy_ratio = (c - l) / rng if rng > 0 else (0.6 if c >= o else 0.4)
+        dw_deltas.append(v * c * (2 * buy_ratio - 1))
+    if not dw_deltas:
+        return 0.0, 0.5
+    dw_cvd  = sum(dw_deltas)
+    tot_abs = sum(abs(d) for d in dw_deltas)
+    pct     = dw_cvd / tot_abs * 100 if tot_abs > 0 else 0.0
+    n_d       = len(dw_deltas)
+    direction = 1 if dw_cvd >= 0 else -1
+    weights   = [(i + 1) / n_d for i in range(n_d)]
+    w_aligned = sum(w for d, w in zip(dw_deltas, weights) if d * direction > 0)
+    persist   = w_aligned / sum(weights)
+    return round(pct, 1), round(persist, 3)
+
+
+def calc_funding_vel(funding_hist):
+    """
+    Funding rate velocity and acceleration from last 3 observations.
+    funding_hist is already a list of floats (% values), newest at [-1].
+
+    Returns: (vel_recent, vel_prior, accel)
+      vel_recent : funding[-1] - funding[-2]
+      vel_prior  : funding[-2] - funding[-3]
+      accel      : vel_recent - vel_prior (is pace of change increasing?)
+
+    Positive accel on negative funding = squeeze gaining momentum (shorts covering).
+    """
+    if len(funding_hist) < 3:
+        return 0.0, 0.0, 0.0
+    vel_r = funding_hist[-1] - funding_hist[-2]
+    vel_p = funding_hist[-2] - funding_hist[-3]
+    return round(vel_r, 5), round(vel_p, 5), round(vel_r - vel_p, 5)
+
+
+def detect_failed_expansion(price_chg_1h, oi_change_pct, funding, dw_cvd_pct):
+    """
+    Trap breakout detector: explosive price + OI crowd FOMO + weak actual flow.
+
+    Classic late-crowd trap:
+    - Price surged hard in 1h (crowd rushes in)
+    - OI accelerated (everyone piles on leveraged longs)
+    - Dollar-weighted CVD flat -> no institutional backing behind the move
+
+    Returns True when conditions suggest a failed/engineered breakout.
+    """
+    explosive = price_chg_1h > 4.0
+    oi_accel  = oi_change_pct > 15.0
+    fund_hot  = funding > 0.02
+    cvd_weak  = dw_cvd_pct < 5.0
+    if explosive and oi_accel and cvd_weak:
+        return True
+    if explosive and fund_hot and cvd_weak:
+        return True
+    return False
+
+
 def detect_htf_trend(highs, lows, closes):
     """
     HTF тренд: swing structure (HH+HL / LH+LL) → fallback SMA20.
@@ -803,7 +914,7 @@ def detect_fvg(highs, lows, closes, lookback=40, min_size_pct=0.05):
     n     = len(closes)
     start = max(2, n - lookback)
 
-    for i in range(start, n):
+    for i in range(start, n - 1):   # FIX 2026-05-30: исключить живую (незакрытую) свечу из формирования паттерна — look-ahead, live≠backtest
         # Бычий FVG
         if highs[i - 2] < lows[i]:
             bottom   = highs[i - 2]
@@ -844,7 +955,7 @@ def detect_order_blocks(opens, highs, lows, closes, volumes, lookback=40):
     n     = len(closes)
     start = max(6, n - lookback)
 
-    for i in range(start, n):
+    for i in range(start, n - 1):   # FIX 2026-05-30: исключить живую (незакрытую) свечу из формирования паттерна — look-ahead, live≠backtest
         # Бычий BOS
         prior_highs = highs[i - 5:i]
         if prior_highs and closes[i] > max(prior_highs):
@@ -1329,13 +1440,16 @@ def detect_cvd_divergence(kl_cvd_pct, price_chg_pct):
     strong_bull_div: CVD > +30%, цена < +1.0% за 20h  → сильное накопление
     bear_div / strong_bear_div: зеркально для шортов
     """
-    if kl_cvd_pct > 30 and price_chg_pct < 1.0:
+    # FIX 2026-05-30: добавлен НИЖНИЙ порог цены (bull) / ВЕРХНИЙ (bear) — коридор флета.
+    # Без него падающий нож (−15%) при CVD+ классифицировался как «накопление». Data-сверка resolved.csv:
+    # 412 «ножей» (old bull→None), WR 35% vs флет-bull 48% (+13пп) → коридор отделяет лузеров.
+    if kl_cvd_pct > 30 and -1.5 < price_chg_pct < 1.0:
         return "strong_bull_div"
-    if kl_cvd_pct > 15 and price_chg_pct < 0.5:
+    if kl_cvd_pct > 15 and -1.0 < price_chg_pct < 0.5:
         return "bull_div"
-    if kl_cvd_pct < -30 and price_chg_pct > -1.0:
+    if kl_cvd_pct < -30 and -1.0 < price_chg_pct < 1.5:
         return "strong_bear_div"
-    if kl_cvd_pct < -15 and price_chg_pct > -0.5:
+    if kl_cvd_pct < -15 and -0.5 < price_chg_pct < 1.0:
         return "bear_div"
     return None
 
@@ -1579,6 +1693,54 @@ def detect_stacked_walls(bids, asks, price,
     }
 
 
+def _cross_exchange_wall_confirm(price: float, stacks: dict, symbol: str) -> dict:
+    """
+    Checks if walls found on Bybit are also present on Binance / MEXC.
+    Only called when stacks are non-empty to avoid unnecessary HTTP.
+    Returns {bid_confirmed, ask_confirmed, bid_sources, ask_sources, sources}.
+    """
+    if not _FD_AVAILABLE:
+        return {}
+
+    bid_stack = stacks.get("bid_stack") or []
+    ask_stack = stacks.get("ask_stack") or []
+
+    def _wall_on(wall_lvls, ob_lvls):
+        if not wall_lvls or not ob_lvls:
+            return False
+        sizes = [s for _, s in ob_lvls]
+        if len(sizes) < 4:
+            return False
+        med = sorted(sizes)[len(sizes) // 2]
+        thresh = med * 2.5
+        for wp, _ in wall_lvls[:3]:
+            for op, os_ in ob_lvls:
+                if abs(op - wp) / price * 100 <= 0.3 and os_ >= thresh:
+                    return True
+        return False
+
+    bid_src, ask_src = [], []
+    for name, fn in (("BNB", _fd.get_binance_ob_levels), ("MEXC", _fd.get_mexc_ob_levels)):
+        try:
+            ob = fn(symbol)
+        except Exception:
+            ob = None
+        if not ob:
+            continue
+        if _wall_on(bid_stack, ob.get("bids", [])):
+            bid_src.append(name)
+        if _wall_on(ask_stack, ob.get("asks", [])):
+            ask_src.append(name)
+
+    return {
+        "bid_confirmed": bool(bid_src),
+        "ask_confirmed": bool(ask_src),
+        "bid_sources":   bid_src,
+        "ask_sources":   ask_src,
+        "sources":       list(dict.fromkeys(bid_src + ask_src)),
+    }
+
+
 # ─── External data readers (liq DB / outcome feedback) ───────────────────────
 
 def fetch_liquidation_stats(window_min: int = 60) -> dict:
@@ -1607,6 +1769,81 @@ def fetch_liquidation_stats(window_min: int = 60) -> dict:
         }
     except Exception:
         return {}
+
+
+COINALYZE_BASE = "https://api.coinalyze.net/v1"
+
+
+def fetch_coinalyze_liq_stats(symbols: list, window_min: int = 60) -> dict:
+    """
+    История ликвидаций из Coinalyze API за последние window_min минут.
+
+    Coinalyze агрегирует данные по всем биржам (Bybit, Binance, OKX и др.) —
+    картина полнее, чем только Bybit WebSocket из liquidation_tracker.
+
+    Bybit USDT-перпы маппятся как BTCUSDT → BTCUSDT_PERP.A (биржевой код A = Bybit).
+    Запросы батчами по 25 символов; любые ошибки — тихий fallback.
+
+    Возвращает {bybit_symbol: {long_usd, short_usd, total_usd}}.
+    """
+    api_key = os.environ.get("COINALYZE_API_KEY", "")
+    if not api_key:
+        return {}
+
+    now     = int(time.time())
+    from_ts = now - window_min * 60
+
+    cz_to_bybit = {f"{s}_PERP.A": s for s in symbols}
+    cz_syms     = list(cz_to_bybit.keys())
+
+    result: dict = {}
+    batch_size   = 25
+
+    for i in range(0, len(cz_syms), batch_size):
+        batch = cz_syms[i:i + batch_size]
+        try:
+            resp = SESSION.get(
+                f"{COINALYZE_BASE}/liquidation-history",
+                params={
+                    "api_key":        api_key,
+                    "symbols":        ",".join(batch),
+                    "interval":       "5min",
+                    "from":           from_ts,
+                    "to":             now,
+                    "convert_to_usd": "true",
+                },
+                timeout=12,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            # API может вернуть список [{symbol, history:[{t,l,s}]}]
+            # или dict {symbol: [{t,l,s}]}
+            if isinstance(data, list):
+                items = data
+            else:
+                items = [{"symbol": k, "history": v} for k, v in data.items()]
+
+            for item in items:
+                cz_sym  = item.get("symbol", "")
+                candles = item.get("history") or item.get("data") or []
+                bybit_s = cz_to_bybit.get(cz_sym)
+                if not bybit_s or not candles:
+                    continue
+
+                long_usd  = sum(float(c.get("l") or 0) for c in candles)
+                short_usd = sum(float(c.get("s") or 0) for c in candles)
+                if long_usd + short_usd > 0:
+                    result[bybit_s] = {
+                        "long_usd":  long_usd,
+                        "short_usd": short_usd,
+                        "total_usd": long_usd + short_usd,
+                    }
+
+        except Exception:
+            pass  # батчи независимы — частичный результат всё равно полезен
+
+    return result
 
 
 def fetch_btc_4h_change() -> float:
@@ -1657,13 +1894,14 @@ def load_score_weights(min_samples: int = 20) -> dict:
     """
     if not OUTCOMES_CSV.exists():
         return {}
-    buckets: dict = {}
+    buckets: dict     = {}   # (setup, grade) → {wins, losses}
+    sb_counts: dict   = {}   # (setup, score_bucket_20) → {wins, total}
     try:
         with open(OUTCOMES_CSV, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                setup = row.get("setup", "")
-                grade = row.get("grade", "")
+                setup   = row.get("setup", "")
+                grade   = row.get("grade", "")
                 outcome = row.get("outcome_24h") or row.get("outcome_4h") or ""
                 if not setup or not grade or not outcome:
                     continue
@@ -1673,6 +1911,19 @@ def load_score_weights(min_samples: int = 20) -> dict:
                     b["wins"] += 1
                 elif outcome in ("STOP", "LOSS"):
                     b["losses"] += 1
+                # Score-bucket calibration on 4h outcome specifically (consistent horizon)
+                outcome_4h = row.get("outcome_4h", "")
+                if outcome_4h in ("WIN", "LOSS"):
+                    try:
+                        score_val = float(row.get("score", 0) or 0)
+                        bk = (int(score_val) // 20) * 20
+                        sb_key = (setup, bk)
+                        sb = sb_counts.setdefault(sb_key, {"wins": 0, "total": 0})
+                        if outcome_4h == "WIN":
+                            sb["wins"] += 1
+                        sb["total"] += 1
+                    except (ValueError, TypeError):
+                        pass
     except Exception:
         return {}
     out = {}
@@ -1684,6 +1935,24 @@ def load_score_weights(min_samples: int = 20) -> dict:
         # WR 50% → 1.0; WR 70% → 1.4; WR 30% → 0.6. Зажато в [0.5, 1.5].
         mult = max(0.5, min(1.5, wr / 0.5))
         out[key] = round(mult, 3)
+
+    # (setup, score_bucket) → {wr, n} с Laplace-сглаживанием
+    calib: dict = {}
+    for (setup, bk), sb in sb_counts.items():
+        wins  = sb["wins"]
+        total = sb["total"]
+        assert total >= wins, (
+            f"calibration invariant broken: wins={wins} > total={total} [{setup} bk={bk}]"
+        )
+        if total < 15:
+            continue
+        wr_smooth = (wins + 1) / (total + 2)  # Laplace
+        assert 0.0 <= wr_smooth <= 1.0, (
+            f"wr_smooth out of range: {wr_smooth:.4f} [{setup} bk={bk}]"
+        )
+        print(f"[calib] {setup:12s}  bk={bk:4d}  wins={wins:4d}/{total:<4d}  wr={wr_smooth:.3f}")
+        calib[f"{setup}_{bk}"] = {"wr": round(wr_smooth, 4), "n": total}
+    out["__score_calib__"] = calib
 
     # Load per-signal additive adjustments from logistic regression calibration.
     import json as _json
@@ -1765,7 +2034,555 @@ def detect_lvn_zones(highs, lows, volumes, closes,
     return lvns
 
 
+# ─── Hadiukov Swing System (W / D / H4) ─────────────────────────────────────
+
+def detect_fractal_swings(highs, lows, lookback=30):
+    """
+    3-candle fractal: middle candle is strict local extreme.
+    Returns (fractal_highs, fractal_lows) — [(neg_idx, price), ...], newest last.
+    Excludes current (possibly incomplete) candle.
+    """
+    h = highs[:-1]
+    l = lows[:-1]
+    n = min(lookback, len(h))
+    if n < 3:
+        return [], []
+    seg_h = h[-n:]
+    seg_l = l[-n:]
+    frac_highs, frac_lows = [], []
+    for i in range(1, len(seg_h) - 1):
+        if seg_h[i] > seg_h[i - 1] and seg_h[i] > seg_h[i + 1]:
+            frac_highs.append((i - len(seg_h), seg_h[i]))
+        if seg_l[i] < seg_l[i - 1] and seg_l[i] < seg_l[i + 1]:
+            frac_lows.append((i - len(seg_l), seg_l[i]))
+    return frac_highs, frac_lows
+
+
+def detect_phase_hadiukov(hi1w, lo1w, cl1w, hiD, loD, clD):
+    """
+    Hadiukov 3-phase classifier operating on completed candles.
+
+    Priority:
+      Weekly HH+HL → trend_bull  |  LH+LL → trend_bear
+      Weekly bull + Daily bear → correction_bull  (pullback inside W uptrend)
+      Weekly bear + Daily bull → correction_bear  (bounce inside W downtrend)
+      No Weekly structure → fall back to Daily structure
+      Neither clear → range
+
+    Returns: 'trend_bull' | 'trend_bear' | 'correction_bull' | 'correction_bear' | 'range'
+    """
+    def _swing_dir(highs, lows, closes):
+        h = highs[:-1]; l = lows[:-1]
+        if len(h) < 6:
+            return "range"
+        sw_h = [h[i] for i in range(2, len(h) - 2)
+                if h[i] >= h[i-1] and h[i] >= h[i-2] and h[i] >= h[i+1] and h[i] >= h[i+2]]
+        sw_l = [l[i] for i in range(2, len(l) - 2)
+                if l[i] <= l[i-1] and l[i] <= l[i-2] and l[i] <= l[i+1] and l[i] <= l[i+2]]
+        if len(sw_h) < 2 or len(sw_l) < 2:
+            return "range"
+        if sw_h[-1] > sw_h[-2] and sw_l[-1] > sw_l[-2]:
+            return "bull"
+        if sw_h[-1] < sw_h[-2] and sw_l[-1] < sw_l[-2]:
+            return "bear"
+        return "range"
+
+    w_dir = _swing_dir(hi1w, lo1w, cl1w)
+    d_dir = _swing_dir(hiD,  loD,  clD)
+
+    if w_dir == "bull":
+        return "correction_bull" if d_dir == "bear" else "trend_bull"
+    if w_dir == "bear":
+        return "correction_bear" if d_dir == "bull" else "trend_bear"
+    # Weekly range — use daily
+    if d_dir == "bull":
+        return "trend_bull"
+    if d_dir == "bear":
+        return "trend_bear"
+    return "range"
+
+
+def score_swing_hadiukov(hi4h, lo4h, cl4h,
+                         hiD, loD, clD,
+                         hi1w, lo1w, cl1w,
+                         price, weekly_trend, daily_trend, h4_trend,
+                         fvgs_4h):
+    """
+    Hadiukov Swing Trading System scorer (4 steps).
+
+    Step 1 — Phase (W+D): trend_bull/bear, correction_bull/bear, range
+    Step 2 — Point A on Weekly: FVG or Fractal within 5–6%
+    Step 3 — Confirmation: new FVG or FVG-ignore on D (correction) or H4 (trend)
+    Step 4 — Entry zone: price in or near H4 FVG
+
+    Returns: (score, notes_str, direction, fractal_sl)
+      direction:  'long' | 'short' | 'none'
+      fractal_sl: H4 fractal price for stop-loss, or None
+    """
+    sc = 0
+    ns = []
+
+    # ── Step 1: Phase ────────────────────────────────────────────────────────
+    phase = detect_phase_hadiukov(hi1w, lo1w, cl1w, hiD, loD, clD)
+    if phase == "trend_bull":
+        direction = "long";  sc += 30; ns.append("PH:trend↑")
+    elif phase == "trend_bear":
+        direction = "short"; sc += 30; ns.append("PH:trend↓")
+    elif phase == "correction_bull":
+        direction = "long";  sc += 20; ns.append("PH:corr↑")
+    elif phase == "correction_bear":
+        direction = "short"; sc += 20; ns.append("PH:corr↓")
+    else:
+        # Range: infer from daily/H4
+        if daily_trend == "bull" or (daily_trend == "range" and h4_trend == "bull"):
+            direction = "long";  sc += 10; ns.append("PH:rng↑")
+        elif daily_trend == "bear" or (daily_trend == "range" and h4_trend == "bear"):
+            direction = "short"; sc += 10; ns.append("PH:rng↓")
+        else:
+            return 0, "range/no_dir", "none", None
+
+    plan_type = "bull" if direction == "long" else "bear"
+    opp_type  = "bear" if direction == "long" else "bull"
+
+    # ── Step 2: Point A — Weekly FVG or Fractal ──────────────────────────────
+    # Weekly FVGs (min_size 0.3% — filters weekly noise)
+    w_fvgs_plan = []
+    if len(cl1w) >= 5:
+        w_all = detect_fvg(hi1w, lo1w, cl1w, lookback=20, min_size_pct=0.30)
+        w_fvgs_plan = [f for f in w_all if f["type"] == plan_type and f["dist_pct"] <= 5.0]
+
+    # Weekly fractal as fallback Point A
+    wfh, wfl = detect_fractal_swings(hi1w, lo1w, lookback=12)
+    w_frac_price = None
+    w_frac_dist  = 99.0
+    if direction == "long" and wfl:
+        w_frac_price = wfl[-1][1]
+        w_frac_dist  = abs(price - w_frac_price) / price * 100
+        if w_frac_dist > 6.0:
+            w_frac_price = None
+    elif direction == "short" and wfh:
+        w_frac_price = wfh[-1][1]
+        w_frac_dist  = abs(price - w_frac_price) / price * 100
+        if w_frac_dist > 6.0:
+            w_frac_price = None
+
+    if w_fvgs_plan:
+        d = w_fvgs_plan[0]["dist_pct"]
+        if d < 0.5:
+            sc += 35; ns.append(f"W_FVG_in({d:.1f}%)")
+        elif d < 2.0:
+            sc += 28; ns.append(f"W_FVG({d:.1f}%)")
+        else:
+            sc += 18; ns.append(f"W_FVG({d:.1f}%)")
+    elif w_frac_price is not None:
+        sc += 15; ns.append(f"W_frac({w_frac_dist:.1f}%)")
+    else:
+        # Fallback: Daily FVG as Point A (weaker)
+        if len(clD) >= 5:
+            d_all = detect_fvg(hiD, loD, clD, lookback=15, min_size_pct=0.20)
+            d_plan = [f for f in d_all if f["type"] == plan_type and f["dist_pct"] <= 4.0]
+            if d_plan:
+                sc += 12; ns.append(f"D_FVG_ptA({d_plan[0]['dist_pct']:.1f}%)")
+            else:
+                sc -= 10; ns.append("no_ptA")
+        else:
+            sc -= 10; ns.append("no_ptA")
+
+    # ── Step 3: Confirmation ─────────────────────────────────────────────────
+    # Strict trend → H4 FVG confirm; Correction/Range → Daily FVG confirm
+    if phase in ("trend_bull", "trend_bear"):
+        plan_h4  = [f for f in fvgs_4h if f["type"] == plan_type and f["dist_pct"] <= 2.0]
+        opp_h4   = [f for f in fvgs_4h if f["type"] == opp_type]
+        ignored  = any(
+            (direction == "long"  and price > f["top"]    * 1.003) or
+            (direction == "short" and price < f["bottom"] * 0.997)
+            for f in opp_h4
+        )
+        if plan_h4 and ignored:
+            sc += 40; ns.append("H4_conf:BOTH!")
+        elif plan_h4:
+            sc += 28; ns.append(f"H4_conf:FVG({plan_h4[0]['dist_pct']:.1f}%)")
+        elif ignored:
+            sc += 22; ns.append("H4_conf:ignored")
+        else:
+            sc -= 5
+    else:
+        if len(clD) >= 5:
+            d_conf = detect_fvg(hiD, loD, clD, lookback=15, min_size_pct=0.20)
+            d_plan_c = [f for f in d_conf if f["type"] == plan_type and f["dist_pct"] <= 3.0]
+            d_opp    = [f for f in d_conf if f["type"] == opp_type]
+            d_ign    = any(
+                (direction == "long"  and price > f["top"]    * 1.003) or
+                (direction == "short" and price < f["bottom"] * 0.997)
+                for f in d_opp
+            )
+            if d_plan_c and d_ign:
+                sc += 35; ns.append("D_conf:BOTH!")
+            elif d_plan_c:
+                sc += 25; ns.append(f"D_conf:FVG({d_plan_c[0]['dist_pct']:.1f}%)")
+            elif d_ign:
+                sc += 18; ns.append("D_conf:ignored")
+
+    # ── Step 4: Entry — H4 FVG ───────────────────────────────────────────────
+    entry = [f for f in fvgs_4h if f["type"] == plan_type]
+    in_zone = any(f["in_zone"] for f in entry)
+    near    = [f for f in entry if f["dist_pct"] <= 1.5]
+    approx  = [f for f in entry if f["dist_pct"] <= 4.0]
+    if in_zone:
+        sc += 30; ns.append("H4:IN!")
+    elif near:
+        sc += 18; ns.append(f"H4:near({near[0]['dist_pct']:.1f}%)")
+    elif approx:
+        sc += 8;  ns.append(f"H4:~({approx[0]['dist_pct']:.1f}%)")
+
+    # ── HTF alignment bonuses / penalties ────────────────────────────────────
+    if direction == "long":
+        if weekly_trend == "bull":  sc += 12; ns.append("W↑")
+        elif weekly_trend == "bear": sc -= 15; ns.append("W↓ANTI!")
+        if daily_trend == "bull":   sc += 8
+        if h4_trend == "bull":      sc += 5
+    else:
+        if weekly_trend == "bear":  sc += 12; ns.append("W↓")
+        elif weekly_trend == "bull": sc -= 15; ns.append("W↑ANTI!")
+        if daily_trend == "bear":   sc += 8
+        if h4_trend == "bear":      sc += 5
+
+    # ── Stop-loss: nearest H4 fractal ────────────────────────────────────────
+    h4fh, h4fl = detect_fractal_swings(hi4h, lo4h, lookback=20)
+    fractal_sl = None
+    if direction == "long" and h4fl:
+        fractal_sl = h4fl[-1][1]
+        sc += 8; ns.append(f"SL:{fractal_sl:.5g}")
+    elif direction == "short" and h4fh:
+        fractal_sl = h4fh[-1][1]
+        sc += 8; ns.append(f"SL:{fractal_sl:.5g}")
+
+    # ── Chart data: Point A + entry FVG zones (for swing_chart.py) ───────────
+    chart_data: dict = {}
+    # Point A
+    if w_fvgs_plan:
+        chart_data["point_a_top"] = w_fvgs_plan[0]["top"]
+        chart_data["point_a_bot"] = w_fvgs_plan[0]["bottom"]
+    elif w_frac_price is not None:
+        chart_data["point_a_top"] = w_frac_price
+        chart_data["point_a_bot"] = None
+    # H4 entry FVG
+    entry_fvgs = [f for f in fvgs_4h if f["type"] == plan_type]
+    if entry_fvgs:
+        ef = min(entry_fvgs, key=lambda f: f["dist_pct"])
+        chart_data["entry_fvg_top"] = ef["top"]
+        chart_data["entry_fvg_bot"] = ef["bottom"]
+    # All H4 imbalance zones
+    chart_data["h4_fvgs"] = [
+        {"top": f["top"], "bot": f["bottom"], "type": f["type"]}
+        for f in fvgs_4h
+    ]
+
+    return max(0, sc), ", ".join(ns), direction, fractal_sl, chart_data
+
+
 # ─── Scoring ─────────────────────────────────────────────────────────────────
+
+# Semantic positioning regime from OI divergence → market mechanics interpretation.
+# Maps oi_div label → (regime_name, tp_factor, continuation_confidence)
+# short_covering: explosive but mean-reverts fast (reduce TP, tighten hold time)
+# long_liq: cascade risk — reduce continuation confidence
+_POSITIONING_MAP = {
+    "strong_bull": ("new_longs",      1.00, 1.00),  # price↑ + OI↑ → trend continuation
+    "bear_div":    ("short_covering", 0.70, 0.80),  # price↑ + OI↓ → explosive, brief
+    "strong_bear": ("new_shorts",     1.00, 1.00),  # price↓ + OI↑ → trend continuation
+    "bull_div":    ("long_liq",       0.85, 0.85),  # price↓ + OI↓ → cascade, reduce hold
+}
+
+
+# ── Layer 2: Funding Regime Classifier ────────────────────────────────────────
+# Consolidates raw funding + extreme flag + trend + streak into ONE label.
+# Layer 3 maps this label to per-setup score exactly once — no parallel paths.
+def classify_funding_regime(
+    funding: float,
+    fund_extreme: str,
+    fund_trend: str,
+    neg_streak: int,
+    pos_streak: int,
+) -> str:
+    """Returns one of 10 funding regime labels. All components baked in — no separate paths."""
+    if fund_extreme == "extreme_neg":
+        return "extreme_normalizing" if fund_trend == "normalizing" else "extreme_short"
+    if fund_extreme == "high_neg" or funding < -0.015:
+        if fund_trend == "declining" or neg_streak >= 3:
+            return "pressure_building"
+        if fund_trend == "normalizing" and funding < -0.01:
+            return "pressure_normalizing"
+        return "pressure"
+    if funding < -0.005:
+        return "moderate_neg"
+    if funding < 0:
+        return "mild_neg"     # data: WR 14.6%, worse than neutral — do not reward
+    if funding <= 0.010:
+        return "neutral"
+    if fund_extreme == "extreme_pos" or funding > 0.025:
+        return "euphoric"
+    if fund_extreme == "high_pos" or funding > 0.015:
+        return "high_longs_building" if (fund_trend == "rising" or pos_streak >= 3) else "high_longs"
+    return "elevated_building" if (fund_trend == "rising" or pos_streak >= 3) else "elevated"
+
+
+# ── Layer 2: OI Regime Classifier ──────────────────────────────────────────────
+# Consolidates oi_change magnitude + velocity + coiling into ONE label.
+# oi_div (price×OI direction) stays as a SEPARATE signal — genuinely orthogonal.
+def classify_oi_regime(
+    oi_change: float,
+    oi_velocity: float,
+    oi_coiling: bool,
+) -> str:
+    """Returns one of 11 OI regime labels."""
+    if oi_coiling:
+        return "accumulation"
+    if oi_change < -20:
+        return "crash"
+    if oi_change < -10:
+        return "contraction"
+    if oi_change < -5:
+        return "light_contraction"
+    if oi_change <= 5:
+        return "stable_building" if oi_velocity > 2.0 else "stable"
+    if oi_change <= 15:
+        if oi_velocity < -2.0:
+            return "expansion_exhausting"
+        return "expansion_accelerating" if oi_velocity > 2.0 else "expansion"
+    return "extreme_expansion_exhausting" if oi_velocity < -2.0 else "extreme_expansion"
+
+
+# ── Layer 3: Regime → Score Tables ─────────────────────────────────────────────
+# Single lookup per setup per regime. Removing these eliminates all funding/OI
+# double-counting between setup scoring, narrative, and signal_weights.
+
+# Funding scores. short_dist values assume price_pos > 0.60 (full position bonus);
+# Layer 3 applies position scaling for that setup.
+_FUNDING_SCORE: dict[str, dict[str, int]] = {
+    "extreme_short":       {"squeeze": +25, "bos_fvg": +10, "breakout": +32, "short_dist": -15},
+    "extreme_normalizing": {"squeeze": +17, "bos_fvg":  +8, "breakout": +24, "short_dist": -15},
+    "pressure_building":   {"squeeze": +60, "bos_fvg": +14, "breakout": +22, "short_dist": -20},
+    "pressure_normalizing":{"squeeze": +27, "bos_fvg": +10, "breakout": +14, "short_dist": -15},
+    "pressure":            {"squeeze": +35, "bos_fvg": +14, "breakout": +14, "short_dist": -15},
+    "moderate_neg":        {"squeeze": +22, "bos_fvg":  +6, "breakout":  +0, "short_dist":  -6},
+    "mild_neg":            {"squeeze":  +3, "bos_fvg":  +2, "breakout":  +0, "short_dist":  -4},
+    "neutral":             {"squeeze":  +8, "bos_fvg":  +8, "breakout":  +8, "short_dist": +12},
+    "elevated":            {"squeeze":  -5, "bos_fvg":  -5, "breakout":  -5, "short_dist": +22},
+    "elevated_building":   {"squeeze": -10, "bos_fvg":  -8, "breakout": -10, "short_dist": +28},
+    "high_longs":          {"squeeze": -15, "bos_fvg": -10, "breakout": -12, "short_dist": +35},
+    "high_longs_building": {"squeeze": -15, "bos_fvg": -15, "breakout": -15, "short_dist": +52},
+    "euphoric":            {"squeeze": -15, "bos_fvg": -15, "breakout": -15, "short_dist": +35},
+}
+
+# OI scores. Covers oi_change magnitude + velocity per setup.
+# oi_div (direction signal) and oi_coiling (already in breakout s4) scored separately.
+_OI_SCORE: dict[str, dict[str, int]] = {
+    # short_dist column: OI expansion = longs entering = against distribution = penalty.
+    # OI exhausting/contracting = distribution evidence = bonus.
+    # Zeros were wrong (CHIPUSDT canonical failure: expansion_accelerating scored 0 for short_dist).
+    "accumulation":                 {"squeeze": 0,   "bos_fvg": +12, "breakout": 0,   "short_dist": -18},
+    "crash":                        {"squeeze": +25, "bos_fvg": +8,  "breakout": +4,  "short_dist": +25},
+    "contraction":                  {"squeeze": +25, "bos_fvg": +8,  "breakout": +4,  "short_dist": +25},
+    "light_contraction":            {"squeeze": +14, "bos_fvg": +4,  "breakout": +2,  "short_dist": +14},
+    "stable":                       {"squeeze": 0,   "bos_fvg": 0,   "breakout": 0,   "short_dist": 0},
+    "stable_building":              {"squeeze": 0,   "bos_fvg": +5,  "breakout": +7,  "short_dist": -8},
+    "expansion":                    {"squeeze": 0,   "bos_fvg": +12, "breakout": +7,  "short_dist": -10},
+    "expansion_accelerating":       {"squeeze": -5,  "bos_fvg": +20, "breakout": +14, "short_dist": -20},
+    "expansion_exhausting":         {"squeeze": -5,  "bos_fvg": +7,  "breakout": -6,  "short_dist": +10},
+    "extreme_expansion":            {"squeeze": -10, "bos_fvg": +15, "breakout": -10, "short_dist": -5},
+    "extreme_expansion_exhausting": {"squeeze": -10, "bos_fvg": +8,  "breakout": -12, "short_dist": +15},
+}
+
+
+def classify_narrative_3(
+    funding_regime: str,
+    fund_vel: float, fund_accel: float,
+    dw_cvd_pct: float, cvd_persistence: float,
+    positioning_regime: str, price_chg_1h: float,
+    oi_regime: str,
+) -> tuple[str, float]:
+    """
+    3-narrative classifier — FINAL SCORE MULTIPLIER only (Layer 2→3 bridge).
+    Inputs are regime labels from Layer 2, not raw features.
+    Returns (narrative, confidence 0..1).
+
+    squeeze_setup     : shorts crowded + CVD recovering → squeeze ahead
+    squeeze_exhaustion: squeeze already fired, late entry
+    trap_breakout     : explosive price + FOMO crowd + no institutional flow
+    """
+    _short_crowding = funding_regime in (
+        "extreme_short", "extreme_normalizing",
+        "pressure_building", "pressure_normalizing", "pressure",
+    )
+    _oi_contracting = oi_regime in ("crash", "contraction", "light_contraction", "stable")
+    _oi_heavy_crowd = oi_regime in ("extreme_expansion", "extreme_expansion_exhausting")
+    _trap_funding   = funding_regime in ("euphoric", "high_longs_building")
+
+    sq_votes = [
+        _short_crowding,           # funding level via regime (no raw funding in Layer 3)
+        dw_cvd_pct > 5,            # positive dollar-weighted flow
+        _oi_contracting,           # longs exited / OI not expanding (via OI regime)
+        fund_vel >= 0,             # velocity: DIRECTION dimension, not level (no double count)
+        fund_accel > 0,            # acceleration: also direction
+    ]
+    exh_votes = [
+        fund_vel > 0.005,          # fast funding recovery = squeeze already firing
+        positioning_regime == "short_covering",
+        price_chg_1h > 3.0,
+        cvd_persistence < 0.55,
+    ]
+    trap_votes = [
+        price_chg_1h > 3.5,
+        _oi_heavy_crowd,           # OI regime: very heavy crowd entry (via regime)
+        dw_cvd_pct < 5,
+        _trap_funding,             # funding regime: euphoria (via regime)
+    ]
+
+    _sq_w   = [0.300, 0.300, 0.250, 0.075, 0.075]
+    _exh_w  = [0.300, 0.250, 0.300, 0.150]
+    _trp_w  = [0.300, 0.250, 0.300, 0.150]
+    sq_conf   = sum(w for v, w in zip(sq_votes,   _sq_w)  if v)
+    exh_conf  = sum(w for v, w in zip(exh_votes,  _exh_w) if v)
+    trap_conf = sum(w for v, w in zip(trap_votes, _trp_w) if v)
+
+    # Correlation penalty: funding level (sq_votes[0]) + velocity/accel (sq_votes[3/4])
+    # come from correlated dimensions — reduce confidence when all three fire together.
+    if sq_votes[0] and sq_votes[3] and sq_votes[4]:
+        sq_conf *= 0.90
+
+    # Hard cap: narrative confidence must not exceed 0.85.
+    sq_conf   = min(sq_conf, 0.85)
+    exh_conf  = min(exh_conf, 0.85)
+    trap_conf = min(trap_conf, 0.85)
+
+    best_conf = max(sq_conf, exh_conf, trap_conf)
+    if best_conf < 0.60:
+        return "none", 0.0
+
+    if sq_conf == best_conf:
+        return "squeeze_setup", round(sq_conf, 3)
+    if exh_conf == best_conf:
+        return "squeeze_exhaustion", round(exh_conf, 3)
+    return "trap_breakout", round(trap_conf, 3)
+
+def breakout_acceptance_quality(
+    atr_compression: float, funding_regime: str,
+    choch_1h: str, choch_4h: str, price_pos: float,
+    oi_coiling: bool, vol_ratio: float, price_chg_1h: float,
+    rs_btc, oi_change: float,
+    bull_mtf: int = 0, bear_mtf: int = 0,
+) -> tuple[float, str]:
+    """
+    Layer 2 classifier: breakout entry timing quality.
+    Sole source of entry quality assessment for breakout setups — replaces all
+    separate MTF-consensus, FOMO, and danger-zone patches.
+
+    Uses funding_regime label (Layer 2) not raw funding to avoid double-count.
+
+    Returns (quality 0..1, label):
+      >= 0.65 → "early_accept"  (+8 bonus)
+      0.40-0.65 → "mid_accept"  (0)
+      0.20-0.40 → "late_entry"  (-20)
+      < 0.20  → "euphoria"      (-40)
+    """
+    quality = 0.50
+
+    # --- EARLY signals ---
+    if atr_compression < 0.50:
+        quality += 0.20
+    elif atr_compression < 0.65:
+        quality += 0.10
+
+    if choch_1h == "bull_choch":
+        quality += 0.12
+    elif choch_4h == "bull_choch":
+        quality += 0.06
+
+    # Funding via regime label (no raw float — stays in Layer 2)
+    if funding_regime in ("extreme_short", "extreme_normalizing",
+                          "pressure_building", "pressure_normalizing", "pressure"):
+        quality += 0.12   # shorts crowded = squeeze fuel present
+    elif funding_regime in ("neutral", "moderate_neg"):
+        quality += 0.06   # room to grow
+
+    if price_pos < 0.55:
+        quality += 0.10
+    elif price_pos < 0.70:
+        quality += 0.04
+
+    if oi_coiling:
+        quality += 0.06
+
+    # --- LATE / EUPHORIA signals (interaction terms the additive scorer misses) ---
+
+    # MTF late consensus: all TFs bullish = late-stage entry (sole path, replaces -20 patch)
+    if bull_mtf == 5 and bear_mtf == 0:
+        quality -= 0.20
+
+    # FOMO composite: price at top + volume spike + outperforming BTC (sole path, replaces -25 in s4)
+    if price_pos > 0.80 and vol_ratio > 2.0 and rs_btc is not None and rs_btc > 2.0:
+        quality -= 0.25
+
+    if price_chg_1h > 2.0 and vol_ratio > 2.0:
+        quality -= 0.15   # post-move volume spike = chasing
+    if price_chg_1h > 3.5:
+        quality -= 0.10
+
+    if atr_compression > 0.85:
+        quality -= 0.15   # spring already fired
+
+    if funding_regime in ("euphoric", "high_longs_building"):
+        quality -= 0.15   # longs overloaded
+    elif funding_regime in ("high_longs", "elevated_building"):
+        quality -= 0.08
+
+    if price_pos > 0.85:
+        quality -= 0.18
+    elif price_pos > 0.78:
+        quality -= 0.08
+
+    if oi_change > 20:
+        quality -= 0.10
+    elif oi_change > 12:
+        quality -= 0.05
+
+    if rs_btc is not None and rs_btc > 5.0:
+        quality -= 0.10
+
+    quality = max(0.0, min(1.0, quality))
+
+    if quality >= 0.65:
+        label = "early_accept"
+    elif quality >= 0.40:
+        label = "mid_accept"
+    elif quality >= 0.20:
+        label = "late_entry"
+    else:
+        label = "euphoria"
+
+    return round(quality, 3), label
+
+
+def _suggested_size_r(calib_wr: float | None, narr_conf: float, calib_n: int) -> float:
+    """
+    S+-1: Dynamic R-size based on calibrated win rate and narrative confidence.
+    Returns one of: 0.3 / 0.6 / 1.0 / 1.4
+    """
+    if calib_wr is not None and calib_n >= 10:
+        prob = calib_wr
+        if narr_conf > 0.5:
+            prob = 0.7 * prob + 0.3 * narr_conf
+    elif narr_conf > 0.6:
+        prob = narr_conf
+    else:
+        prob = 0.40
+
+    if prob < 0.25: return 0.3
+    if prob < 0.40: return 0.6
+    if prob < 0.55: return 1.0
+    return 1.4
+
 
 def score_symbol(symbol, ticker, oi_hist,
                  op1h, hi1h, lo1h, cl1h, vol1h,
@@ -1792,6 +2609,11 @@ def score_symbol(symbol, ticker, oi_hist,
         oi_change = (current_oi - oi_hist[-25]) / oi_hist[-25] * 100
     elif len(oi_hist) >= 2 and oi_hist[0] > 0:
         oi_change = (current_oi - oi_hist[0]) / oi_hist[0] * 100
+
+    # OI-взрыв: >+30% за 24h = ловушка ликвидности (FOMO-толпа, WR <5%).
+    # ВАЖНО: только положительный взрыв блокируем. OI < -30% = отскок после ликвидаций → WR 79.2%.
+    if oi_change > 30.0:
+        return None
 
     # ── Позиция цены в 48h (завершённые свечи) ──
     comp_hi = hi1h[-49:-1] if len(hi1h) >= 49 else hi1h[:-1]
@@ -1842,6 +2664,11 @@ def score_symbol(symbol, ticker, oi_hist,
     cvd_bull_aligned = kl_cvd_pct > 15 and tr_cvd_pct > 10
     cvd_bear_aligned = kl_cvd_pct < -15 and tr_cvd_pct < -10
 
+    # ── Dollar-weighted CVD (buy-pressure ratio instead of binary close>open) ──
+    dw_cvd_pct, cvd_persistence = calc_dwcvd(op1h, hi1h, lo1h, cl1h, vol1h)
+    dw_cvd_bull = dw_cvd_pct > 15 and cvd_persistence > 0.60
+    dw_cvd_bear = dw_cvd_pct < -15 and cvd_persistence > 0.60
+
     # ── Новые аналитические метрики ──
     oi_div        = detect_oi_divergence(oi_hist, cl1h, lookback=5)
     candle_pat    = detect_candle_patterns(op1h, hi1h, lo1h, cl1h)
@@ -1849,6 +2676,13 @@ def score_symbol(symbol, ticker, oi_hist,
     poc_price, poc_dist = calc_poc(hi1h, lo1h, vol1h, cl1h, lookback=48)
     fund_trend    = analyze_funding_trend(funding_hist)
     fund_extreme  = detect_funding_extreme(funding_hist)
+
+    # ── Positioning regime (price direction vs OI direction → market mechanics) ──
+    _pos_entry = _POSITIONING_MAP.get(oi_div, ("neutral", 1.0, 1.0))
+    positioning_regime, pos_tp_mult, pos_cont_conf = _pos_entry
+
+    # ── Funding velocity + acceleration ──
+    fund_vel, fund_vel_prior, fund_accel = calc_funding_vel(funding_hist)
 
     # ── Funding streak: подряд идущие отрицательные/положительные периоды ─────
     # funding_hist: новые справа. Считаем длину текущей серии одного знака.
@@ -1876,6 +2710,7 @@ def score_symbol(symbol, ticker, oi_hist,
         price_chg_20h = (cl1h[-2] - cl1h[-22]) / cl1h[-22] * 100
     else:
         price_chg_20h = 0.0
+    price_chg_1h = (cl1h[-2] - cl1h[-3]) / cl1h[-3] * 100 if len(cl1h) >= 3 and cl1h[-3] > 0 else 0.0
 
     cvd_div = detect_cvd_divergence(kl_cvd_pct, price_chg_20h)
 
@@ -1883,8 +2718,10 @@ def score_symbol(symbol, ticker, oi_hist,
     whale_side, whale_mult         = detect_whale_activity(trades)
 
     # Relative Strength vs BTC (> 1 = опережает BTC)
-    pair_chg = float(ticker.get("price24hPcnt", 0)) * 100
-    rs_btc   = pair_chg / btc_chg_24h if abs(btc_chg_24h) > 0.5 else None
+    pair_chg   = float(ticker.get("price24hPcnt", 0)) * 100
+    rs_btc     = pair_chg / btc_chg_24h if abs(btc_chg_24h) > 0.5 else None
+    # percentage-point outperformance: WIN_RATE_ANALYSIS 2026-05-19 rs_btc_pp>10 → +19.8pp WR
+    rs_btc_pp  = pair_chg - btc_chg_24h
 
     # ── Новые метрики: EMA, VWAP, RSI, CHoCH, Volume Profile, Equal levels ──────
     rsi_1h     = calc_rsi(cl1h)
@@ -1976,6 +2813,11 @@ def score_symbol(symbol, ticker, oi_hist,
     # Дистанции до ближайшей стенки
     bid_wall_d = abs(price - bid_stack_sc[0][0]) / price * 100 if bid_stack_sc else 99.0
     ask_wall_d = abs(ask_stack_sc[0][0] - price) / price * 100 if ask_stack_sc else 99.0
+    # Cross-exchange confirmation (Binance + MEXC) — only fires when walls exist
+    _xwall    = _cross_exchange_wall_confirm(price, stacks, symbol) if (bid_stack_sc or ask_stack_sc) else {}
+    bid_xwall = _xwall.get("bid_confirmed", False)
+    ask_xwall = _xwall.get("ask_confirmed", False)
+    _xw_lbl   = "+".join(_xwall.get("sources", []))  # e.g. "BNB+MEXC" or "BNB"
 
     # ── OI velocity: ускорение роста OI ──
     oi_velocity = calc_oi_velocity(oi_hist)
@@ -2018,44 +2860,29 @@ def score_symbol(symbol, ticker, oi_hist,
 
     scores, notes = {}, {}
 
+    # ── Layer 2: classify market regimes (single call, used by all setup scorers) ──
+    funding_regime = classify_funding_regime(
+        funding, fund_extreme, fund_trend, neg_streak, pos_streak)
+    oi_regime      = classify_oi_regime(oi_change, oi_velocity, oi_coiling)
+    oi_stale       = len(oi_hist) < 2   # FIX 2026-05-30: нет OI-данных (фетч упал) → НЕ путать с 'stable' (fail-open guard)
+
     # ═══════════════════════════════════════════════════════════════════════════
     # СЕТАП 1 — ЛИКВИДАЦИОННЫЙ СКВИЗ
     # ═══════════════════════════════════════════════════════════════════════════
     s1, n1 = 0, []
 
-    # Funding (главное топливо сквиза)
-    if funding < -0.01:
-        s1 += 35; n1.append(f"fund={funding:.3f}%")
-    elif funding < 0:
-        s1 += 22; n1.append(f"fund={funding:.3f}%")
-    elif funding < 0.005:
-        s1 += 8;  n1.append("fund≈0")
+    # Funding (Layer 3: one lookup — regime → score, zero raw-feature paths)
+    _f1 = _FUNDING_SCORE[funding_regime]["squeeze"]
+    if _f1:
+        s1 += _f1; n1.append(f"fund:{funding_regime}({_f1:+d})")
 
-    # Экстремальный funding — FINDING 2: extreme_neg = сквиз УЖЕ произошёл → штраф
-    if fund_extreme == "extreme_neg":
-        s1 -= 10; n1.append("FUND_EXTREME!")   # < -0.08% — сквиз скорее всего отработан
-    elif fund_extreme == "high_neg":
-        s1 += 14; n1.append("fund_high_neg")   # < -0.05% — сильное давление
-    elif fund_extreme == "period_min":
-        s1 += 8;  n1.append("fund_period_min") # минимум за ~3 дня
-    elif fund_extreme in ("extreme_pos", "high_pos"):
-        s1 -= 15; n1.append("fund_перегрет!")  # лонги перегреты = не время для сквиза
-
-    # Оптимальная зона funding: умеренно отрицательный (-0.03% до 0%) = сквиз ещё впереди
-    if -0.03 <= funding < 0:
-        s1 += 15; n1.append("fund_opt(-0.03→0)")
-
-    # Funding trend: нарастающее давление
-    if fund_trend == "declining":
-        s1 += 15; n1.append("fund↓нараст")
-    elif fund_trend == "normalizing" and funding < -0.01:
-        s1 -= 8;  n1.append("fund норм-ся")
-
-    # Серия отрицательного funding = устойчивое давление шортов
-    if neg_streak >= 5:
-        s1 += 12; n1.append(f"fund−×{neg_streak}!")
-    elif neg_streak >= 3:
-        s1 += 6;  n1.append(f"fund−×{neg_streak}")
+    # Funding velocity: DIRECTION signal (not level — no double-count with regime)
+    _neg_fund = funding_regime in ("extreme_short", "extreme_normalizing",
+                                   "pressure_building", "pressure_normalizing", "pressure")
+    if fund_accel > 0.003 and _neg_fund:
+        s1 += 10; n1.append(f"f_accel↑{fund_accel:.3f}")
+    elif fund_vel > 0 and funding_regime in ("pressure_building", "pressure_normalizing", "pressure"):
+        s1 += 6;  n1.append("f_recov")
 
     # Цена у поддержки
     if price_pos < 0.15:
@@ -2065,16 +2892,12 @@ def score_symbol(symbol, ticker, oi_hist,
     elif price_pos < 0.40:
         s1 += 6
 
-    # OI упал = ликвидации прошли
-    if oi_change < -10:
-        s1 += 25; n1.append(f"OI{oi_change:.1f}%")
-    elif oi_change < -5:
-        s1 += 14; n1.append(f"OI{oi_change:.1f}%")
-    # FIX 6: extreme OI build (>15%) at lows = speculative longs, not true bottom
-    if oi_change > 15:
-        s1 -= 10; n1.append(f"OI_ext+{oi_change:.0f}%!")
+    # OI magnitude + velocity → regime lookup (Layer 3: one path)
+    _oi1 = _OI_SCORE[oi_regime]["squeeze"]
+    if _oi1:
+        s1 += _oi1; n1.append(f"OI:{oi_regime}({_oi1:+d})")
 
-    # OI Divergence: шорты закрываются у дна = разворот вверх (только у дна)
+    # OI Divergence (price×OI direction): separate signal, genuinely orthogonal to magnitude
     if oi_div == "bull_div" and price_pos < 0.35:
         s1 += 18; n1.append("OI_div↑")
     elif oi_div == "bull_div":
@@ -2149,6 +2972,18 @@ def score_symbol(symbol, ticker, oi_hist,
     elif kl_cvd_pct > 0 and price_pos < 0.35:
         s1 += 5
 
+    # DW-CVD persistence: sustained dollar-weighted buying at bottom = real squeeze fuel
+    if dw_cvd_bull and price_pos < 0.40:
+        s1 += 10; n1.append(f"DWCVD↑pers{cvd_persistence:.2f}")
+    elif cvd_persistence > 0.68 and dw_cvd_pct > 5 and price_pos < 0.40:
+        s1 += 5;  n1.append(f"CVDpers{cvd_persistence:.2f}")
+
+    # Funding velocity subsumed into regime-based block above (no raw funding refs here)
+
+    # Positioning annotation (no score change — context for Telegram)
+    if positioning_regime == "short_covering" and price_pos < 0.40:
+        n1.append("short_cov⚡")  # squeeze already firing, reduce TP expectations
+
     # Поглощение: крупный объём без движения цены = крупный игрок набирает позицию
     if absorb_dir == "bull_absorb":
         s1 += 16; n1.append(f"ABSORB↑×{absorb_ratio:.1f}")
@@ -2165,7 +3000,7 @@ def score_symbol(symbol, ticker, oi_hist,
     if basis_pct < -0.05 and price_pos < 0.30:
         s1 += 6; n1.append(f"basis{basis_pct:.2f}%")
 
-    # RS vs BTC: опережение при дне
+    # RS vs BTC: опережение при дне (ratio-based)
     if rs_btc is not None and rs_btc > 1.3 and price_pos < 0.40:
         s1 += 6; n1.append(f"RS{rs_btc:.1f}x")
     # FIX 4: moderate RS (0-2x) = clean setup; extreme RS (>5x) = already pumped
@@ -2173,11 +3008,17 @@ def score_symbol(symbol, ticker, oi_hist,
         s1 += 8; n1.append(f"RS{rs_btc:.2f}(mod)")
     if rs_btc is not None and rs_btc > 5:
         s1 -= 8; n1.append(f"RS{rs_btc:.1f}x(ext)")
+    # RS_BTC_PP: абсолютный отрыв от BTC (WIN_RATE_ANALYSIS 2026-05-19)
+    if rs_btc_pp > 10.0:
+        s1 += 15; n1.append(f"RS+{rs_btc_pp:.1f}pp!")
+    elif rs_btc_pp > 2.0:
+        s1 += 6; n1.append(f"RS+{rs_btc_pp:.1f}pp")
 
     # Стенка ставок НИЖЕ цены = покупатели держат поддержку → топливо сквиза
     if len(bid_stack_sc) >= 2 and bid_wall_d <= 2.5:
         wall_pts = min(len(bid_stack_sc) * 5, 18)
-        s1 += wall_pts; n1.append(f"bid_стек×{len(bid_stack_sc)}")
+        if bid_xwall: wall_pts = min(int(wall_pts * 1.5), 25)
+        s1 += wall_pts; n1.append(f"bid_стек×{len(bid_stack_sc)}{' ✓'+_xw_lbl if bid_xwall else ''}")
 
     # Perp/Spot ratio: высокое = много шортов с плечом = больше топлива
     if perp_spot_ratio is not None:
@@ -2205,6 +3046,11 @@ def score_symbol(symbol, ticker, oi_hist,
     scores["squeeze"] = s1
     notes["squeeze"]  = ", ".join(n1) or "—"
 
+    # Обязательное условие: fund < -0.01% (без него WR=34% vs 39% с ним — не сигналим)
+    if funding >= -0.01:
+        scores["squeeze"] = 0
+        notes["squeeze"]  = f"блок fund≥-0.01% ({funding:+.4f}%)"
+
     # ═══════════════════════════════════════════════════════════════════════════
     # СЕТАП 2 — BOS + FVG / ORDER BLOCK
     # ═══════════════════════════════════════════════════════════════════════════
@@ -2217,15 +3063,10 @@ def score_symbol(symbol, ticker, oi_hist,
     elif vol_ratio > 1.3:
         s2 += 7
 
-    if oi_change > 15:
-        s2 += 25; n2.append(f"OI+{oi_change:.1f}%")
-    elif oi_change > 8:
-        s2 += 15; n2.append(f"OI+{oi_change:.1f}%")
-    elif oi_change > 4:
-        s2 += 7;  n2.append(f"OI+{oi_change:.1f}%")
-    # FIX 6: extreme OI (>15%) = overcrowded; additive penalty (net +15 not +25)
-    if oi_change > 15:
-        s2 -= 10; n2.append(f"OI_ext+{oi_change:.0f}%!")
+    # OI magnitude + velocity → regime lookup (eliminates in-setup double-count)
+    _oi2 = _OI_SCORE[oi_regime]["bos_fvg"]
+    if _oi2:
+        s2 += _oi2; n2.append(f"OI:{oi_regime}({_oi2:+d})")
 
     # OI Divergence подтверждает направление
     if oi_div == "strong_bull":
@@ -2299,7 +3140,7 @@ def score_symbol(symbol, ticker, oi_hist,
         if cvd_bull_aligned:   s2 += 8;  n2.append("CVD↑")
         elif cvd_bear_aligned: s2 += 8;  n2.append("CVD↓")
 
-    # RS vs BTC
+    # RS vs BTC (ratio-based)
     if rs_btc is not None and rs_btc > 1.5:
         s2 += 8; n2.append(f"RS{rs_btc:.1f}x")
     # FIX 4: moderate RS (0-2x) = clean setup; extreme RS (>5x) = already pumped
@@ -2307,12 +3148,17 @@ def score_symbol(symbol, ticker, oi_hist,
         s2 += 8; n2.append(f"RS{rs_btc:.2f}(mod)")
     if rs_btc is not None and rs_btc > 5:
         s2 -= 8; n2.append(f"RS{rs_btc:.1f}x(ext)")
+    # RS_BTC_PP: абсолютный отрыв от BTC (WIN_RATE_ANALYSIS 2026-05-19: >+10pp → +19.8pp WR)
+    if rs_btc_pp > 10.0:
+        s2 += 20; n2.append(f"RS+{rs_btc_pp:.1f}pp!")
+    elif rs_btc_pp > 2.0:
+        s2 += 8; n2.append(f"RS+{rs_btc_pp:.1f}pp")
 
-    # CHoCH_1H: смена структуры подтверждает структурный пробой (WR=55.3%, +14.3pp)
+    # CHoCH↑1H = ×1.2 мультипликатор (WR +7.2pp / 78 сделок; заменяем аддитивный +20)
     if choch_1h == "bull_choch":
-        s2 += 20; n2.append("CHoCH↑1H!")
+        s2 = int(s2 * 1.2); n2.append("CHoCH↑1H×1.2")
     elif choch_1h == "bear_choch":
-        s2 += 20; n2.append("CHoCH↓1H!")
+        s2 = int(s2 * 1.2); n2.append("CHoCH↓1H×1.2")
 
     scores["bos_fvg"] = s2
     notes["bos_fvg"]  = ", ".join(n2) or "—"
@@ -2336,11 +3182,13 @@ def score_symbol(symbol, ticker, oi_hist,
     elif price_pos > 0.88:
         s3_short += 18; n3_short.append(f"вершина {price_pos:.0%}")
 
-    # Funding vs позиция
-    if funding > 0.01 and price_pos < 0.35:
-        s3_long  += 14; n3_long.append(f"fund+{funding:.3f}% при дне")
-    elif funding < -0.01 and price_pos > 0.65:
-        s3_short += 14; n3_short.append(f"fund{funding:.3f}% при вершине")
+    # Funding vs позиция (s3 via regime — Layer 3 one-path)
+    _f3_long  = _FUNDING_SCORE[funding_regime]["squeeze"]   # positive funding at bottom = squeeze at lows
+    _f3_short = _FUNDING_SCORE[funding_regime]["short_dist"]
+    if _f3_long > 0 and price_pos < 0.35:
+        s3_long  += min(_f3_long, 14); n3_long.append(f"fund:{funding_regime}")
+    if _f3_short > 0 and price_pos > 0.65:
+        s3_short += min(_f3_short // 2, 14); n3_short.append(f"fund:{funding_regime}")
 
     # Funding trend усиливает несоответствие
     if fund_trend == "rising" and price_pos < 0.35:
@@ -2390,15 +3238,14 @@ def score_symbol(symbol, ticker, oi_hist,
     if oi_div == "bear_div" and sweep_up is not None:
         s3_short += 12; n3_short.append("OI_div↓ после sweep↑")
 
-    # Доминирующее направление sweep-сетапа
+    # Доминирующее направление sweep-сетапа (направление сохраняем для sweep_watcher)
     if s3_long >= s3_short:
-        scores["range_sweep"] = s3_long
-        notes["range_sweep"]  = ", ".join(n3_long) or "—"
         sweep_dir_3 = "long"
     else:
-        scores["range_sweep"] = s3_short
-        notes["range_sweep"]  = ", ".join(n3_short) or "—"
         sweep_dir_3 = "short"
+    # range_sweep отключён в скринере: WR=25%, n=12; реал-тайм — sweep_watcher.py
+    scores["range_sweep"] = 0
+    notes["range_sweep"]  = "—"
 
     # ═══════════════════════════════════════════════════════════════════════════
     # СЕТАП 4 — BREAKOUT / PRE-PUMP
@@ -2470,9 +3317,10 @@ def score_symbol(symbol, ticker, oi_hist,
         s4 += 12; n4.append("OI_div↑")
     elif oi_div == "strong_bear":
         s4 -= 10
-    # FIX 6: extreme OI build (>15%) = overextended setup
-    if oi_change > 15:
-        s4 -= 10; n4.append(f"OI_ext+{oi_change:.0f}%!")
+    # OI magnitude + velocity → regime lookup (Layer 3: one path — replaces FIX6 + velocity)
+    _oi4 = _OI_SCORE[oi_regime]["breakout"]
+    if _oi4:
+        s4 += _oi4; n4.append(f"OI:{oi_regime}({_oi4:+d})")
 
     # 8. HTF: покупай в сторону тренда
     if trend_bull_aligned:
@@ -2491,21 +3339,10 @@ def score_symbol(symbol, ticker, oi_hist,
     if rs_btc is not None and rs_btc > 5:
         s4 -= 8; n4.append(f"RS{rs_btc:.1f}x(ext)")
 
-    # 10. Funding нейтральный или отрицательный = место для роста
-    if funding < -0.015:
-        s4 += 14; n4.append(f"fund{funding:.3f}%(сквиз)")
-    elif -0.01 <= funding <= 0.01:
-        s4 += 8; n4.append("fund≈0")
-    elif funding > 0.025:
-        s4 -= 8  # лонги перегреты = памп уже был
-
-    # Экстремальный funding как дополнительный катализатор
-    if fund_extreme == "extreme_neg":
-        s4 += 18; n4.append("FUND_EXT!")  # сквиз + памп = двойной движок
-    elif fund_extreme == "high_neg":
-        s4 += 10; n4.append("fund_HN")
-    elif fund_extreme in ("extreme_pos", "high_pos"):
-        s4 -= 12  # перегрев = высокий риск
+    # 10. Funding → regime lookup (Layer 3: one path)
+    _f4 = _FUNDING_SCORE[funding_regime]["breakout"]
+    if _f4:
+        s4 += _f4; n4.append(f"fund:{funding_regime}({_f4:+d})")
 
     # 11. MTF Confluence: структурная поддержка для роста — tiered
     if bull_mtf >= 5:
@@ -2567,10 +3404,9 @@ def score_symbol(symbol, ticker, oi_hist,
     elif rsi_1h < 30:
         s4 += 12; n4.append(f"RSI{rsi_1h:.0f}(OS)")  # перепроданность
 
-    # 19. CHoCH бычий — ранний слом нисходящего тренда
-    # FIX 5: breakout CHoCH WR +15.3pp (55.6% vs 40.3%); boosted from 16 → 20
+    # 19. CHoCH↑1H = ×1.2 мультипликатор (WR +7.2pp/78 сделок; 4H оставляем аддитивным)
     if choch_1h == "bull_choch":
-        s4 += 20; n4.append("CHoCH↑1H!")
+        s4 = int(s4 * 1.2); n4.append("CHoCH↑1H×1.2")
     elif choch_4h == "bull_choch":
         s4 += 14; n4.append("CHoCH↑4H!")
 
@@ -2601,20 +3437,15 @@ def score_symbol(symbol, ticker, oi_hist,
     # 24. Ask wall ВЫШЕ цены = памп заблокирован стеной заявок
     if len(ask_stack_sc) >= 2 and ask_wall_d <= 2.5:
         wall_pen = min(len(ask_stack_sc) * 7, 24)
-        s4 -= wall_pen; n4.append(f"ask_стек⚠×{len(ask_stack_sc)}")
+        if ask_xwall: wall_pen = min(int(wall_pen * 1.5), 36)
+        s4 -= wall_pen; n4.append(f"ask_стек⚠×{len(ask_stack_sc)}{' ✓'+_xw_lbl if ask_xwall else ''}")
     # Bid wall НИЖЕ = поддержка аккумуляции
     if len(bid_stack_sc) >= 2 and bid_wall_d <= 2.5:
-        s4 += min(len(bid_stack_sc) * 4, 14); n4.append(f"bid_стек↓{len(bid_stack_sc)}")
+        pts = min(len(bid_stack_sc) * 4, 14)
+        if bid_xwall: pts = min(int(pts * 1.5), 20)
+        s4 += pts; n4.append(f"bid_стек↓{len(bid_stack_sc)}{' ✓'+_xw_lbl if bid_xwall else ''}")
 
-    # 25. OI velocity: ускорение = нарастающий импульс, замедление = exhaust
-    if oi_velocity > 3.0:
-        s4 += 14; n4.append(f"OI_accel+{oi_velocity:.1f}%")
-    elif oi_velocity > 1.5:
-        s4 += 7;  n4.append(f"OI_accel+{oi_velocity:.1f}%")
-    elif oi_velocity < -3.0:
-        s4 -= 12; n4.append(f"OI_exhaust{oi_velocity:.1f}%")
-    elif oi_velocity < -1.5:
-        s4 -= 6
+    # 25. OI velocity subsumed into oi_regime lookup above (item 7a, see _OI_SCORE)
 
     # 26. Perp/Spot ratio: органичный spot demand vs пузырь плеч
     if perp_spot_ratio is not None:
@@ -2640,9 +3471,15 @@ def score_symbol(symbol, ticker, oi_hist,
     elif liq_short_usd >= 300_000:
         s4 += 10; n4.append(f"LIQ_short ${liq_short_usd/1e3:.0f}K")
 
-    # P1.3: FOMO-штраф — движение уже идёт, поздний вход (WR audit: >150 = 27.9% при 4h)
-    if price_pos > 0.80 and vol_ratio > 2.0 and rs_btc is not None and rs_btc > 2.0:
-        s4 -= 25; n4.append("FOMO⚠")
+    # FOMO composite subsumed into breakout_acceptance_quality (sole path — see BQ engine)
+
+    # Failed expansion: explosive price + crowd FOMO + no real institutional flow = trap
+    if detect_failed_expansion(price_chg_1h, oi_change, funding, dw_cvd_pct):
+        s4 -= 35; n4.append("TRAP_BREAK⚠")
+    elif positioning_regime == "short_covering":
+        n4.append("short_cov⚡")  # explosive move but mean-reverts fast, flag for fast TP
+    elif positioning_regime == "new_longs" and dw_cvd_bull:
+        s4 += 4; n4.append("late_longs")  # data: new_longs WR 17.6% < neutral 20.6%
 
     # CoinGecko trending + ATR compression = хайп + пружина = pre-pump сигнал
     if _is_trending and atr_compression < 0.65:
@@ -2660,42 +3497,21 @@ def score_symbol(symbol, ticker, oi_hist,
     # ═══════════════════════════════════════════════════════════════════════════
     s5, n5 = 0, []
 
-    # Funding (главное топливо распродажи) — вес зависит от позиции цены
-    # P1.4: полный бонус только у вершины диапазона, иначе не валидный шорт
-    if funding > 0.01:
+    # Funding → regime lookup (Layer 3: one path).
+    # Table value = "full bonus at price_pos > 0.60"; scale down for lower positions.
+    _f5_base = _FUNDING_SCORE[funding_regime]["short_dist"]
+    if _f5_base > 0:
+        # Positive funding is the PRIMARY short signal; validate only at distribution levels
         if price_pos > 0.60:
-            s5 += 35; n5.append(f"fund={funding:.3f}%")
+            _f5 = _f5_base
         elif price_pos > 0.40:
-            s5 += 18; n5.append(f"fund={funding:.3f}%")
+            _f5 = int(_f5_base * 0.55)
         else:
-            s5 += 5;  n5.append(f"fund={funding:.3f}%@low")  # фандинг+ у дна = слабый шорт
-    elif funding > 0:
-        if price_pos > 0.50:
-            s5 += 22; n5.append(f"fund={funding:.3f}%")
-        else:
-            s5 += 10; n5.append(f"fund={funding:.3f}%")
-    elif funding > -0.005:
-        s5 += 8;  n5.append("fund≈0")
-
-    # Экстремально положительный funding
-    if fund_extreme == "extreme_pos":
-        s5 += 25; n5.append("FUND_EXTREME!")
-    elif fund_extreme == "high_pos":
-        s5 += 14; n5.append("fund_high_pos")
-    elif fund_extreme in ("extreme_neg", "high_neg"):
-        s5 -= 15; n5.append("fund_neg!")  # шорты перегреты = плохо для шорта
-
-    # Funding trend: нарастающий перегрев лонгов
-    if fund_trend == "rising":
-        s5 += 15; n5.append("fund↑нараст")
-    elif fund_trend == "normalizing" and funding > 0.01:
-        s5 -= 8;  n5.append("fund норм-ся")
-
-    # Серия положительного funding = устойчивый перегрев лонгов
-    if pos_streak >= 5:
-        s5 += 12; n5.append(f"fund+×{pos_streak}!")
-    elif pos_streak >= 3:
-        s5 += 6;  n5.append(f"fund+×{pos_streak}")
+            _f5 = int(_f5_base * 0.15)   # positive funding at bottom = weak short
+    else:
+        _f5 = _f5_base   # negative/penalty regimes apply regardless of position
+    if _f5:
+        s5 += _f5; n5.append(f"fund:{funding_regime}({_f5:+d})")
 
     # Цена у сопротивления (вершина 48h диапазона)
     if price_pos > 0.85:
@@ -2705,11 +3521,10 @@ def score_symbol(symbol, ticker, oi_hist,
     elif price_pos > 0.60:
         s5 += 6
 
-    # OI упал = лонги ликвидируются
-    if oi_change < -10:
-        s5 += 25; n5.append(f"OI{oi_change:.1f}%")
-    elif oi_change < -5:
-        s5 += 14; n5.append(f"OI{oi_change:.1f}%")
+    # OI magnitude → regime lookup (Layer 3: one path)
+    _oi5 = _OI_SCORE[oi_regime]["short_dist"]
+    if _oi5:
+        s5 += _oi5; n5.append(f"OI:{oi_regime}({_oi5:+d})")
 
     # OI Divergence: лонги закрываются у хая → разворот вниз
     if oi_div == "bear_div":
@@ -2718,6 +3533,10 @@ def score_symbol(symbol, ticker, oi_hist,
         s5 += 8;  n5.append("OI_bear")
     elif oi_div == "bull_div":
         s5 -= 10
+
+    # Positioning: new_shorts (CVD↓ + OI↑) = resolved.csv 29.8% WR vs 20.6% neutral
+    if positioning_regime == "new_shorts":
+        s5 += 18; n5.append("NEW_SHORTS_STRONG!")
 
     # Подтверждения (лонги ликвидируются — медвежий сигнал)
     if long_liq:
@@ -2822,7 +3641,8 @@ def score_symbol(symbol, ticker, oi_hist,
     # Стенка заявок ВЫШЕ цены = сопротивление подтверждает дистрибуцию
     if len(ask_stack_sc) >= 2 and ask_wall_d <= 2.5:
         wall_pts = min(len(ask_stack_sc) * 5, 18)
-        s5 += wall_pts; n5.append(f"ask_стек×{len(ask_stack_sc)}")
+        if ask_xwall: wall_pts = min(int(wall_pts * 1.5), 25)
+        s5 += wall_pts; n5.append(f"ask_стек×{len(ask_stack_sc)}{' ✓'+_xw_lbl if ask_xwall else ''}")
 
     # Perp/Spot: высокое = много лонгов с плечом = топливо для слива
     if perp_spot_ratio is not None:
@@ -2840,6 +3660,19 @@ def score_symbol(symbol, ticker, oi_hist,
 
     scores["short_dist"] = s5
     notes["short_dist"]  = ", ".join(n5) or "—"
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # СЕТАП 6 — HADIUKOV SWING (W / D / H4)
+    # ═══════════════════════════════════════════════════════════════════════════
+    sw_score, sw_notes, sw_dir, sw_frac_sl, sw_chart_data = score_swing_hadiukov(
+        hi4h, lo4h, cl4h,
+        hiD, loD, clD,
+        hi1w, lo1w, cl1w,
+        price, weekly_trend, daily_trend, h4_trend,
+        fvgs_4h,
+    )
+    scores["swing"] = sw_score
+    notes["swing"]  = sw_notes or "—"
 
     # ── Лучший сетап ──
     best  = max(scores, key=scores.get)
@@ -2887,6 +3720,8 @@ def score_symbol(symbol, ticker, oi_hist,
         setup_dir = "short"
     elif best == "range_sweep":
         setup_dir = sweep_dir_3
+    elif best == "swing":
+        setup_dir = sw_dir if sw_dir != "none" else "none"
     else:  # bos_fvg
         setup_dir = ("long" if trend_bull_aligned else
                      "short" if trend_bear_aligned else "none")
@@ -2930,6 +3765,20 @@ def score_symbol(symbol, ticker, oi_hist,
     if best == "breakout" and daily_trend == "bear" and h4_trend == "bear":
         return None
 
+    # Filter 2b: Breakout + цена далеко от VWAP → ловушка перегрева/перепроданности.
+    # resolved.csv 2696 трейдов:
+    #   vwap > +3%: n=98,  LOSS 51.0%  |  vwap > +5%: n=104, LOSS 63.5%
+    #   vwap < -3%: n=105, LOSS 51.4%  (breakout вниз от VWAP = ложный пробой зоны поддержки)
+    # Порог опущен с 5.0 до 3.0 чтобы захватить всю опасную зону.
+    if best == "breakout" and vwap_dev is not None and abs(vwap_dev) > 3.0:
+        return None
+
+    # Filter 2c: Breakout + RSI > 75 → сильная перекупленность.
+    # resolved.csv: breakout + RSI>75 → LOSS 50.9%, WIN 27.3% (n=55).
+    # Breakout в зоне перекупленности — импульс уже исчерпан.
+    if best == "breakout" and setup_dir == "long" and rsi_1h is not None and rsi_1h > 75:
+        return None
+
     # Filter 3: Squeeze в bear regime требует глубокой перепроданности
     # "Отскок от поддержки" при медвежьем HTF без price_pos<0.30 — ловушка.
     if (best == "squeeze"
@@ -2943,6 +3792,31 @@ def score_symbol(symbol, ticker, oi_hist,
     if (best == "bos_fvg" and setup_dir == "long"
             and daily_trend == "bear" and score < 80):
         return None
+
+    # ── Ideal-squeeze bonus: |OI|<5% + vwap_dev∈[-2,+2] → LOSS rate 12.6% (vs 23% avg) ──
+    # resolved.csv 364 трейда: этот паттерн даёт наименьший LOSS rate среди всех комбинаций.
+    # +8 к score чтобы такие сетапы выходили выше порога в конкурентном окружении.
+    if (best == "squeeze" and setup_dir == "long"
+            and abs(oi_change) < 5.0
+            and vwap_dev is not None and -2.0 <= vwap_dev <= 2.0):
+        score = score + 8
+        scores[best] = score
+        notes[best] = (notes[best] + ", SQZ_IDEAL+8").lstrip(", ")
+
+    # MTF late-consensus penalty subsumed into breakout_acceptance_quality (sole path)
+
+    # ── RS BTC крайние значения на LONG → штраф перегрева/слабости альта ──
+    # resolved.csv: rs_btc < -3 → LOSS 50.0% (n=196); rs_btc > +3 → LOSS 48.5% (n=398).
+    # Слабый альт (rs<-3) = структурная слабость; сильный (rs>+3) = перегрев относительно BTC.
+    if setup_dir == "long" and rs_btc is not None:
+        if rs_btc > 3.0:
+            score = max(0, score - 12)
+            scores[best] = score
+            notes[best] = (notes[best] + f", RS_OVX-12").lstrip(", ")
+        elif rs_btc < -3.0:
+            score = max(0, score - 12)
+            scores[best] = score
+            notes[best] = (notes[best] + f", RS_WEAK-12").lstrip(", ")
 
     # ── BTC-velocity soft-penalty: для умеренных движений (-1.0..-0.8%, +0.8..+1.0%) ──
     btc_penalty = 0
@@ -2963,63 +3837,75 @@ def score_symbol(symbol, ticker, oi_hist,
         scores[best] = score
         notes[best] = (notes[best] + ", BTCbtw-30").lstrip(", ")
 
-    # ── Outcome-weighted multiplier: историческая WR по бакету (setup × grade) ──
-    # Grade считаем по сырому score + MTF; затем применяем мультипликатор [0.5, 1.5].
+    # ── Breakout acceptance quality engine ────────────────────────────────────
+    # Replaces hardcoded 140-159 danger-zone patch. Captures the non-monotonic
+    # WR distortion (8% WR at 140-159) via interaction terms the scorer misses.
+    _bq, _bq_label = None, None
+    if best == "breakout" and setup_dir == "long":
+        _bq, _bq_label = breakout_acceptance_quality(
+            atr_compression, funding_regime, choch_1h, choch_4h,
+            price_pos, oi_coiling, vol_ratio, price_chg_1h,
+            rs_btc, oi_change, bull_mtf, bear_mtf,
+        )
+        if _bq < 0.20:
+            _bq_pen = -40
+        elif _bq < 0.40:
+            _bq_pen = -20
+        elif _bq >= 0.65:
+            _bq_pen = +8
+        else:
+            _bq_pen = 0
+        if _bq_pen != 0:
+            score = max(0, score + _bq_pen)
+            scores[best] = score
+            notes[best] = (notes[best] + f", BQ={_bq:.2f}({_bq_label}{_bq_pen:+d})").lstrip(", ")
+
+    # ── Score-bucket calibration lookup (display + future penalty) ──────────────
+    _sb_calib = {}
     if score_weights:
-        raw_grade = composite_grade({
-            "score":  score,
-            "mtf_b":  bull_mtf, "mtf_s":  bear_mtf,
-            "bull_mtf_ext": bull_mtf_ext, "bear_mtf_ext": bear_mtf_ext,
-            "d_htf":  daily_trend, "h4_htf": h4_trend,
-            "cvd_k%": kl_cvd_pct,
-        })
-        mult = score_weights.get((best, raw_grade))
-        if mult and mult != 1.0:
-            score = int(round(score * mult))
-            scores[best] = score
-            notes[best] = (notes[best] + f", w×{mult:.2f}").lstrip(", ")
+        _sb_calib = score_weights.get("__score_calib__") or {}
+    _sb_bk    = (score // 20) * 20
+    _sb_entry = _sb_calib.get(f"{best}_{_sb_bk}", {})
+    _calib_wr = _sb_entry.get("wr")
+    _calib_n  = _sb_entry.get("n", 0)
 
-    # ── Signal-level additive adjustments from logistic regression calibration ──
-    # Per-setup model takes priority; falls back to generic pooled weights.
-    # CHoCH coefficient differs per setup: bos_fvg=+18.7pp, breakout=+15.3pp,
-    # squeeze=-20.5pp (negative! — CHoCH in squeeze = momentum already spent).
-    _sw = None
-    if score_weights and setup_dir == "long":
-        _sw = (score_weights.get(f"__signal_weights_{best}__")
-               or score_weights.get("__signal_weights__"))
-    if _sw and setup_dir == "long":
-        _sw_adj = 0.0
-        _sw_adj += _sw.get("choch_bull_1h",   0.0) * int(choch_1h == "bull_choch")
-        _sw_adj += _sw.get("oi_falling_5",    0.0) * int(oi_change < -5)
-        _sw_adj += _sw.get("rsi_lt40",        0.0) * int(rsi_1h < 40)
-        _sw_adj += _sw.get("funding_neg",     0.0) * int(funding < 0)
-        _sw_adj += _sw.get("oi_rising_5",     0.0) * int(oi_change > 5)
-        _sw_adj += _sw.get("cvd_kline_bull",  0.0) * int(kl_cvd_pct > 15)
-        _sw_adj += _sw.get("ema_bull_1h",     0.0) * int(ema_1h.get("ema_bull", False))
-        _sw_adj += _sw.get("ema_bull_4h",     0.0) * int(ema_4h.get("ema_bull", False))
-        _sw_adj += _sw.get("mtf_bull_ge3",    0.0) * int(bull_mtf >= 3)
-        if _sw_adj != 0.0:
-            score = max(0, score + int(round(_sw_adj)))
-            scores[best] = score
-            notes[best] = (notes[best] + f", sw{_sw_adj:+.0f}").lstrip(", ")
+    # Calibration multiplier and signal_weights are EVALUATION-ONLY (Layer 1 analytics).
+    # They must NOT influence score — per architecture: calibration ≠ decision.
+    # Empirical LR findings to bake directly into setup scoring in a future sprint:
+    #   CHoCH: bos_fvg=+18.7pp, breakout=+15.3pp, squeeze=-20.5pp
+    #   SHORT: score>150 anti-correlated with WR (-13.7pp), rsi_gt65 (-8.2pp)
+    # Score-bucket WR retained for DISPLAY only (calib_wr, calib_n in output dict).
 
-    # ── SHORT signal-level calibration (T1.2) ────────────────────────────────
-    # Trained on ШОРТ decisive trades. Key: score>150 is anti-correlated with
-    # SHORT WR (33.8% vs 47.5% baseline) — high score = overbought short setup.
-    _sw_s = score_weights.get("__signal_weights_short__") if score_weights else None
-    if _sw_s and setup_dir == "short":
-        _sw_s_adj = 0.0
-        _sw_s_adj += _sw_s.get("score_gt150", 0.0) * int(score > 150)
-        _sw_s_adj += _sw_s.get("rsi_gt65",    0.0) * int(rsi_1h > 65)
-        _sw_s_adj += _sw_s.get("ema_bull_1h", 0.0) * int(ema_1h.get("ema_bull", False))
-        if _sw_s_adj != 0.0:
-            score = max(0, score + int(round(_sw_s_adj)))
-            scores[best] = score
-            notes[best] = (notes[best] + f", sws{_sw_s_adj:+.0f}").lstrip(", ")
+    # ── Narrative engine (3-narrative): FINAL SCORE MULTIPLIER ─────────────────
+    # Layer 2→3 bridge: narrative receives regime labels, not raw features.
+    narr_label, narr_conf = "none", 0.0
+    if setup_dir == "long":
+        narr_label, narr_conf = classify_narrative_3(
+            funding_regime, fund_vel, fund_accel,
+            dw_cvd_pct, cvd_persistence,
+            positioning_regime, price_chg_1h,
+            oi_regime,
+        )
+        if narr_conf >= 0.60:
+            if narr_label == "squeeze_setup" and best == "squeeze":
+                _nadj = int(narr_conf * 15)      # coherent narrative → up to +15
+                score = score + _nadj
+                scores[best] = score
+                notes[best] = (notes[best] + f", narr:SQZ+{_nadj}").lstrip(", ")
+            elif narr_label == "squeeze_exhaustion" and best in ("squeeze", "breakout"):
+                _nadj = -int(narr_conf * 20)     # squeeze already fired → up to -20
+                score = max(0, score + _nadj)
+                scores[best] = score
+                notes[best] = (notes[best] + f", narr:EXHAUST{_nadj}").lstrip(", ")
+            elif narr_label == "trap_breakout" and best == "breakout":
+                _nadj = -int(narr_conf * 25)     # trap confirmed → up to -25
+                score = max(0, score + _nadj)
+                scores[best] = score
+                notes[best] = (notes[best] + f", narr:TRAP{_nadj}").lstrip(", ")
 
     # ── GOLDEN flag (Phase 2C): READ-ONLY overlay — no score change ──────────
     # Count how many of 9 optimal conditions are met; flag when ≥7.
-    _now_utc = datetime.utcnow()
+    _now_utc = datetime.now(timezone.utc)
     _golden_conds = [
         best in ("bos_fvg", "squeeze"),                              # 1 setup type
         _now_utc.hour in {9, 10, 21, 22},                           # 2 optimal UTC hour
@@ -3068,6 +3954,9 @@ def score_symbol(symbol, ticker, oi_hist,
     if candle_pat:             flags.append(candle_pat[:4])
     if oi_div:                 flags.append(f"OI:{oi_div[:6]}")
     if fund_trend != "stable": flags.append(f"f:{fund_trend[:4]}")
+    if positioning_regime != "neutral":            flags.append(f"pos:{positioning_regime[:6]}")
+    if cvd_persistence > 0.65:                    flags.append(f"CVDp{cvd_persistence:.2f}")
+    if fund_accel > 0.003 and funding < -0.01:    flags.append("f_accel↑")
     # Pre-pump флаги
     if atr_compression < 0.65:                 flags.append(f"⊕ATR{atr_compression:.2f}")
     if oi_coiling:                             flags.append("⊕OIcoil")
@@ -3112,6 +4001,8 @@ def score_symbol(symbol, ticker, oi_hist,
         "pattern":        candle_pat or "—",
         "flags":          " ".join(flags) if flags else "—",
         "setup":          best,
+        "setup_dir":      setup_dir,   # FIX 2026-05-30: направление на кандидат (гейты читали несуществующий r['direction'])
+        "oi_stale":       oi_stale,    # FIX 2026-05-30: OI-данные отсутствовали → fail-open guard для DistGate
         "score":          score,
         "notes":          notes[best],
         "golden":         golden,
@@ -3134,6 +4025,11 @@ def score_symbol(symbol, ticker, oi_hist,
         "sc_range_sweep": scores.get("range_sweep", 0),
         "sc_breakout":    scores.get("breakout", 0),
         "sc_short_dist":  scores.get("short_dist", 0),
+        "sc_swing":         scores.get("swing", 0),
+        "swing_dir":        sw_dir,
+        "swing_phase":      detect_phase_hadiukov(hi1w, lo1w, cl1w, hiD, loD, clD),
+        "swing_frac_sl":    sw_frac_sl,
+        "swing_chart_data": sw_chart_data,
         "cvd_div":        cvd_div or "—",
         "vol_accel":      vol_accel_dir or "—",
         "vol_accel_x":    vol_accel_ratio,
@@ -3199,6 +4095,28 @@ def score_symbol(symbol, ticker, oi_hist,
         "lc_sentiment":  _lc_sent,
         "lc_galaxy":     _lc_galaxy,
         "kline_1h_ts":   _kl_open_ts.get((symbol, "60"), 0.0),
+        # ── Flow quality + positioning ──────────────────────────────────────
+        "positioning":   positioning_regime,
+        "pos_tp_mult":   pos_tp_mult,
+        "pos_cont_conf": pos_cont_conf,
+        "dw_cvd_%":      dw_cvd_pct,
+        "cvd_persist":   cvd_persistence,
+        "fund_vel":      fund_vel,
+        "fund_accel":    fund_accel,
+        "price_chg_1h":  price_chg_1h,
+        # ── Regime labels (Layer 2) ─────────────────────────────────────────
+        "oi_regime":     oi_regime,
+        "fund_regime":   funding_regime,
+        # ── Narrative + calibration ─────────────────────────────────────────
+        "narrative":     narr_label,
+        "narr_conf":     narr_conf,
+        "calib_wr":      round(_calib_wr, 4) if _calib_wr else None,
+        "calib_n":       _calib_n,
+        # ── Breakout acceptance (bq_score available for BQ-V2 gate downstream)
+        "bq_score":      _bq,
+        "bq_label":      _bq_label,
+        # ── S+-1: Dynamic R-size suggestion based on calibrated WR + narrative
+        "suggested_size_r": _suggested_size_r(_calib_wr, narr_conf, _calib_n),
     }
 
 
@@ -3213,10 +4131,21 @@ _TLDB_MAX_PENALTY = 30
 _TLDB_BONUS_PER_FILTER = 8
 _TLDB_MAX_BONUS = 16
 
+# Whitelist: топ-ликвид. Для этих символов TLDB не блокирует, только penalty.
+# Claude RT-фильтр сам решит по контексту.
+_TLDB_OVERRIDE_WHITELIST = {
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "AVAXUSDT", "LINKUSDT",
+    "DOGEUSDT", "MATICUSDT", "HYPEUSDT", "1000PEPEUSDT", "TAOUSDT",
+    "ADAUSDT", "WLDUSDT", "XRPUSDT", "ARBUSDT",
+}
+# PROHIBITED больше не зануляет, а штрафует — Claude RT-фильтр финально решает.
+_TLDB_PROHIBITED_PENALTY = 25
+
 
 def _apply_tldb_gate(result: dict) -> dict:
-    """Apply TLDB: penalise score for anti-patterns, block prohibited conditions,
-    boost score for confirmed high-WR filter matches."""
+    """Apply TLDB: penalise score for anti-patterns, soft-penalty for prohibited
+    conditions (с Claude RT-фильтром hard-zero избыточен), boost score for
+    confirmed high-WR filter matches."""
     if not _TLDB_AVAILABLE:
         return result
     try:
@@ -3235,11 +4164,16 @@ def _apply_tldb_gate(result: dict) -> dict:
         sym        = result.get("symbol", "?")
         orig_score = int(result.get("score", 0) or 0)
 
-        # ── Prohibited condition: zero out score ─────────────────────────────
+        # ── Prohibited condition: soft penalty, не hard zero ─────────────────
         if gate["is_prohibited"]:
-            result["score"] = 0
             ids = ", ".join(h["id"] for h in gate["prohibited_hits"])
-            print(f"[TLDB] 🚫 {sym} PROHIBITED ({ids}) — score {orig_score}→0")
+            if sym in _TLDB_OVERRIDE_WHITELIST:
+                # Топ-ликвид — пропускаем без penalty, Claude решит
+                print(f"[TLDB] 🟡 {sym} PROHIBITED ({ids}) — whitelist override, передаём Claude")
+            else:
+                result["score"] = max(0, orig_score - _TLDB_PROHIBITED_PENALTY)
+                print(f"[TLDB] ⚠ {sym} PROHIBITED ({ids}) — soft penalty -{_TLDB_PROHIBITED_PENALTY}: "
+                      f"{orig_score}→{result['score']}")
             return result
 
         current = orig_score
@@ -4284,6 +5218,12 @@ def build_trade_plan(r):
                 side = "long"
             elif sweep_dir == "short":
                 side = "short"
+        elif setup == "swing":
+            swing_d = r.get("swing_dir", "none")
+            if swing_d == "long":
+                side = "long"
+            elif swing_d == "short":
+                side = "short"
 
     price   = r["price"]
     atr_pct = r["atr_%"] if r["atr_%"] and r["atr_%"] > 0 else 1.0
@@ -4393,6 +5333,12 @@ def build_trade_plan(r):
             entry_note = f"текущий    {format_price(price)}"
             stop_note  = f"↓ATR×1.8    {format_price(stop)}"
 
+        # ── Swing override: H4 fractal stop (Hadiukov rule) ──────────────
+        sw_frac = r.get("swing_frac_sl")
+        if setup == "swing" and sw_frac is not None and sw_frac < price:
+            stop      = max(sw_frac - buf, 0)
+            stop_note = f"↓H4_frac    {format_price(sw_frac)}"
+
         # ── Шаг 2: TP1 = ближайшее сопротивление выше ────────────────────
         tp1_opts = []
         if sfvg_bot is not None and sfvg_bot > entry_high:
@@ -4405,7 +5351,7 @@ def build_trade_plan(r):
         if tp1_opts:
             tp1, tp1_note = min(tp1_opts, key=lambda x: x[0])
         else:
-            tp1 = price + atr_abs * 2.7   # R:R = 2.7/1.8 = 1.5
+            tp1 = price + atr_abs * 3.6   # R:R = 3.6/1.8 = 2.0
             tp1_note = f"ATR×2.7   {format_price(tp1)}"
 
         # ── Шаг 3: TP2 = 48h high или дальняя цель ───────────────────────
@@ -4415,6 +5361,14 @@ def build_trade_plan(r):
         else:
             tp2 = price + atr_abs * 4.0
             tp2_note = f"ATR×4.0   {format_price(tp2)}"
+
+        # Swing торгуется на 24h горизонте (WR 4h=18% vs 24h=64%) — расширяем TP
+        if setup == "swing":
+            ref = max(entry_high, price)
+            tp1 = ref + (tp1 - ref) * 1.5
+            tp2 = ref + (tp2 - ref) * 2.0
+            tp1_note = f"SWING×1.5  {format_price(tp1)}"
+            tp2_note = f"SWING×2.0  {format_price(tp2)}"
 
         # Sanity-check: stop должен быть НИЖЕ entry для лонга
         if stop >= entry_low:
@@ -4497,6 +5451,12 @@ def build_trade_plan(r):
             entry_note = f"текущий    {format_price(price)}"
             stop_note  = f"↑ATR×1.8    {format_price(stop)}"
 
+        # ── Swing override: H4 fractal stop (Hadiukov rule) ──────────────
+        sw_frac = r.get("swing_frac_sl")
+        if setup == "swing" and sw_frac is not None and sw_frac > price:
+            stop      = sw_frac + buf
+            stop_note = f"↑H4_frac    {format_price(sw_frac)}"
+
         # ── Шаг 2: TP1 = ближайшая поддержка ниже ────────────────────────
         tp1_opts = []
         if bfvg_top is not None and bfvg_top < entry_low:
@@ -4509,7 +5469,7 @@ def build_trade_plan(r):
         if tp1_opts:
             tp1, tp1_note = max(tp1_opts, key=lambda x: x[0])  # ближайшая снизу
         else:
-            tp1 = max(price - atr_abs * 2.7, 0)   # R:R = 2.7/1.8 = 1.5
+            tp1 = max(price - atr_abs * 3.6, 0)   # R:R = 3.6/1.8 = 2.0
             tp1_note = f"ATR×2.7   {format_price(tp1)}"
 
         # ── Шаг 3: TP2 = 48h low ─────────────────────────────────────────
@@ -4525,6 +5485,14 @@ def build_trade_plan(r):
         if setup == "short_dist":
             tp2      = tp1
             tp2_note = f"TP1 (4H-edge) {format_price(tp1)}"
+
+        # Swing торгуется на 24h горизонте (WR 4h=18% vs 24h=64%) — расширяем TP
+        if setup == "swing":
+            ref = min(entry_low, price)
+            tp1 = max(ref - (ref - tp1) * 1.5, 0)
+            tp2 = max(ref - (ref - tp2) * 2.0, 0)
+            tp1_note = f"SWING×1.5  {format_price(tp1)}"
+            tp2_note = f"SWING×2.0  {format_price(tp2)}"
 
         # Sanity-check: stop должен быть ВЫШЕ entry для шорта
         if stop <= entry_high:
@@ -5259,18 +6227,14 @@ def _fetch_and_score(sym, tickers, btc_chg_24h, bnb_map=None,
 
 
 def _load_cooldown() -> dict:
-    try:
-        with open(COOLDOWN_PATH) as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
+    data = atomic_json_read(COOLDOWN_PATH, default={})
+    return data if isinstance(data, dict) else {}
 
 
 def _save_cooldown(cache: dict):
     now_ts = time.time()
     clean = {k: v for k, v in cache.items() if now_ts - v < 48 * 3600}
-    with open(COOLDOWN_PATH, "w") as f:
-        json.dump(clean, f)
+    atomic_json_update(COOLDOWN_PATH, lambda _: clean, default={})
 
 
 def _apply_cooldown(rows: list) -> tuple:
@@ -5291,11 +6255,73 @@ def _apply_cooldown(rows: list) -> tuple:
 
 
 def _record_cooldown(symbols: list):
-    cache = _load_cooldown()
     now_ts = time.time()
-    for sym in symbols:
-        cache[sym] = now_ts
-    _save_cooldown(cache)
+
+    def _mutate(cache):
+        if not isinstance(cache, dict):
+            cache = {}
+        for sym in symbols:
+            cache[sym] = now_ts
+        # cleanup старых записей > 48ч
+        return {k: v for k, v in cache.items() if now_ts - v < 48 * 3600}
+
+    atomic_json_update(COOLDOWN_PATH, _mutate, default={})
+
+
+# ── Expansion cooldown: anti-chop memory for breakout setup ──────────────────
+# When OI expanded then reversed velocity (expansion_exhausting / extreme_expansion_exhausting)
+# the breakout setup produces chop — block re-signaling for EXPANSION_COOLDOWN_HOURS.
+
+def _load_expansion_cooldown() -> dict:
+    data = atomic_json_read(EXPANSION_COOLDOWN_PATH, default={})
+    return data if isinstance(data, dict) else {}
+
+
+def _save_expansion_cooldown(cache: dict):
+    now_ts = time.time()
+    clean = {k: v for k, v in cache.items() if now_ts - v < EXPANSION_COOLDOWN_HOURS * 3600 * 2}
+    atomic_json_update(EXPANSION_COOLDOWN_PATH, lambda _: clean, default={})
+
+
+def _is_expansion_chop(r: dict) -> bool:
+    """True if symbol shows a failed OI expansion — OI built up then velocity reversed."""
+    return (
+        r.get("oi_regime") in ("expansion_exhausting", "extreme_expansion_exhausting")
+        and r.get("oi24h_%", 0) > 8.0
+    )
+
+
+def _record_failed_expansions(symbols: list):
+    now_ts = time.time()
+
+    def _mutate(cache):
+        if not isinstance(cache, dict):
+            cache = {}
+        for sym in symbols:
+            cache[sym] = now_ts
+        return {k: v for k, v in cache.items() if now_ts - v < EXPANSION_COOLDOWN_HOURS * 3600 * 2}
+
+    atomic_json_update(EXPANSION_COOLDOWN_PATH, _mutate, default={})
+
+
+def _apply_expansion_cooldown_breakout(rows: list) -> tuple:
+    """Block breakout signals for symbols in expansion chop cooldown.
+    Returns (passed, blocked) where blocked is list of (row, hrs_remaining)."""
+    cache     = _load_expansion_cooldown()
+    now_ts    = time.time()
+    threshold = EXPANSION_COOLDOWN_HOURS * 3600
+    passed, blocked = [], []
+    for r in rows:
+        if r.get("setup") != "breakout":
+            passed.append(r)
+            continue
+        last_ts = cache.get(r["symbol"], 0)
+        if now_ts - last_ts >= threshold:
+            passed.append(r)
+        else:
+            hrs_left = (threshold - (now_ts - last_ts)) / 3600
+            blocked.append((r, hrs_left))
+    return passed, blocked
 
 
 def _passes_setup_tg_filter(r: dict) -> bool:
@@ -5306,12 +6332,85 @@ def _passes_setup_tg_filter(r: dict) -> bool:
     if setup == "range_sweep":
         # Disabled: WR=25%, avg loss −21.89%, and sweep events expire before batch cron fires.
         # sweep_watcher.py handles real-time detection.
+        if _RT_AVAILABLE:
+            _rt.log_reject(r, "Quarantine", "range_sweep_disabled")
         return False
 
     if setup == "breakout":
         # WR audit: score 100-120 → 53.1% WR (pass), score >120 → 33.3% WR (block)
         # Old gate was inverted; block only high scores now.
-        return score < 120
+        if score >= 120:
+            if _RT_AVAILABLE:
+                _rt.log_reject(r, "BreakoutScoreCap", f"score={score}>=120")
+            return False
+        return True
+
+    # ── short_dist 3-layer distribution gate (CHIPUSDT canonical failure 2026-05-08) ─
+    # price_pos alone is NOT evidence of distribution. Three tiers:
+    #   Gate A: OI expansion = longs entering = hard block (no exceptions)
+    #   Gate B: HTF bull trend intact + no structural break = hard block
+    #   Gate C: require ≥1 explicit distribution/exhaustion confirm
+    if setup == "short_dist":
+        _sd_oi   = r.get("oi_regime",  "stable")
+        _sd_fund = r.get("fund_regime", "neutral")
+        _sd_chch = r.get("choch_1h",   "—")
+        _sd_h4   = r.get("h4_htf",    "range")
+        _sd_day  = r.get("d_htf",     "range")
+        _sd_narr = r.get("narrative",  "none")
+        _sd_nrcf = r.get("narr_conf",  0.0)
+        _sd_sym  = r.get("symbol",     "?")
+
+        # Gate 0 (2026-05-29): short_dist — шортовый сетап по построению (Дистрибуция).
+        # short_dist/LONG — единственное стабильно убыточное ведро: WR 30.1%, avgR −0.236,
+        # totR −24.3 за n=103 (resolved.csv, ~60д). Длинный вариант режем сразу.
+        _sd_dir = r.get("setup_dir", "")   # FIX 2026-05-30: было r.get("direction") — несуществующий ключ → гейт был мёртв
+        if _sd_dir == "long":
+            print(f"[DistGate-0] {_sd_sym} BLOCK: short_dist/LONG — отрицательный эдж (WR 30%, avgR −0.24)")
+            if _RT_AVAILABLE:
+                _rt.log_reject(r, "DistGate-0", f"short_dist/long,score={score}")
+            return False
+
+        # Gate 0b (FIX 2026-05-30): нет OI-данных → дистрибуцию НЕ подтвердить → шорт вслепую не шлём (fail-CLOSED)
+        if r.get("oi_stale"):
+            print(f"[DistGate-OIstale] {_sd_sym} BLOCK: нет OI-данных — дистрибуцию не подтвердить")
+            if _RT_AVAILABLE:
+                _rt.log_reject(r, "DistGate-OIstale", "oi_hist пуст/короток")
+            return False
+
+        # Gate A: OI building = continuation positioning, not distribution
+        if _sd_oi in ("expansion_accelerating", "expansion", "stable_building", "accumulation"):
+            print(f"[DistGate-A] {_sd_sym} BLOCK: OI={_sd_oi} — longs entering, не distribution")
+            if _RT_AVAILABLE:
+                _rt.log_reject(r, "DistGate-A", f"oi={_sd_oi}")
+            return False
+
+        # Gate B: bullish HTF structure without structural reversal
+        if (_sd_h4 == "bull" or _sd_day == "bull") and _sd_chch != "bear_choch":
+            print(f"[DistGate-B] {_sd_sym} BLOCK: HTF={_sd_h4}/{_sd_day}, choch={_sd_chch} — нет слома структуры")
+            if _RT_AVAILABLE:
+                _rt.log_reject(r, "DistGate-B", f"htf={_sd_h4}/{_sd_day},choch={_sd_chch}")
+            return False
+
+        # Gate C: need at least one distribution/exhaustion signal from Tier 1
+        _confirms = 0
+        if _sd_oi in ("contraction", "light_contraction", "crash",
+                      "expansion_exhausting", "extreme_expansion_exhausting"):
+            _confirms += 1  # OI unwinding
+        if _sd_fund in ("high_longs_building", "high_longs", "euphoric"):
+            _confirms += 1  # funding: longs overcrowded
+        if _sd_chch == "bear_choch":
+            _confirms += 1  # structure confirmed broken
+        if _sd_narr in ("squeeze_exhaustion", "trap_breakout") and _sd_nrcf >= 0.65:
+            _confirms += 1  # narrative: exhaustion or trap confirmed
+
+        if _confirms == 0:
+            print(f"[DistGate-C] {_sd_sym} BLOCK: 0 confirms "
+                  f"(oi={_sd_oi}, fund={_sd_fund}, "
+                  f"choch={_sd_chch}, narr={_sd_narr}:{_sd_nrcf:.2f})")
+            if _RT_AVAILABLE:
+                _rt.log_reject(r, "DistGate-C",
+                               f"oi={_sd_oi},fund={_sd_fund},choch={_sd_chch}")
+            return False
 
     # P1.1: Squeeze mid-score (100–140) hard requirement gate.
     # WR audit: 100–140 achieves only 42.0% WR (24h) vs 53.6% for <100 and 51.0% for >150.
@@ -5325,24 +6424,58 @@ def _passes_setup_tg_filter(r: dict) -> bool:
             or r.get("mtf_b", 0) >= 2                 # MTF confluence ≥ 2 zones
         )
         if not has_strong_signal:
+            if _RT_AVAILABLE:
+                _rt.log_reject(r, "SqueezeMidGate",
+                               f"score={score},fund={r.get('fund_%',0):.4f},no_strong_signal")
             return False
+
+    if score >= MAX_SCORE_GLOBAL:
+        if _RT_AVAILABLE:
+            _rt.log_reject(r, "ScoreGate", f"score={score}>=MAX_SCORE_GLOBAL={MAX_SCORE_GLOBAL}")
+        return False
 
     min_sc = SETUP_TG_MIN_SCORE.get(setup, 80)
     if r.get("choch_conviction"):
         min_sc = max(60, min_sc - 30)
     max_sc = SETUP_TG_MAX_SCORE.get(setup)
     if score < min_sc:
+        if _RT_AVAILABLE:
+            _rt.log_reject(r, "ScoreGate", f"score={score}<min={min_sc}")
         return False
     if max_sc is not None and score >= max_sc:
+        if _RT_AVAILABLE:
+            _rt.log_reject(r, "ScoreGate", f"score={score}>=max={max_sc}")
         return False
     return True
+
+
+def has_hard_signal(r: dict) -> bool:
+    """Минимум одно жёсткое подтверждение: CHoCH / FVG-зона / sweep / экстр.фандинг."""
+    setup = r.get("setup", "")
+    sdir  = ("short" if setup in ("short_dist",)
+             else r.get("swing_dir", "long") if setup == "swing"
+             else "long")
+    choch = r.get("choch_1h", "—")
+    sweep = r.get("sweep", "—")
+    fund  = r.get("fund_%", 0) or 0
+    if sdir == "long":
+        return (choch == "bull_choch" or
+                bool(r.get("in_bfvg")) or bool(r.get("in_bob")) or
+                fund < -0.05 or
+                ("↓" in sweep and sweep != "—"))
+    else:
+        return (choch == "bear_choch" or
+                bool(r.get("in_sfvg")) or bool(r.get("in_sob")) or
+                fund > 0.05 or
+                ("↑" in sweep and sweep != "—"))
 
 
 def run_screener(top_n=50, min_score=35,
                  watchlist_size=5, deep_dive_size=3,
                  export_json=None, export_csv=None,
                  obsidian=False, send_channels=False,
-                 bypass_cooldown=False):
+                 bypass_cooldown=False,
+                 _return_candidates=False):
     print(f"\n{'='*72}")
     print(f"  Bybit Futures Screener  |  {datetime.now().strftime('%H:%M:%S  %d.%m.%Y')}")
     print(f"{'='*72}")
@@ -5400,10 +6533,14 @@ def run_screener(top_n=50, min_score=35,
     if abs(btc_chg_4h) > 0.1:
         print(f"BTC 4h velocity: {btc_chg_4h:+.2f}%  EMA pos: {btc_ema_pos}")
 
-    # Ликвидации за последний час из локальной БД (liquidation_tracker пишет)
-    liq_stats = fetch_liquidation_stats(window_min=60)
+    # Ликвидации: Coinalyze API (первичный) → локальная DB (резерв)
+    liq_stats = fetch_coinalyze_liq_stats(symbols, window_min=60)
     if liq_stats:
-        print(f"Liquidation DB: {len(liq_stats)} символов с активностью за 60мин")
+        print(f"Coinalyze liq: {len(liq_stats)} символов с активностью за 60мин")
+    else:
+        liq_stats = fetch_liquidation_stats(window_min=60)
+        if liq_stats:
+            print(f"Liquidation DB: {len(liq_stats)} символов с активностью за 60мин")
 
     # Веса скоринга из исторических outcome'ов
     score_weights = load_score_weights(min_samples=20)
@@ -5553,6 +6690,14 @@ def run_screener(top_n=50, min_score=35,
         for r in results:
             r["alt_breadth_pct"] = alt_breadth_pct
         print(f"Alt breadth: {alt_breadth_pct}%  ({_bull_count}/{len(results)} в аптренде)")
+
+    # ── Expansion cooldown: record failed expansions across ALL scanned symbols ─
+    # Run on full results (not just TG candidates) to build cross-scan memory.
+    _chop_syms = [r["symbol"] for r in results if _is_expansion_chop(r)]
+    if _chop_syms:
+        _record_failed_expansions(_chop_syms)
+        print(f"[ExpansionCooldown] Зафиксировано {len(_chop_syms)} failed expansion: "
+              f"{', '.join(_chop_syms[:6])}" + (" ..." if len(_chop_syms) > 6 else ""))
 
     # Помечаем монеты из CoinGecko trending (trending_symbols уже загружен до скоринга)
     for r in results:
@@ -5796,149 +6941,203 @@ def run_screener(top_n=50, min_score=35,
             print(f"  🚫 {_r['symbol']:12s} {_r.get('setup','?'):12s} score={_r['score']}")
 
     # ── Time gate: фильтр плохих часов ────────────────────────────────────────
-    _utc_hour = datetime.utcnow().hour
-    _utc_weekday = datetime.utcnow().weekday()  # 0=Mon … 5=Sat … 6=Sun
+    _utc_hour = datetime.now(timezone.utc).hour
+    _utc_weekday = datetime.now(timezone.utc).weekday()  # 0=Mon … 5=Sat … 6=Sun
     if bypass_cooldown:
         print(f"[TimeGate] bypass_cooldown=True — временной фильтр пропущен")
     elif _utc_weekday == 5:
-        # FIX 8: Saturday WR=24.5% — повышаем порог до SATURDAY_MIN_SCORE
-        _before_sat = len(_tg_candidates)
-        _tg_candidates = [r for r in _tg_candidates if r["score"] >= SATURDAY_MIN_SCORE]
-        _sat_blocked = _before_sat - len(_tg_candidates)
-        if _sat_blocked:
-            print(f"[TimeGate] Суббота — слабый WR (24.5%). "
-                  f"Заблокировано: {_sat_blocked} (score < {SATURDAY_MIN_SCORE}). "
-                  f"Осталось: {len(_tg_candidates)}")
-        else:
-            print(f"[TimeGate] Суббота — слабый WR, но все {len(_tg_candidates)} выше порога {SATURDAY_MIN_SCORE}.")
+        # Claude RT-фильтр теперь является финальным арбитром — score-gate по субботе убран
+        print(f"[TimeGate] Суббота — {len(_tg_candidates)} кандидатов передаём Claude-фильтру.")
     elif _utc_weekday == 4:
-        # FINDING 7: Friday lower WR (n=26, not hard block) — threshold × 1.3
-        _before_fri = len(_tg_candidates)
-        _tg_candidates = [r for r in _tg_candidates if r["score"] >= FRIDAY_MIN_SCORE]
-        _fri_blocked = _before_fri - len(_tg_candidates)
-        if _fri_blocked:
-            print(f"[TimeGate] Пятница — пониженный WR. "
-                  f"Заблокировано: {_fri_blocked} (score < {FRIDAY_MIN_SCORE}). "
-                  f"Осталось: {len(_tg_candidates)}")
-        else:
-            print(f"[TimeGate] Пятница — пониженный WR, но все {len(_tg_candidates)} выше порога {FRIDAY_MIN_SCORE}.")
+        print(f"[TimeGate] Пятница — {len(_tg_candidates)} кандидатов передаём Claude-фильтру.")
     elif _utc_weekday == 1:
-        # FINDING 7: Tuesday mild lower WR — threshold × 1.15
-        _before_tue = len(_tg_candidates)
+        _before_tue = _tg_candidates[:]
         _tg_candidates = [r for r in _tg_candidates if r["score"] >= TUESDAY_MIN_SCORE]
-        _tue_blocked = _before_tue - len(_tg_candidates)
+        _tue_blocked = len(_before_tue) - len(_tg_candidates)
         if _tue_blocked:
             print(f"[TimeGate] Вторник — умеренно пониженный WR. "
                   f"Заблокировано: {_tue_blocked} (score < {TUESDAY_MIN_SCORE}). "
                   f"Осталось: {len(_tg_candidates)}")
+            if _RT_AVAILABLE:
+                _tue_passed_syms = {r["symbol"] for r in _tg_candidates}
+                for _r in _before_tue:
+                    if _r["symbol"] not in _tue_passed_syms:
+                        _rt.log_reject(_r, "TimeGate", f"tuesday,score={_r['score']}<{TUESDAY_MIN_SCORE}")
         else:
             print(f"[TimeGate] Вторник — пониженный WR, но все {len(_tg_candidates)} выше порога {TUESDAY_MIN_SCORE}.")
     elif _utc_hour in HARD_BLOCK_HOURS:
         # WR 21–37% — полный хард-блок TG-алертов (AVEVA-55)
-        _n_before_hb = len(_tg_candidates)
+        _hb_candidates = _tg_candidates[:]
         _tg_candidates = []
         wr_map = {17: "36.5%", 18: "28.6%", 19: "21.4%", 22: "32.8%"}
         _wr_str = wr_map.get(_utc_hour, "<37%")
         print(f"[TimeGate] UTC {_utc_hour:02d}:xx — HARD BLOCK (WR={_wr_str}). "
-              f"Заблокировано {_n_before_hb} сигналов. TG не отправляется.")
+              f"Заблокировано {len(_hb_candidates)} сигналов. TG не отправляется.")
+        if _RT_AVAILABLE:
+            for _r in _hb_candidates:
+                _rt.log_reject(_r, "TimeGate", f"hard_block_hour={_utc_hour}")
     elif _utc_hour in BAD_SIGNAL_HOURS:
-        _before_tg = len(_tg_candidates)
+        _before_bad = _tg_candidates[:]
         _tg_candidates = [r for r in _tg_candidates if r["score"] >= BAD_HOUR_MIN_SCORE]
-        _tg_blocked_time = _before_tg - len(_tg_candidates)
+        _tg_blocked_time = len(_before_bad) - len(_tg_candidates)
         if _tg_blocked_time:
             print(f"[TimeGate] UTC {_utc_hour:02d}:xx — плохой час. "
                   f"Заблокировано: {_tg_blocked_time} (score < {BAD_HOUR_MIN_SCORE}). "
                   f"Осталось: {len(_tg_candidates)}")
+            if _RT_AVAILABLE:
+                _bad_passed_syms = {r["symbol"] for r in _tg_candidates}
+                for _r in _before_bad:
+                    if _r["symbol"] not in _bad_passed_syms:
+                        _rt.log_reject(_r, "TimeGate", f"bad_hour={_utc_hour},score={_r['score']}<{BAD_HOUR_MIN_SCORE}")
         else:
             print(f"[TimeGate] UTC {_utc_hour:02d}:xx — плохой час, но все {len(_tg_candidates)} выше порога.")
     elif _utc_hour in GOOD_SIGNAL_HOURS:
         print(f"[TimeGate] UTC {_utc_hour:02d}:xx — хороший час ✓")
 
-    # ── Fix 2: Grade-фильтр — B+/C/D не уходят в TG (AVEVA-55) ───────────────
-    _before_grade = len(_tg_candidates)
+    # ── Fix 2: Grade-фильтр — только C/D/X блокируем; B+ передаём Claude ────
+    _before_grade_list = _tg_candidates[:]
     _tg_candidates = [r for r in _tg_candidates
-                      if r.get("grade", "B") not in ("B+", "C", "D", "X")]
-    _grade_blocked = _before_grade - len(_tg_candidates)
+                      if r.get("grade", "B") not in ("C", "D", "X")]
+    _grade_blocked = len(_before_grade_list) - len(_tg_candidates)
     if _grade_blocked:
-        print(f"[GradeGate] Заблокировано {_grade_blocked} сигналов (grade B+/C/D/X, WR≤42%)")
+        print(f"[GradeGate] Заблокировано {_grade_blocked} сигналов (grade C/D/X)")
+        if _RT_AVAILABLE:
+            _grade_passed_syms = {r["symbol"] for r in _tg_candidates}
+            for _r in _before_grade_list:
+                if _r["symbol"] not in _grade_passed_syms:
+                    _rt.log_reject(_r, "GradeGate", f"grade={_r.get('grade','?')}")
 
     # ── Fix 3: squeeze falling knife — vwap_dev < -8% = не входить (AVEVA-55) ─
-    _before_fk = len(_tg_candidates)
+    _before_fk_list = _tg_candidates[:]
     _tg_candidates = [
         r for r in _tg_candidates
         if not (r.get("setup") == "squeeze"
                 and (r.get("vwap_dev") or 0) < -8.0)
     ]
-    _fk_blocked = _before_fk - len(_tg_candidates)
+    _fk_blocked = len(_before_fk_list) - len(_tg_candidates)
     if _fk_blocked:
         print(f"[FallingKnife] Заблокировано {_fk_blocked} squeeze-сигналов (vwap_dev<-8%, WR=21.6%)")
+        if _RT_AVAILABLE:
+            _fk_passed_syms = {r["symbol"] for r in _tg_candidates}
+            for _r in _before_fk_list:
+                if _r["symbol"] not in _fk_passed_syms:
+                    _rt.log_reject(_r, "FallingKnife", f"vwap_dev={_r.get('vwap_dev'):.1f}")
 
     # ── AVEVA-57: Hard Confluence Gate ────────────────────────────────────────
-    # Сигнал без хотя бы 1 жёсткого подтверждения = шум, не сетап.
-    # Требуем: CHoCH ИЛИ (в FVG/OB зоне) ИЛИ sweep ИЛИ экстр. фандинг.
-    def _has_hard_signal(r: dict) -> bool:
-        setup   = r.get("setup", "")
-        sdir    = "short" if setup == "short_dist" else "long"
-        choch   = r.get("choch_1h", "—")
-        sweep   = r.get("sweep", "—")
-        fund    = r.get("fund_%", 0) or 0
-        if sdir == "long":
-            return (
-                choch == "bull_choch"                 or
-                bool(r.get("in_bfvg")) or bool(r.get("in_bob")) or
-                fund < -0.05                          or
-                ("↓" in sweep and sweep != "—")       # ликвидность снята снизу
-            )
-        else:  # short
-            return (
-                choch == "bear_choch"                 or
-                bool(r.get("in_sfvg")) or bool(r.get("in_sob")) or
-                fund > 0.05                           or
-                ("↑" in sweep and sweep != "—")
-            )
-
-    _before_hcg = len(_tg_candidates)
-    _tg_candidates = [r for r in _tg_candidates if _has_hard_signal(r)]
-    _hcg_blocked = _before_hcg - len(_tg_candidates)
+    _before_hcg_list = _tg_candidates[:]
+    _tg_candidates = [r for r in _tg_candidates if has_hard_signal(r)]
+    _hcg_blocked = len(_before_hcg_list) - len(_tg_candidates)
     if _hcg_blocked:
         print(f"[HardGate] Заблокировано {_hcg_blocked} сигналов — нет CHoCH/FVG/OB/sweep/exfund")
+        if _RT_AVAILABLE:
+            _hcg_passed_syms = {r["symbol"] for r in _tg_candidates}
+            for _r in _before_hcg_list:
+                if _r["symbol"] not in _hcg_passed_syms:
+                    _rt.log_reject(_r, "HardGate", "no_choch_fvg_ob_sweep_exfund")
 
     # ── AVEVA-57: squeeze только в нижней части диапазона (pos_% ≤ 45) ───────
     # Squeeze вне дисконта = покупка на середине/вершине = не сквиз.
     # Данные: BOT(<-3% VWAP)=54.1% WR vs MID=50.1% WR
-    _before_sq = len(_tg_candidates)
+    _before_sq_list = _tg_candidates[:]
     _tg_candidates = [
         r for r in _tg_candidates
         if not (r.get("setup") == "squeeze"
                 and (r.get("pos_%") or 100) > 45)
     ]
-    _sq_blocked = _before_sq - len(_tg_candidates)
+    _sq_blocked = len(_before_sq_list) - len(_tg_candidates)
     if _sq_blocked:
         print(f"[SqueezeZone] Заблокировано {_sq_blocked} squeeze вне дисконта (pos%>45)")
+        if _RT_AVAILABLE:
+            _sq_passed_syms = {r["symbol"] for r in _tg_candidates}
+            for _r in _before_sq_list:
+                if _r["symbol"] not in _sq_passed_syms:
+                    _rt.log_reject(_r, "SqueezeZone", f"pos%={_r.get('pos_%'):.0f}>45")
 
-    # ── AVEVA-57: breakout — минимальный score 120 ───────────────────────────
-    # Breakout score 80-119: WR=46% (хуже squeeze). В хорошие часы нормально,
-    # но низкий скор = неподтверждённый пробой = ложный сигнал.
-    _before_bo = len(_tg_candidates)
+    # ── Breakout floor: 160 + CHoCH/RSI<40 required ─────────────────────────────
+    # resolved.csv: breakout ЛОНГ WR=36.3% (n=256) даже при score≥130.
+    # Поднято с 130→160. Дополнительно требуем CHoCH=bull_choch ИЛИ RSI<40
+    # (оба признака дают +11-18pp к WR — без них breakout почти coin-flip).
+    _before_bo_list = _tg_candidates[:]
     _tg_candidates = [
         r for r in _tg_candidates
-        if not (r.get("setup") == "breakout"
-                and r.get("score", 0) < 120)
+        if not (
+            r.get("setup") == "breakout"
+            and r.get("setup_dir", "") == "long"   # FIX 2026-05-30: было r['direction'] (мёртвый ключ → флор не срабатывал)
+            and (
+                r.get("score", 0) < 160
+                or (
+                    r.get("choch_1h") != "bull_choch"
+                    and (r.get("rsi_1h") or 50) >= 40
+                )
+            )
+        )
     ]
-    _bo_blocked = _before_bo - len(_tg_candidates)
+    _bo_blocked = len(_before_bo_list) - len(_tg_candidates)
     if _bo_blocked:
-        print(f"[BreakoutFloor] Заблокировано {_bo_blocked} breakout score<120")
+        print(f"[BreakoutFloor] Заблокировано {_bo_blocked} breakout: score<160 или нет CHoCH/RSI<40")
+        if _RT_AVAILABLE:
+            _bo_passed_syms = {r["symbol"] for r in _tg_candidates}
+            for _r in _before_bo_list:
+                if _r["symbol"] not in _bo_passed_syms:
+                    _rt.log_reject(_r, "BreakoutFloor",
+                                   f"score={_r.get('score')},choch={_r.get('choch_1h')},rsi={_r.get('rsi_1h')}")
 
-    # ── AVEVA-57: R:R минимум 1.5 ────────────────────────────────────────────
-    # При WR=54% нужен R:R ≥ 1.5 для положительного мат.ожидания.
+    # ── S++-3: BQ-V2 — hard reject breakout if acceptance quality < 0.35 ──────
+    # Raises the euphoria threshold from 0.20 → 0.35 (lower late_entry also blocked).
+    # bq_score=None (non-breakout or short) → pass-through (1.0 default).
+    _before_bqv2_list = _tg_candidates[:]
+    _tg_candidates = [
+        r for r in _tg_candidates
+        if not (r.get("setup") == "breakout" and (r.get("bq_score") or 1.0) < 0.35)
+    ]
+    _bqv2_blocked = len(_before_bqv2_list) - len(_tg_candidates)
+    if _bqv2_blocked:
+        print(f"[BQ-V2] Заблокировано {_bqv2_blocked} breakout (bq<0.35 — insufficient acceptance)")
+        if _RT_AVAILABLE:
+            _bqv2_passed_syms = {r["symbol"] for r in _tg_candidates}
+            for _r in _before_bqv2_list:
+                if _r["symbol"] not in _bqv2_passed_syms:
+                    _rt.log_reject(_r, "BQ-V2", f"bq_score={_r.get('bq_score',0):.3f}<0.35")
+
+    # ── RSI gate: >80 = хард-блок всех ЛОНГ; >70 = блок squeeze/breakout/bos_fvg ─
+    # resolved.csv: RSI>80 WR=15.4% (n=13); RSI 70-80 WR=42.0% (n=81).
+    # RSI>80 — хард-блок без исключений для любого лонга.
+    # RSI>70 — блок squeeze/breakout/bos_fvg (short_dist исключён).
+    _before_rsi_list = _tg_candidates[:]
+    _tg_candidates = [
+        r for r in _tg_candidates
+        if not (
+            r.get("setup_dir", "") == "long"   # FIX 2026-05-30: было r['direction'] (мёртвый ключ → блок не срабатывал)
+            and (r.get("rsi_1h") or 50) > 80
+        )
+    ]
+    _tg_candidates = [
+        r for r in _tg_candidates
+        if not (
+            r.get("setup_dir", "") == "long"   # FIX 2026-05-30: только лонги (был пропущен guard → резал валидные ШОРТ-bos_fvg при RSI>70, где перекупленность ПОДТВЕРЖДАЕТ шорт)
+            and r.get("setup") in ("squeeze", "breakout", "bos_fvg")
+            and (r.get("rsi_1h") or 50) > 70
+        )
+    ]
+    _rsi_gate_blocked = len(_before_rsi_list) - len(_tg_candidates)
+    if _rsi_gate_blocked:
+        print(f"[RSI_Gate] Заблокировано {_rsi_gate_blocked} лонг-сигналов RSI>70/80")
+        if _RT_AVAILABLE:
+            _rsi_passed_syms = {r["symbol"] for r in _tg_candidates}
+            for _r in _before_rsi_list:
+                if _r["symbol"] not in _rsi_passed_syms:
+                    _rt.log_reject(_r, "RSI_Gate", f"rsi={_r.get('rsi_1h')}")
+
+    # ── R:R минимум 2.0 ──────────────────────────────────────────────────────
+    # WR=50%: EV = WR×RR - (1-WR). При RR=2.0 → EV=+0.5R; при RR=1.5 → EV=+0.25R.
     # build_trade_plan вызывается здесь — план уже строится заново при отправке.
     _before_rr = len(_tg_candidates)
     _rr_passed = []
     for _r in _tg_candidates:
         try:
             _plan = build_trade_plan(_r)
-            if _plan["side"] in ("long", "short") and 0 < _plan["rr"] < 1.5:
-                print(f"[RRGate] {_r['symbol']} R:R={_plan['rr']:.2f} < 1.5 → блок")
+            if _plan["side"] in ("long", "short") and 0 < _plan["rr"] < 2.0:
+                print(f"[RRGate] {_r['symbol']} R:R={_plan['rr']:.2f} < 2.0 → блок")
                 continue
         except Exception:
             pass  # fail-open: если план не строится — пропускаем в TG
@@ -5946,7 +7145,7 @@ def run_screener(top_n=50, min_score=35,
     _tg_candidates = _rr_passed
     _rr_blocked = _before_rr - len(_tg_candidates)
     if _rr_blocked:
-        print(f"[RRGate] Итого заблокировано {_rr_blocked} сигналов R:R<1.5")
+        print(f"[RRGate] Итого заблокировано {_rr_blocked} сигналов R:R<2.0")
 
     # ── AVEVA-57: Sector concentration warning ────────────────────────────────
     if _tg_candidates:
@@ -5960,7 +7159,7 @@ def run_screener(top_n=50, min_score=35,
                 print(f"[SectorWarn] ⚠ {_sec}: {', '.join(_syms)} — концентрация в секторе!")
 
     # ── AVEVA-58: OI exhaustion — блокируем дистрибуцию и шорт в сильный тренд ──
-    _oi58_before = len(_tg_candidates)
+    _oi58_before_list = _tg_candidates[:]
     def _oi58_ok(r: dict) -> bool:
         _oi_div = r.get("oi_div", "—")
         if r.get("setup") == "short_dist":
@@ -5968,8 +7167,14 @@ def run_screener(top_n=50, min_score=35,
         else:
             return _oi_div != "bear_div"     # не лонгуем при дистрибуции (цена↑, OI↓)
     _tg_candidates = [r for r in _tg_candidates if _oi58_ok(r)]
-    _oi58_blocked = _oi58_before - len(_tg_candidates)
+    _oi58_blocked = len(_oi58_before_list) - len(_tg_candidates)
     if _oi58_blocked:
+        if _RT_AVAILABLE:
+            _oi58_passed_syms = {r["symbol"] for r in _tg_candidates}
+            for _r in _oi58_before_list:
+                if _r["symbol"] not in _oi58_passed_syms:
+                    _rt.log_reject(_r, "OI_Exhaustion",
+                                   f"oi_div={_r.get('oi_div','?')},setup={_r.get('setup')}")
         print(f"[Filter] OI exhaustion: заблокировано {_oi58_blocked} сигналов "
               f"(bear_div на ЛОНГ или strong_bull на ШОРТ)")
 
@@ -5987,6 +7192,32 @@ def run_screener(top_n=50, min_score=35,
         print(f"[Filter] Staleness TTL: заблокировано {_stale58_blocked} сигналов "
               f"(данные kline старше 3h — возможна аномалия API)")
 
+    # ── Dynamic Channel Weights: применяем точность каналов к score ────────────
+    # channel_score_adj < 0: подтверждающие каналы ненадёжны (< 50% WR) → штраф
+    # channel_score_adj > 0: каналы выше 50% WR → бонус
+    # Только когда n >= 15, иначе neutral. Не меняет gate-решения (постфильтр).
+    _ch_adj_log = []
+    for r in _tg_candidates:
+        adj = r.get("channel_score_adj", 0)
+        if adj and abs(adj) >= 3:
+            r["score"] = r.get("score", 0) + adj
+            conf_str = ", ".join(f"@{c}" for c in r.get("channel_conf", [])[:2])
+            _ch_adj_log.append(f"{r['symbol']} {adj:+d}pts ({conf_str})")
+    if _ch_adj_log:
+        print(f"[ChannelWeight] Скор скорректирован: {'; '.join(_ch_adj_log)}")
+
+    # ── Expansion cooldown: anti-chop gate for breakout (6h after failed expansion) ─
+    if bypass_cooldown:
+        _ec_blocked = []
+    else:
+        _before_ec = len(_tg_candidates)
+        _tg_candidates, _ec_blocked = _apply_expansion_cooldown_breakout(_tg_candidates)
+        if _ec_blocked:
+            print(f"[ExpansionCooldown] Заблокировано {len(_ec_blocked)} breakout "
+                  f"(failed expansion < {EXPANSION_COOLDOWN_HOURS}h назад):")
+            for _r, _hrs in _ec_blocked:
+                print(f"  ⏸ {_r['symbol']:12s}  score={_r['score']}  (через {_hrs:.1f}h)")
+
     # ── Cooldown фильтр: 8h между сигналами по одной паре ─────────────────────
     if bypass_cooldown:
         _cd_blocked = []
@@ -5997,6 +7228,10 @@ def run_screener(top_n=50, min_score=35,
             print(f"[Cooldown] Заблокировано: {len(_cd_blocked)} пар (< {COOLDOWN_HOURS}h с последнего сигнала)")
             for _r, _hrs in _cd_blocked:
                 print(f"  ⏸ {_r['symbol']:12s}  score={_r['score']}  (через {_hrs:.1f}h)")
+
+    # ── Monitor mode: вернуть кандидатов без TG-отправки (для signal_monitor.py) ─
+    if _return_candidates:
+        return _tg_candidates, results
 
     # ── Telegram alerts ────────────────────────────────────────────────────────
     if _TG_AVAILABLE:
@@ -6068,7 +7303,24 @@ def run_screener(top_n=50, min_score=35,
                 newly_activated = _streak.check_and_activate(silent=False)
                 if newly_activated:
                     print("[Streak] 🚨 Audit Mode активирован — следующий скан будет заблокирован")
-        # Сохраняем текущие сигналы как pending (кроме HARD_BLOCK часов — WR < 30%)
+                    try:   # FIX 2026-05-30: объяснить в канал, почему наступит тишина
+                        import telegram_alerts as _ta
+                        _ta.notify_suppression("killswitch",
+                            "🚫 <b>Сигналы остановлены: kill-switch</b>\n"
+                            "Сработала защита по серии лоссов (audit-mode). Новых сигналов не будет до восстановления.\n"
+                            "Выход: <code>python3 streak_monitor.py --exit</code>")
+                    except Exception:
+                        pass
+
+    # ── Reject tracker: разрешаем будущие цены для отклонённых сигналов ──────
+    if _RT_AVAILABLE:
+        _rt.resolve_rejects(silent=True)
+
+    # ── Сохраняем текущие сигналы как pending ────────────────────────────────
+    # FIX 2026-05-30: под _OT_AVAILABLE, не _RT_AVAILABLE — save_pending это _ot (outcome_tracker),
+    # а не reject_tracker; раньше персист исходов гейтился аналитическим модулем (latent NameError/тихая деградация).
+    if _OT_AVAILABLE:
+        # кроме HARD_BLOCK часов — WR < 30%
         if _utc_hour in HARD_BLOCK_HOURS:
             print(f"[HARD BLOCK] UTC {_utc_hour:02d}:xx — WR={'18' if _utc_hour==18 else '17.5'}% < 30%."
                   f" Сигналы не сохранены в pending (не торговать этот час).")
@@ -6078,7 +7330,8 @@ def run_screener(top_n=50, min_score=35,
             # FIX 4: stamp grade at save time so resolved.csv has real grades (not "—")
             # Use calc_mtf_grade (TASK B) — includes weekly hard-block Grade X.
             for r in to_save:
-                _sdir = "short" if r.get("setup") == "short_dist" else "long"
+                # FIX 2026-06-02: брать реальное направление (swing-short получал grade как long → порча resolved.csv)
+                _sdir = r.get("setup_dir") or ("short" if r.get("setup") == "short_dist" else "long")
                 r["grade"] = calc_mtf_grade(r, setup_dir=_sdir)
             saved = _ot.save_pending(to_save, results)
             if saved:

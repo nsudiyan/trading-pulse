@@ -1,13 +1,27 @@
 #!/usr/bin/env python3
 """NEXUS Trading Terminal — web_dashboard.py"""
 
-import json, csv, time, subprocess, sqlite3
+import json, csv, time, os, subprocess, sqlite3
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from urllib.parse import urlparse
+
+# .env loader (креды дашборда DASHBOARD_AUTH; зеркалит claude_realtime_filter._load_dotenv)
+def _load_dotenv():
+    try:
+        p = Path(__file__).parent / ".env"
+        if p.exists():
+            for _line in p.read_text(encoding="utf-8").splitlines():
+                _line = _line.strip()
+                if _line and not _line.startswith("#") and "=" in _line:
+                    _k, _v = _line.split("=", 1)
+                    os.environ.setdefault(_k.strip(), _v.strip())
+    except Exception:
+        pass
+_load_dotenv()
 
 BASE     = Path(__file__).parent
 PENDING  = BASE / "outcomes" / "pending.json"
@@ -112,10 +126,44 @@ def load_channel_map():
 
 def svc_ok(name):
     try:
+        import re
         r=subprocess.run(["launchctl","list",name],capture_output=True,text=True,timeout=2)
-        parts=r.stdout.strip().split("\t")
-        return bool(parts and parts[0]!="-" and parts[0].isdigit())
+        if r.returncode!=0: return False
+        # launchctl list <name> → plist dict; служба «живая» только если есть числовой PID
+        # (раньше парсили как таблицу → всегда False, все демоны ложно DOWN)
+        return re.search(r'"PID"\s*=\s*(\d+)', r.stdout) is not None
     except Exception: return False
+
+def load_pump_signals(limit=30):
+    """Памп/раг, реально отправленные в TG (pump_pending.json). pump=LONG, rug_prep=SHORT."""
+    try:
+        p = BASE / "outcomes" / "pump_pending.json"
+        if not p.exists(): return []
+        data = json.loads(p.read_text(encoding="utf-8"))
+        out=[]
+        for x in (data or [])[-limit:]:
+            st=x.get("signal_type","")
+            try: rt=datetime.fromtimestamp(x.get("ts",0),timezone.utc).strftime("%Y-%m-%dT%H:%M")
+            except Exception: rt=""
+            out.append({"symbol":x.get("symbol"),"dir":"LONG" if st=="pump" else "SHORT",
+                        "label":"PUMP" if st=="pump" else "RUG","source":"pump",
+                        "score":x.get("score"),"entry":x.get("price"),
+                        "funding":x.get("funding"),"run_ts":rt})
+        return out
+    except Exception: return []
+
+def build_tg_signals(active):
+    """Унифицированная LONG/SHORT лента того, что уходит в TG: скринер + памп/раг."""
+    out=[]
+    for s in active:
+        dr=s.get("direction")
+        dd="LONG" if dr in ("ЛОНГ","LONG") else "SHORT" if dr in ("ШОРТ","SHORT") else None
+        if not dd: continue
+        out.append({"symbol":s.get("symbol"),"dir":dd,"label":(s.get("setup") or "").upper(),
+                    "source":"screener","score":s.get("score"),"entry":s.get("price_entry"),
+                    "funding":s.get("funding"),"run_ts":s.get("run_ts")})
+    out += load_pump_signals()
+    return out
 
 def build_data():
     now=time.time()
@@ -145,25 +193,77 @@ def build_data():
         s["channel_conflict"] = dirs.get(opp, [])
         s["channel_score"]    = len(s["channel_conf"])
         return s
+    active_slim=[add_ch(slim(p)) for p in active[:25]]
     d={
         "timestamp":datetime.now(timezone.utc).isoformat(),
         "market":market,
-        "active_signals":[add_ch(slim(p)) for p in active[:25]],
+        "active_signals":active_slim,
+        "tg_signals":build_tg_signals(active_slim),
         "top_candidates":[add_ch(slim(p)) for p in top],
         "recent_resolved":recent,
         "stats":compute_stats(resolved),
         "stats_24h":compute_stats(rows_24h),
         "charts":chart_names,
-        "services":{"bot":svc_ok("com.trading.bot"),"screener":svc_ok("com.trading.screener"),
-                    "channelreader":svc_ok("com.trading.channelreader"),"liqtracker":svc_ok("com.trading.liqtracker")},
+        "services":{"pumpdetector":svc_ok("com.trading.pumpdetector"),"screener":svc_ok("com.trading.screener"),
+                    "bot":svc_ok("com.trading.bot"),"channelreader":svc_ok("com.trading.channelreader"),
+                    "liqtracker":svc_ok("com.trading.liqtracker")},
         "filters":{"f5_btc_above_block":True,"f6_short_dist_below":True,"f2_between_penalty_30":True},
     }
     _CACHE["d"]=d; _CACHE["ts"]=now; return d
+
+_RCA_CACHE={"d":None,"ts":0}
+def build_selfanalysis():
+    """Самоанализ сделок из rca_results.json: краткие заметки-инсайты + последние разборы."""
+    now=time.time()
+    if _RCA_CACHE["d"] and now-_RCA_CACHE["ts"]<300: return _RCA_CACHE["d"]
+    from collections import Counter
+    try:
+        p=BASE/"outcomes"/"rca_results.json"
+        rca=json.loads(p.read_text(encoding="utf-8")) if p.exists() else []
+    except Exception: rca=[]
+    res={"notes":[],"recent":[],"counts":{}}
+    if rca:
+        WIN=("WIN","TP1"); LOSS=("LOSS","STOP")
+        los=[r for r in rca if r.get("outcome_category") in LOSS]
+        win=[r for r in rca if r.get("outcome_category") in WIN]
+        flat=[r for r in rca if r.get("outcome_category")=="FLAT"]
+        res["counts"]={"total":len(rca),"win":len(win),"loss":len(los),"flat":len(flat)}
+        ss=defaultdict(lambda:[0,0])
+        for r in rca:
+            oc=r.get("outcome_category")
+            if oc in WIN+LOSS+("FLAT",):
+                ss[r.get("setup","?")][0]+=1
+                if oc in WIN: ss[r.get("setup","?")][1]+=1
+        setups=sorted([(k,v[1]/v[0]*100,v[0]) for k,v in ss.items() if v[0]>=20],key=lambda x:-x[1])
+        notes=[]
+        if setups:
+            b=setups[0]; w=setups[-1]
+            notes.append({"icon":"🏆","title":"Лучший сетап","text":f"{b[0]} — винрейт {b[1]:.0f}% (n={b[2]})","tone":"good"})
+            notes.append({"icon":"🔻","title":"Худший сетап","text":f"{w[0]} — винрейт {w[1]:.0f}% (n={w[2]})","tone":"bad"})
+        if los:
+            cause=Counter(r.get("primary_cause") for r in los if r.get("primary_cause"))
+            if cause:
+                c,n=cause.most_common(1)[0]
+                notes.append({"icon":"⚠️","title":"Главная причина лоссов","text":f"{c} — {n}× из {len(los)} убытков","tone":"bad"})
+            tags=Counter(t for r in los for t in (r.get("tags") or []))
+            if tags:
+                notes.append({"icon":"🏷","title":"Топ-паттерны провалов","text":", ".join(f"{t} ({n})" for t,n in tags.most_common(3)),"tone":"warn"})
+                if tags.get("HIGH_SCORE",0)>50:
+                    notes.append({"icon":"📊","title":"Score не разделяет","text":f"HIGH_SCORE — в {tags['HIGH_SCORE']} лоссах. Высокий score ≠ вин","tone":"warn"})
+        notes.append({"icon":"📈","title":"Итог по выборке","text":f"{len(win)}W / {len(los)}L / {len(flat)} FLAT из {len(rca)} разобранных","tone":"neutral"})
+        res["notes"]=notes
+        res["recent"]=[{"symbol":r.get("symbol"),"setup":r.get("setup"),"direction":r.get("direction"),
+                        "outcome":r.get("outcome_category"),"cause":r.get("primary_cause"),
+                        "score":r.get("score"),"chg":r.get("price_change_pct"),"run_ts":r.get("run_ts")}
+                       for r in rca[-15:][::-1]]
+    _RCA_CACHE["d"]=res; _RCA_CACHE["ts"]=now
+    return res
 
 def load_liq_data():
     now=time.time()
     if _LIQ_CACHE["d"] and now-_LIQ_CACHE["ts"]<30: return _LIQ_CACHE["d"]
     if not LIQ_DB.exists(): return {"error":"liquidations.db not found"}
+    con=None
     try:
         con=sqlite3.connect(str(LIQ_DB)); now_ms=int(now*1000)
         periods={"1h":3600000,"4h":14400000,"24h":86400000}
@@ -190,11 +290,13 @@ def load_liq_data():
             long_usd=con.execute("SELECT SUM(usd) FROM liquidations WHERE ts>? AND side='long_liq'",(cutoff,)).fetchone()[0] or 0
             short_usd=con.execute("SELECT SUM(usd) FROM liquidations WHERE ts>? AND side='short_liq'",(cutoff,)).fetchone()[0] or 0
             totals[name]={"total_usd":round((row[0] or 0),2),"count":row[1],"long_usd":round(long_usd,2),"short_usd":round(short_usd,2)}
-        con.close()
         d={"by_period":by_period,"recent_large":recent_large,"totals":totals}
         _LIQ_CACHE["d"]=d; _LIQ_CACHE["ts"]=now; return d
     except Exception as e:
         return {"error":str(e)}
+    finally:
+        if con is not None:
+            con.close()   # FIX 2026-06-02: закрывать и на ошибке (была FD-течь)
 
 def load_obsidian_data():
     now=time.time()
@@ -225,10 +327,30 @@ def load_obsidian_data():
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,*a): pass
+    def _auth_ok(self):
+        import base64
+        # Basic-auth: креды из .env (DASHBOARD_AUTH=user:pass, .env gitignored). Фолбэк на старые,
+        # если переменная не задана. FIX 2026-06-01: убрали захардкоженный nikita:1980 из кода (он в git).
+        creds = os.environ.get("DASHBOARD_AUTH")
+        if not creds:   # FIX 2026-06-02: нет фолбэка на публичные nikita:1980 — нет креды → недоступно
+            creds = os.urandom(16).hex()
+        want = "Basic " + base64.b64encode(creds.encode()).decode()
+        if self.headers.get("Authorization","") == want:
+            return True
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", 'Basic realm="ALPHA-7"')
+        self.send_header("Content-Length","0")
+        self.end_headers()
+        return False
     def do_GET(self):
+        if not self._auth_ok(): return
         path=urlparse(self.path).path
         if path in ("/","/index.html"): self._html(HTML)
+        elif path in ("/alpha7","/alpha","/a7"):
+            try: self._html((Path(__file__).parent/"dashboard_alpha7.html").read_text(encoding="utf-8"))
+            except Exception as e: self.send_response(500); self.end_headers(); self.wfile.write(str(e).encode())
         elif path=="/api/data": self._json(build_data())
+        elif path=="/api/rca": self._json(build_selfanalysis())
         elif path=="/api/liq": self._json(load_liq_data())
         elif path=="/api/obsidian": self._json(load_obsidian_data())
         elif path.startswith("/charts/"): self._chart(path[8:])
