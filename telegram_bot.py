@@ -22,7 +22,7 @@ import sys
 import time
 import threading
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -184,7 +184,9 @@ def tg_get_updates(token: str, offset: int, timeout: int = 30) -> Optional[list]
     try:
         r = requests.get(
             f"{TG_BASE}/bot{token}/getUpdates",
-            params={"offset": offset, "timeout": timeout, "allowed_updates": ["message"]},
+            params={"offset": offset, "timeout": timeout,
+                    # P0-2 (петля): без callback_query TG не доставит нажатия кнопок
+                    "allowed_updates": '["message","callback_query"]'},
             timeout=timeout + 5,
             proxies=_PROXIES,
         )
@@ -351,6 +353,141 @@ def _run_scan_thread(token: str, chat_id: str):
 
 
 # ─── Роутер команд ────────────────────────────────────────────────────────────
+
+# ─── P0-2 (петля «алерт → действие → результат»): callback-обработка ─────────
+
+ALERTS_INDEX_PATH = DIR / "outcomes" / "alerts_index.json"
+
+
+def tg_answer_callback(token: str, callback_id: str, text: str = "") -> bool:
+    """Обязательный ответ на callback_query — иначе у кнопки вечный спиннер."""
+    try:
+        r = requests.post(f"{TG_BASE}/bot{token}/answerCallbackQuery",
+                          json={"callback_query_id": callback_id, "text": text[:190]},
+                          timeout=10, proxies=_PROXIES)
+        return bool(r.json().get("ok"))
+    except Exception as e:
+        _log(f"answerCallbackQuery error: {e}")
+        return False
+
+
+def tg_edit_markup(token: str, chat_id: str, message_id, markup: dict) -> bool:
+    """Заменяет inline-клавиатуру сообщения (метка «✅ вошёл» / «⏭ пропущен»)."""
+    try:
+        r = requests.post(f"{TG_BASE}/bot{token}/editMessageReplyMarkup",
+                          json={"chat_id": chat_id, "message_id": message_id,
+                                "reply_markup": markup},
+                          timeout=10, proxies=_PROXIES)
+        return bool(r.json().get("ok"))
+    except Exception as e:
+        _log(f"editMessageReplyMarkup error: {e}")
+        return False
+
+
+def _update_alert_index(short_id: str, patch: dict):
+    """Merge-патч записи в alerts_index.json (атомарно через file_lock)."""
+    from file_lock import atomic_json_update
+
+    def _upd(idx):
+        if not isinstance(idx, dict):
+            idx = {}
+        if short_id in idx:
+            idx[short_id] = {**idx[short_id], **patch}
+        return idx
+
+    atomic_json_update(ALERTS_INDEX_PATH, _upd, default={})
+
+
+def handle_callback(cb: dict, token: str, owner_chat_id: str):
+    """[✅ Вошёл] → trades.json через trade_logger (status=open) + link к сигналу;
+    [⏭ Пропустил] → пометка skipped в alerts_index (статистика дисциплины).
+    Идемпотентно: повторное нажатие / протухший short_id → пояснение, без дублей."""
+    cb_id   = cb.get("id", "")
+    data    = cb.get("data") or ""
+    from_id = str((cb.get("from") or {}).get("id", ""))
+    msg     = cb.get("message") or {}
+    cb_chat = str(((msg.get("chat") or {}).get("id", "")))
+    msg_id  = msg.get("message_id")
+
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != "tr":
+        tg_answer_callback(token, cb_id)
+        return
+    action, sid = parts[1], parts[2]
+
+    if action == "noop":
+        tg_answer_callback(token, cb_id, "Уже обработано")
+        return
+
+    # Безопасность: кнопки принимаем только от владельца
+    # (его user_id == личный owner_chat_id; в TG личный chat_id = user_id)
+    if str(owner_chat_id) and from_id != str(owner_chat_id):
+        _log(f"Отклонён callback от неавторизованного from_id={from_id}")
+        tg_answer_callback(token, cb_id, "Не авторизован")
+        return
+
+    try:
+        from file_lock import atomic_json_read
+        idx = atomic_json_read(ALERTS_INDEX_PATH, default={}) or {}
+    except Exception as e:
+        _log(f"alerts_index read error: {e}")
+        tg_answer_callback(token, cb_id, "⚠ Индекс недоступен — действие не записано")
+        return
+
+    rec = idx.get(sid)
+    if not rec:
+        tg_answer_callback(token, cb_id,
+                           "⚠ Сигнал устарел (выпал из индекса) — действие не записано")
+        return
+    if rec.get("status") in ("entered", "skipped"):
+        tg_answer_callback(token, cb_id, f"Уже записано ранее: {rec['status']}")
+        return
+
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
+    if action == "skip":
+        _update_alert_index(sid, {"status": "skipped", "action_ts": now_iso})
+        tg_answer_callback(token, cb_id, "⏭ Пропуск записан")
+        if msg_id:
+            tg_edit_markup(token, cb_chat, msg_id, {"inline_keyboard": [[
+                {"text": "⏭ пропущен", "callback_data": f"tr:noop:{sid}"}]]})
+        return
+
+    if action == "in":
+        try:
+            import trade_logger as _tl
+            trade = {
+                "symbol":             rec.get("symbol"),
+                "setup":              rec.get("setup"),
+                "score":              rec.get("score"),
+                "grade":              rec.get("grade"),
+                "direction":          rec.get("direction") or "long",
+                "entry_ts":           now_iso,
+                "entry_price":        rec.get("entry"),
+                "stop_price":         rec.get("sl"),
+                "tp1_price":          rec.get("tp"),
+                "status":             "open",
+                "screener_signal_ts": rec.get("run_ts"),
+            }
+            tid = _tl.log_trade(trade)
+            try:
+                # Бэкфилл контекста из resolved.csv (если сигнал уже зарезолвлен)
+                _tl.link_screener_signal(tid, rec.get("run_ts") or "", rec.get("symbol") or "")
+            except Exception as _le:
+                _log(f"link_screener_signal (не критично): {_le}")
+            _update_alert_index(sid, {"status": "entered", "trade_id": tid,
+                                      "action_ts": now_iso})
+            tg_answer_callback(token, cb_id, "✅ Вход записан (trades.json, статус open)")
+            if msg_id:
+                tg_edit_markup(token, cb_chat, msg_id, {"inline_keyboard": [[
+                    {"text": "✅ вошёл (записано)", "callback_data": f"tr:noop:{sid}"}]]})
+        except Exception as e:
+            _log(f"trade log error: {e}")
+            tg_answer_callback(token, cb_id, f"🔴 Ошибка записи: {e}")
+        return
+
+    tg_answer_callback(token, cb_id)
+
 
 def handle_command(text: str, token: str, chat_id: str, authorized_chat_id: str):
     """Парсит команду и отправляет ответ."""
@@ -651,6 +788,14 @@ def run_bot():
             _fail_count = 0   # успех — сбрасываем счётчик
             for upd in updates:
                 offset = upd["update_id"] + 1
+                # P0-2 (петля): нажатия inline-кнопок [Вошёл/Пропустил]
+                cb = upd.get("callback_query")
+                if cb:
+                    try:
+                        handle_callback(cb, token, owner_chat_id)
+                    except Exception as _cb_e:
+                        _log(f"callback error (не валим поллинг): {_cb_e}")
+                    continue
                 msg    = upd.get("message", {})
                 if not msg:
                     continue
