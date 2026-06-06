@@ -398,6 +398,47 @@ def _update_alert_index(short_id: str, patch: dict):
     atomic_json_update(ALERTS_INDEX_PATH, _upd, default={})
 
 
+def _backfill_pump_context(_tl, trade_id: str, rec: dict):
+    """review-fix: контекст pump/rug сделки из outcomes/pump_resolved.csv
+    (link_screener_signal знает только resolved.csv с другой схемой).
+    Матч: symbol + |ts − alert_ts| < 30 мин; ближайшая строка. Best-effort:
+    на момент нажатия сигнал мог ещё не зарезолвиться — тогда просто пропуск.
+    Поля кладём в pump_*-ключи (честно: это 4h-метрики, не 24h)."""
+    import csv as _csv
+    path = DIR / "outcomes" / "pump_resolved.csv"
+    if not path.exists():
+        return
+    try:
+        alert_dt = datetime.fromisoformat(str(rec.get("run_ts")))
+        alert_epoch = alert_dt.replace(tzinfo=timezone.utc).timestamp()
+    except Exception:
+        return
+    best = None
+    with open(path, encoding="utf-8") as f:
+        for row in _csv.DictReader(f):
+            if row.get("symbol") != rec.get("symbol"):
+                continue
+            try:
+                dt = abs(float(row.get("ts") or 0) - alert_epoch)
+            except ValueError:
+                continue
+            if dt < 1800 and (best is None or dt < best[0]):
+                best = (dt, row)
+    if not best:
+        return
+    row = best[1]
+    trades = _tl._load_trades()
+    for t in trades:
+        if t.get("trade_id") == trade_id:
+            if not t.get("funding"):
+                t["funding"] = row.get("funding")
+            t["pump_oi_chg_4h"] = row.get("oi_chg_4h")
+            t["pump_cvd_pct"]   = row.get("cvd_pct")
+            t["pump_stage"]     = row.get("stage")
+            break
+    _tl._save_trades(trades)
+
+
 def handle_callback(cb: dict, token: str, owner_chat_id: str):
     """[✅ Вошёл] → trades.json через trade_logger (status=open) + link к сигналу;
     [⏭ Пропустил] → пометка skipped в alerts_index (статистика дисциплины).
@@ -470,11 +511,20 @@ def handle_callback(cb: dict, token: str, owner_chat_id: str):
                 "screener_signal_ts": rec.get("run_ts"),
             }
             tid = _tl.log_trade(trade)
-            try:
-                # Бэкфилл контекста из resolved.csv (если сигнал уже зарезолвлен)
-                _tl.link_screener_signal(tid, rec.get("run_ts") or "", rec.get("symbol") or "")
-            except Exception as _le:
-                _log(f"link_screener_signal (не критично): {_le}")
+            _setup_l = str(rec.get("setup") or "").lower()
+            if _setup_l in ("pump", "rug_prep"):
+                # review-fix (wf_833df4a5): pump/rug резолвятся в pump_resolved.csv
+                # (схема ts-epoch) — link_screener_signal туда не смотрит
+                try:
+                    _backfill_pump_context(_tl, tid, rec)
+                except Exception as _pe:
+                    _log(f"pump backfill (не критично): {_pe}")
+            else:
+                try:
+                    # Бэкфилл контекста из resolved.csv (если сигнал уже зарезолвлен)
+                    _tl.link_screener_signal(tid, rec.get("run_ts") or "", rec.get("symbol") or "")
+                except Exception as _le:
+                    _log(f"link_screener_signal (не критично): {_le}")
             _update_alert_index(sid, {"status": "entered", "trade_id": tid,
                                       "action_ts": now_iso})
             tg_answer_callback(token, cb_id, "✅ Вход записан (trades.json, статус open)")
@@ -787,6 +837,17 @@ def handle_command(text: str, token: str, chat_id: str, authorized_chat_id: str)
             t["status"] = "closed"
             t["exit_reason"] = "manual"
             t = _tl._derive_fields(t)
+            # review-fix (wf_833df4a5): outcome_label для ручного закрытия — из R,
+            # иначе ЛЮБОЙ /close помечался 'breakeven' (pnl_usd пуст) и stats давал WR=0%
+            _rv = t.get("r_multiple")
+            if _rv is not None:
+                try:
+                    _rvf = float(_rv)
+                    t["outcome_label"] = ("profitable" if _rvf > 0.05
+                                          else "unprofitable" if _rvf < -0.05
+                                          else "breakeven")
+                except (TypeError, ValueError):
+                    pass
             trades[i] = t
             _tl._save_trades(trades)
             r_str = t.get("r_multiple")
