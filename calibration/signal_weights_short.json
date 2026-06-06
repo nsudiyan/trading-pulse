@@ -1,7 +1,0 @@
-{
-  "_note": "AUC=0.4844 < 0.55 threshold; only empirically robust weights deployed",
-  "_auc": 0.4844,
-  "_n": 371,
-  "_baseline_wr": 0.447,
-  "score_gt150": -8.8
-}

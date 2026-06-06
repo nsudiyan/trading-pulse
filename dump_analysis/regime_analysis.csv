@@ -1,4 +1,0 @@
-regime,regime_code,n_windows_total,n_dumps_total,n_dumps_test,base_rate_test,precision_05,recall_05,lift_top25,credibility,lift_vol_ratio_1h,lift_vol_spike_count,lift_price_momentum_4h,lift_cvd_divergence,lift_upper_wick_ratio,lift_support_break,lift_vol_trend_slope,lift_hour_of_day,lift_oi_chg_4h,lift_funding_rate,lift_long_liq_ratio_4h
-bear,-1,2978,613,229,0.1651,0.2123,0.4236,1.4313,FACT,1.276,,0.381,,0.884,,-1.746,1.0,1.0,1.0,1.0
-sideways,0,3666,560,305,0.1769,0.3037,0.5148,1.8711,FACT,1.356,,6.048,,1.052,,-1.889,1.0,1.0,1.0,1.0
-bull,1,2194,300,158,0.1518,0.2377,0.519,1.7923,FACT,1.454,,14.478,,1.114,,-2.36,1.0,0.938,1.0,1.0

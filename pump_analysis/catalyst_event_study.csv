@@ -1,8 +1,0 @@
-category,N_pumps_analyzed,N_controls_analyzed,N_pump_with_event,N_ctrl_with_event,P_event_pump,P_event_ctrl,lift_P_ev_pump_vs_ctrl,lift_P_pump_ev_vs_base,p_value,interpretation,coverage_note
-liq_sweep,352,1099,19,7,0.054,0.0064,8.474,3.012,0.0,MEDIUM confidence,partial 2026-04-14->2026-05-27
-macro_extreme,1664,8320,687,3085,0.4129,0.3708,1.113,1.093,0.0007,статистически не подтверждено,"full 2024-05-01->2026-05-27 (Fear/Greed index, NOT FOMC/CPI)"
-stablecoin_inflow,1664,8320,113,245,0.0679,0.0294,2.306,1.894,0.0,HIGH confidence,full 2024-05-01->2026-05-27
-news_signal,360,1131,38,75,0.1056,0.0663,1.592,1.393,0.0115,MEDIUM confidence,"partial 2026-04-12->2026-05-26 (screener output, NOT external news)"
-token_unlock,0,0,0,0,,,,,,no_coverage,no_coverage -- 0 real rows in token_unlocks.csv
-whale_positions,0,0,0,0,,,,,,no_coverage,no_coverage -- Binance L/S endpoint rejects historical requests
-orderbook,0,0,0,0,,,,,,no_coverage,no_coverage -- real-time only
