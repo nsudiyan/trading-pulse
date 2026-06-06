@@ -107,7 +107,9 @@ def load_stablecoin():
 
 def load_news():
     df = pd.read_csv(CAT_DIR / "news_signals.csv")
-    df["ts_ms"] = _to_ms(df["run_ts"])
+    # Support both old screener schema (run_ts) and new TG-news schema (ts_utc)
+    ts_col = "ts_utc" if "ts_utc" in df.columns else "run_ts"
+    df["ts_ms"] = _to_ms(df[ts_col])
     return df
 
 

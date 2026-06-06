@@ -2,7 +2,7 @@
 channel_reader.py — Читает сигналы и новости из Telegram каналов.
 
 Каналы:
-  @RoseSignalsPremium, @rose, @marketsAlpha,
+  @RoseSignalsPremium, @rose, @marketsAlpha, @newsr1se,
   @hamaha_cryptodaytrading, @cryptoattack24
 
 Читает последние сообщения, парсит сигналы/новости,
@@ -85,9 +85,11 @@ def _load_dotenv():
 
 
 _load_dotenv()
-CACHE_PATH  = DIR / "channel_signals_cache.json"
-SCAN_CACHE  = DIR / "last_scan_cache.json"
-TG_CFG_PATH = DIR / "telegram_config.json"
+CACHE_PATH        = DIR / "channel_signals_cache.json"
+SCAN_CACHE        = DIR / "last_scan_cache.json"
+TG_CFG_PATH       = DIR / "telegram_config.json"
+NEWS_RAW_PATH     = DIR / "outcomes" / "news_raw.jsonl"
+NEWS_SIGNALS_PATH = DIR / "pump_analysis" / "catalyst_data" / "news_signals.csv"
 
 # ─── Каналы для мониторинга ───────────────────────────────────────────────────
 
@@ -95,6 +97,7 @@ CHANNELS = [
     "RoseSignalsPremium",
     "rose",
     "marketsAlpha",
+    "newsr1se",
     "hamaha_cryptodaytrading",
     "cryptoattack24",
     "AbuzikLudit",
@@ -104,6 +107,9 @@ CHANNELS = [
     "archfund",
     "nwsmkr",
 ]
+
+# Каналы с приоритетными новостями — сырые сообщения хранятся в news_raw.jsonl
+NEWS_PRIORITY_CHANNELS = ["marketsAlpha", "newsr1se", "cryptoattack24"]
 
 # Сколько часов назад брать сообщения
 LOOKBACK_HOURS = 8
@@ -844,6 +850,8 @@ async def _fetch_channel_messages(client, channel: str, hours: int = LOOKBACK_HO
                     "text":      text,
                     "has_photo": is_photo,
                     "chart":     chart_data,
+                    "msg_id":    msg.id,
+                    "ts_utc":    msg.date.isoformat(),
                 })
 
     except ChannelPrivateError:
@@ -881,6 +889,11 @@ async def scan_channels_async(cfg: dict) -> dict:
         for channel in CHANNELS:
             print(f"  Читаю @{channel}...")
             msgs = await _fetch_channel_messages(client, channel)
+
+            # Сохраняем сырые сообщения для news_priority каналов до парсинга
+            if channel in NEWS_PRIORITY_CHANNELS:
+                _save_news_raw_batch(channel, msgs)
+
             parsed = []
             for item in msgs:
                 text      = item.get("text", "") if isinstance(item, dict) else item
@@ -1430,7 +1443,16 @@ def tg_send(token: str, chat_id: str, text: str):
             time.sleep(0.4)
 
 
+# Дайджест "АНАЛИЗ КАНАЛОВ" ОТКЛЮЧЁН по просьбе пользователя (2026-05-30): не слать в TG.
+# Затронута ТОЛЬКО периодическая сводка; фоновый кросс-чек channel_reader (confluence) и
+# индивидуальные channel-driven алерты (_send_channel_driven_alert) работают как прежде.
+# Вернуть сводку: SEND_CHANNEL_DIGEST = True.
+SEND_CHANNEL_DIGEST = False
+
+
 def send_insights(verified: dict):
+    if not SEND_CHANNEL_DIGEST:
+        return
     tg_cfg = load_tg_cfg()
     token  = tg_cfg.get("bot_token")
     if not token or not tg_cfg.get("enabled"):
@@ -1557,9 +1579,32 @@ def enrich_with_channel_signals(filtered: list) -> list:
         # Взвешенный score: сумма accuracy / N (нормализованная убеждённость)
         ch_score = sum(_acc(ch) for ch in conf_sorted) / max(len(conf_sorted), 1) if conf_sorted else 0.0
 
-        r["channel_conf"]     = conf_sorted
-        r["channel_conflict"] = sigs[opposite_dir]
-        r["channel_score"]    = round(ch_score, 3)
+        # Знаковая поправка к screener score: (accuracy - 0.5) * scale
+        # Каналы ниже 50% = контрарный сигнал → штраф; выше 50% → бонус
+        # Только при n >= CH_MIN_SAMPLES — иначе нейтрально
+        CH_MIN_SAMPLES = 15
+        CH_SCALE       = 15   # макс ±7.5 pts от одного канала
+        adj = 0.0
+        for ch in conf_sorted:
+            stats = accuracy.get(ch, {})
+            if stats.get("n", 0) >= CH_MIN_SAMPLES:
+                adj += (stats.get("accuracy", 0.5) - 0.5) * CH_SCALE
+        # Конфликтующие каналы с хорошей точностью → снижают уверенность
+        for ch in sigs[opposite_dir]:
+            stats = accuracy.get(ch, {})
+            if stats.get("n", 0) >= CH_MIN_SAMPLES and stats.get("accuracy", 0) > 0.5:
+                adj -= (stats["accuracy"] - 0.5) * CH_SCALE
+
+        r["channel_conf"]      = conf_sorted
+        r["channel_conflict"]  = sigs[opposite_dir]
+        r["channel_score"]     = round(ch_score, 3)
+        r["channel_score_adj"] = round(adj)
+        # acc_map: {channel: accuracy_pct_int} — для отображения в TG без повторной загрузки
+        r["channel_acc_map"]   = {
+            ch: int(accuracy.get(ch, {}).get("accuracy", 0) * 100)
+            for ch in (conf_sorted + sigs[opposite_dir])
+            if accuracy.get(ch, {}).get("n", 0) >= 5
+        }
 
     return filtered
 
@@ -1704,6 +1749,195 @@ def enrich_with_news_impact(filtered: list) -> list:
     return filtered
 
 
+# ─── News raw storage & ticker extraction ────────────────────────────────────
+
+def _save_news_raw_batch(channel: str, msgs: list):
+    """
+    Appends raw messages from a news_priority channel to outcomes/news_raw.jsonl.
+    Deduplicates by (channel, msg_id) to support repeated scans without re-saving.
+    """
+    NEWS_RAW_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    existing_ids: set = set()
+    if NEWS_RAW_PATH.exists():
+        for line in NEWS_RAW_PATH.read_text(encoding="utf-8").splitlines():
+            try:
+                rec = json.loads(line)
+                existing_ids.add((rec.get("channel"), rec.get("msg_id")))
+            except Exception:
+                pass
+
+    new_records = []
+    for m in msgs:
+        text = (m.get("text") or "").strip()
+        if not text:
+            continue
+        msg_id = m.get("msg_id")
+        if (channel, msg_id) in existing_ids:
+            continue
+        ts_utc = m.get("ts_utc", "")
+        link   = f"https://t.me/{channel}/{msg_id}" if msg_id else ""
+        new_records.append({
+            "text":    text,
+            "channel": channel,
+            "msg_id":  msg_id,
+            "ts_utc":  ts_utc,
+            "link":    link,
+        })
+
+    if new_records:
+        with open(NEWS_RAW_PATH, "a", encoding="utf-8") as f:
+            for r in new_records:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        print(f"[news_raw] @{channel}: +{len(new_records)} записей → {NEWS_RAW_PATH.name}")
+
+
+def _init_news_signals_csv():
+    """
+    Ensures news_signals.csv has the new TG-news schema.
+    If the file exists with the old screener schema, renames it to a backup.
+    """
+    NEWS_SIGNALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if NEWS_SIGNALS_PATH.exists():
+        header = NEWS_SIGNALS_PATH.read_text(encoding="utf-8").split("\n", 1)[0]
+        if "raw_msg_id" in header:
+            return  # already new format
+        backup = NEWS_SIGNALS_PATH.with_name("news_signals_screener_backup.csv")
+        NEWS_SIGNALS_PATH.rename(backup)
+        print(f"[news_signals] старый файл переименован в {backup.name}")
+
+    with open(NEWS_SIGNALS_PATH, "w", newline="", encoding="utf-8") as f:
+        import csv as _csv
+        _csv.writer(f).writerow(
+            ["raw_msg_id", "channel", "ts_utc", "symbol", "sentiment", "raw_link"]
+        )
+
+
+def _claude_extract_ticker(text: str) -> tuple:
+    """
+    Uses Claude Haiku to extract (symbol, sentiment) from a news message.
+    Falls back to regex if Claude is unavailable or returns no ticker.
+    """
+    try:
+        import anthropic as _ant
+    except ImportError:
+        return _regex_extract_ticker(text)
+
+    api_key = (
+        os.environ.get("ANTHROPIC_API_KEY", "")
+        or load_cfg().get("anthropic_api_key", "")
+    )
+    if not api_key:
+        return _regex_extract_ticker(text)
+
+    prompt = (
+        "Extract crypto ticker and sentiment from this Telegram news message.\n\n"
+        f"Message: {text[:500]}\n\n"
+        'Return ONLY JSON: {"symbol": "BTCUSDT", "sentiment": "bullish"}\n'
+        "Rules:\n"
+        "- symbol: always XXXUSDT format; null if no specific coin mentioned\n"
+        "- sentiment: bullish / bearish / neutral\n"
+        "- If multiple coins: most prominently mentioned one\n"
+        "- Market-wide news (no specific coin): null for symbol"
+    )
+
+    try:
+        client = _ant.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=80,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = resp.content[0].text.strip()
+        m = re.search(r'\{.*\}', raw, re.DOTALL)
+        if m:
+            data = json.loads(m.group())
+            symbol    = (data.get("symbol") or "").upper().strip() or None
+            sentiment = data.get("sentiment", "neutral")
+            if symbol and not symbol.endswith("USDT"):
+                symbol = symbol + "USDT"
+            return symbol, sentiment
+    except Exception:
+        pass
+
+    return _regex_extract_ticker(text)
+
+
+def _regex_extract_ticker(text: str) -> tuple:
+    """Regex-only ticker + sentiment extraction (no Claude)."""
+    symbol = _extract_symbol(text)
+    lo = text.lower()
+    bull = sum(1 for kw in NEWS_BULLISH_KW if kw in lo)
+    bear = sum(1 for kw in NEWS_BEARISH_KW if kw in lo)
+    sentiment = "bullish" if bull > bear else ("bearish" if bear > bull else "neutral")
+    return symbol, sentiment
+
+
+def extract_news_tickers():
+    """
+    Reads unprocessed entries from outcomes/news_raw.jsonl, extracts ticker+sentiment
+    via Claude (or regex fallback), and appends new rows to news_signals.csv.
+
+    Columns: raw_msg_id, channel, ts_utc, symbol, sentiment, raw_link
+    """
+    if not NEWS_RAW_PATH.exists():
+        return
+
+    _init_news_signals_csv()
+
+    import csv as _csv
+
+    # Load already-processed msg_ids from news_signals.csv
+    processed: set = set()
+    if NEWS_SIGNALS_PATH.exists():
+        try:
+            with open(NEWS_SIGNALS_PATH, newline="", encoding="utf-8") as f:
+                for row in _csv.DictReader(f):
+                    key = (row.get("channel"), str(row.get("raw_msg_id")))
+                    processed.add(key)
+        except Exception:
+            pass
+
+    # Read raw messages not yet extracted
+    new_rows = []
+    for line in NEWS_RAW_PATH.read_text(encoding="utf-8").splitlines():
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        channel = rec.get("channel", "")
+        msg_id  = rec.get("msg_id")
+        if (channel, str(msg_id)) in processed:
+            continue
+        text = (rec.get("text") or "").strip()
+        if not text:
+            continue
+
+        symbol, sentiment = _claude_extract_ticker(text)
+        if not symbol:
+            continue  # no ticker extracted — skip (don't pollute CSV with nulls)
+
+        new_rows.append({
+            "raw_msg_id": msg_id,
+            "channel":    channel,
+            "ts_utc":     rec.get("ts_utc", ""),
+            "symbol":     symbol,
+            "sentiment":  sentiment,
+            "raw_link":   rec.get("link", ""),
+        })
+
+    if not new_rows:
+        print("[news_tickers] нет новых записей для извлечения")
+        return
+
+    fieldnames = ["raw_msg_id", "channel", "ts_utc", "symbol", "sentiment", "raw_link"]
+    with open(NEWS_SIGNALS_PATH, "a", newline="", encoding="utf-8") as f:
+        writer = _csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writerows(new_rows)
+
+    print(f"[news_tickers] +{len(new_rows)} строк → {NEWS_SIGNALS_PATH.name}")
+
+
 # ─── Setup ───────────────────────────────────────────────────────────────────
 
 async def _setup_async():
@@ -1761,6 +1995,171 @@ async def _session_async():
         print("Нет сессии. Запусти: python3 channel_reader.py setup")
 
 
+def _collect_market_state_for_channel(sym: str, ticker: dict, screener_mod, btc_4h: float) -> dict:
+    """Минимальный candidate для filter_candidate из канал-сигнала."""
+    price = float(ticker.get("lastPrice") or 0)
+    funding = float(ticker.get("fundingRate") or 0) * 100
+    turnover = float(ticker.get("turnover24h") or 0)
+    prev = float(ticker.get("prevPrice24h") or price)
+    pchg_24h = (price - prev) / prev * 100 if prev > 0 else 0
+
+    # OI 4h из 5-мин истории (если доступна)
+    oi_chg_4h = 0.0
+    try:
+        oi_hist = screener_mod.fetch_oi_history(sym, limit=50, interval="5min")
+        if oi_hist and len(oi_hist) >= 8:
+            oi_chg_4h = (oi_hist[-1] - oi_hist[0]) / oi_hist[0] * 100 if oi_hist[0] else 0
+    except Exception:
+        pass
+
+    return {
+        "symbol":        sym,
+        "price":         price,
+        "funding":       round(funding, 4),
+        "oi_chg_4h":     round(oi_chg_4h, 2),
+        "price_chg_4h":  round(pchg_24h, 2),
+        "turnover_24h":  turnover,
+        "btc_4h":        round(btc_4h, 2),
+    }
+
+
+def _process_channel_signals_through_claude(channel_results: dict):
+    """
+    Для каждого свежего сигнала канала: подтянуть текущее состояние Bybit,
+    прогнать через claude_realtime_filter, GO → отправить в личку с тегом канала.
+    """
+    try:
+        from claude_realtime_filter import filter_candidate
+    except Exception:
+        print("[Channel-Claude] claude_realtime_filter недоступен")
+        return
+    try:
+        import screener as _scr
+    except Exception:
+        print("[Channel-Claude] screener недоступен")
+        return
+
+    # Собираем уникальные (symbol, direction) — дедуп по символу
+    seen: dict = {}
+    for ch_name, items in channel_results.items():
+        for it in items:
+            if it.get("type") != "signal":
+                continue
+            sym = (it.get("symbol") or "").upper().strip()
+            direction = (it.get("direction") or "").upper().strip()
+            if not sym or direction not in ("LONG", "SHORT"):
+                continue
+            if not sym.endswith("USDT"):
+                sym = sym + "USDT"
+            if sym in seen:
+                seen[sym]["channels"].append(ch_name)
+                continue
+            seen[sym] = {
+                "symbol":    sym,
+                "direction": direction,
+                "channels":  [ch_name],
+                "raw_first": (it.get("raw") or it.get("note") or "")[:200],
+            }
+
+    if not seen:
+        print("[Channel-Claude] свежих сигналов нет")
+        return
+
+    print(f"[Channel-Claude] {len(seen)} уникальных символов от каналов")
+
+    try:
+        tickers = _scr.fetch_all_tickers()
+        btc_4h = _scr.fetch_btc_4h_change()
+    except Exception as e:
+        print(f"[Channel-Claude] fetch error: {e}")
+        return
+
+    sent = 0
+    for sym, info in seen.items():
+        ticker = tickers.get(sym)
+        if not ticker:
+            print(f"[Channel-Claude] {sym}: не на Bybit linear")
+            continue
+
+        cand = _collect_market_state_for_channel(sym, ticker, _scr, btc_4h)
+        cand["setup"]     = "channel_signal"
+        cand["direction"] = info["direction"]
+        cand["score"]     = 100   # доверяем каналу как базе
+
+        # Извлекаем контекст ВОКРУГ упоминания символа, а не сырой текст
+        # (raw мог содержать упоминания других монет — путало Claude)
+        sym_base = sym.replace("USDT", "").upper()
+        raw_text = info["raw_first"]
+        snippet = ""
+        if raw_text and sym_base:
+            up = raw_text.upper()
+            idx = up.find(sym_base)
+            if idx >= 0:
+                start = max(0, idx - 60)
+                end = min(len(raw_text), idx + 80)
+                snippet = raw_text[start:end].strip()
+
+        cand["signals"]   = [
+            f"Канал-сигнал {info['direction']}: {', '.join(info['channels'][:3])} (×{len(info['channels'])})",
+        ]
+        if snippet:
+            cand["signals"].append(f"Контекст-{sym_base}: …{snippet}…")
+
+        v = filter_candidate(sym, cand, source="channel_reader")
+        action = v.get("action")
+        print(f"[Channel-Claude] {sym} ({info['direction']}) → {action} "
+              f"conf={v.get('confidence',0):.2f}  {v.get('reasoning','')[:100]}")
+        if action != "GO":
+            continue
+        _send_channel_driven_alert(sym, info, cand, v)
+        sent += 1
+        if sent >= 3:   # ограничение на один скан — не спамим
+            print(f"[Channel-Claude] лимит 3 GO/скан достигнут")
+            break
+
+    if sent == 0:
+        print(f"[Channel-Claude] Claude отфильтровал все {len(seen)} символов")
+
+
+def _send_channel_driven_alert(sym: str, info: dict, cand: dict, verdict: dict):
+    """TG-сообщение для GO-сигнала, пришедшего из канала."""
+    cfg = load_tg_cfg()
+    token = cfg.get("bot_token", "")
+    chat  = str(cfg.get("chat_id", ""))
+    if not token or not chat:
+        return
+    direction = info["direction"]
+    side_icon = "🟢" if direction == "LONG" else "🔴"
+    channels  = ", ".join(f"@{c}" for c in info["channels"][:4])
+    price = cand.get("price", 0)
+    tp_pct = verdict.get("tp_pct", 6)
+    sl_pct = verdict.get("sl_pct", 3)
+    if direction == "LONG":
+        tp_px = price * (1 + tp_pct/100); sl_px = price * (1 - sl_pct/100)
+    else:
+        tp_px = price * (1 - tp_pct/100); sl_px = price * (1 + sl_pct/100)
+    rr = tp_pct / sl_pct if sl_pct else 0
+
+    lines = [
+        f"📡 <b>CHANNEL-DRIVEN</b>  |  {datetime.now().strftime('%H:%M')}",
+        f"{side_icon} <b>{_esc(sym)}</b>  {direction}  ← {_esc(channels)}",
+        "",
+        f"  Цена:   <code>{price:.5g}</code>",
+        f"  Funding: {cand.get('funding', 0):+.4f}%",
+        f"  OI 4h:   {cand.get('oi_chg_4h', 0):+.2f}%",
+        "",
+        f"  🎯 TP  <code>{tp_px:.5g}</code> (+{tp_pct:.1f}%)",
+        f"  🛑 SL  <code>{sl_px:.5g}</code> (−{sl_pct:.1f}%)",
+        f"  R:R    <b>{rr:.1f}</b>",
+        "",
+        f"🧠 Claude conf={verdict.get('confidence',0):.0%}: {_esc(verdict.get('reasoning',''))[:280]}",
+    ]
+    for risk in (verdict.get("risks") or [])[:3]:
+        lines.append(f"  ⚠ {_esc(str(risk))[:120]}")
+
+    tg_send(token, chat, "\n".join(lines))
+
+
 async def _scan_async(silent: bool = False):
     cfg = load_cfg()
     if not cfg.get("api_id"):
@@ -1781,6 +2180,18 @@ async def _scan_async(silent: bool = False):
     print(f"Итого: {total_signals} сигналов, {total_news} новостей")
 
     save_cache(channel_results)
+
+    # Извлекаем тикеры из новостных каналов → news_signals.csv
+    try:
+        extract_news_tickers()
+    except Exception as e:
+        print(f"[news_tickers] error: {e}")
+
+    # Channel-driven Claude flow: каждый свежий сигнал → Claude RT-фильтр → GO → TG
+    try:
+        _process_channel_signals_through_claude(channel_results)
+    except Exception as e:
+        print(f"[Channel-Claude] error: {e}")
 
     verified = cross_verify(channel_results)
 
@@ -1833,4 +2244,6 @@ def main():
 
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     main()
