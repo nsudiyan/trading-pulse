@@ -15,6 +15,7 @@ telegram_bot.py — Интерактивный Telegram бот для скрин
 Требования: те же что у screener.py (requests, tabulate).
 """
 
+import atexit
 import json
 import os
 import sys
@@ -31,6 +32,7 @@ import requests
 
 DIR         = Path(__file__).parent
 CONFIG_PATH = DIR / "telegram_config.json"
+PID_PATH    = DIR / "telegram_bot.pid"
 
 
 # ─── .env loader ─────────────────────────────────────────────────────────────
@@ -52,8 +54,13 @@ def _load_dotenv():
 
 
 _load_dotenv()
+
+_TELEGRAM_PROXY = os.environ.get("TELEGRAM_PROXY")
+_PROXIES = {"http": _TELEGRAM_PROXY, "https": _TELEGRAM_PROXY} if _TELEGRAM_PROXY else {}
+
 CACHE_PATH  = DIR / "last_scan_cache.json"   # кэш последнего скана для /top
 LOG_PATH    = DIR / "bot.log"
+LOG_MAX_BYTES = 50 * 1024 * 1024             # 50MB — ротация лога (держим 1 бэкап .1), чтоб не пух до гигабайтов
 
 # ─── Импорт скринера ─────────────────────────────────────────────────────────
 
@@ -96,6 +103,9 @@ def _log(msg: str):
         print(line, flush=True)
     # Всегда пишем в файл (в daemon-режиме не дублируем — stdout уже НЕ redirected)
     try:
+        # Ротация по размеру: bot.log не должен пухнуть безгранично (был 1ГБ)
+        if os.path.exists(LOG_PATH) and os.path.getsize(LOG_PATH) > LOG_MAX_BYTES:
+            os.replace(LOG_PATH, f"{LOG_PATH}.1")  # держим 1 бэкап
         with open(LOG_PATH, "a", encoding="utf-8") as f:
             f.write(line + "\n")
     except Exception:
@@ -152,6 +162,7 @@ def tg_send(token: str, chat_id: str, text: str, parse_mode: str = "HTML") -> bo
                     "disable_web_page_preview": True,
                 },
                 timeout=10,
+                proxies=_PROXIES,
             )
             data = r.json()
             if not data.get("ok"):
@@ -175,6 +186,7 @@ def tg_get_updates(token: str, offset: int, timeout: int = 30) -> Optional[list]
             f"{TG_BASE}/bot{token}/getUpdates",
             params={"offset": offset, "timeout": timeout, "allowed_updates": ["message"]},
             timeout=timeout + 5,
+            proxies=_PROXIES,
         )
         data = r.json()
         if data.get("ok"):
@@ -499,6 +511,63 @@ def handle_command(text: str, token: str, chat_id: str, authorized_chat_id: str)
             except Exception as exc:
                 tg_send(token, chat_id, f"❌ Ошибка чтения кэша: {exc}")
 
+    elif cmd in ("/budget", "/cost", "/b"):
+        # Стоимость Claude RT-фильтра за 24h
+        try:
+            from claude_realtime_filter import summarize_costs
+            s = summarize_costs(24)
+            lines = [
+                f"💰 <b>Claude RT-фильтр — 24h</b>",
+                "",
+                f"  Вызовов: <b>{s['calls']}</b>",
+                f"  Стоимость: <b>${s['cost_usd']:.4f}</b>",
+                f"  Tokens: in={s['in_tok']:,} out={s['out_tok']:,}",
+            ]
+            if s["by_verdict"]:
+                v_str = "  ".join(f"{k}:{v}" for k, v in s["by_verdict"].items())
+                lines.append(f"  Verdicts: {v_str}")
+            tg_send(token, chat_id, "\n".join(lines))
+        except Exception as e:
+            tg_send(token, chat_id, f"❌ /budget error: {e}")
+
+    elif cmd in ("/pause", "/p"):
+        try:
+            from claude_realtime_filter import set_enabled
+            set_enabled(False)
+            tg_send(token, chat_id, "⏸ <b>Claude RT-фильтр выключен</b>\nВсе сигналы будут уходить в TG без фильтра.\n\n/resume — включить обратно")
+        except Exception as e:
+            tg_send(token, chat_id, f"❌ /pause error: {e}")
+
+    elif cmd in ("/resume", "/r"):
+        try:
+            from claude_realtime_filter import set_enabled
+            set_enabled(True)
+            tg_send(token, chat_id, "▶️ <b>Claude RT-фильтр включён</b>\nКаждый сигнал проходит через Sonnet 4.6.")
+        except Exception as e:
+            tg_send(token, chat_id, f"❌ /resume error: {e}")
+
+    elif cmd in ("/wait", "/watchlist", "/w"):
+        try:
+            from claude_realtime_filter import list_watchlist
+            items = list_watchlist()
+            if not items:
+                tg_send(token, chat_id, "🕒 Wait-watchlist пуст")
+                return
+            now = int(time.time())
+            lines = [f"🕒 <b>Wait-watchlist ({len(items)} активных)</b>", ""]
+            for it in items[:10]:
+                age = int((now - it.get("ts", 0)) / 60)
+                lines.append(
+                    f"  • <b>{it['symbol']}</b> [{it.get('setup','?')}]  "
+                    f"conf={it.get('confidence',0):.0%}  ({age}m)"
+                )
+                trig = it.get("trigger", "")
+                if trig:
+                    lines.append(f"     → {trig[:120]}")
+            tg_send(token, chat_id, "\n".join(lines))
+        except Exception as e:
+            tg_send(token, chat_id, f"❌ /wait error: {e}")
+
     elif cmd in ("/help", "/start"):
         text_out = (
             "<b>📈 Screener Bot — Команды</b>\n\n"
@@ -518,6 +587,12 @@ def handle_command(text: str, token: str, chat_id: str, authorized_chat_id: str)
             "/liq large — крупные ликвидации за 1h\n"
             "/liq large 4h — крупные ликвидации за 4h\n"
             "\n"
+            "<b>🧠 Claude RT-фильтр</b>\n"
+            "/budget — стоимость и вердикты за 24h\n"
+            "/wait — текущий WAIT-watchlist\n"
+            "/pause — выключить фильтр (всё в TG)\n"
+            "/resume — включить обратно\n"
+            "\n"
             "/help — эта справка\n\n"
             "<i>Автоматические сканы идут каждые 4ч (00, 04, 08, 12, 16, 20 UTC).\n"
             "Сборщик ликвидаций: python3 liquidation_tracker.py</i>"
@@ -534,6 +609,9 @@ def run_bot():
     cfg = load_config()
     token   = cfg.get("bot_token")
     chat_id = cfg.get("chat_id")
+    # owner_chat_id — личный чат владельца для команд (/run, /top и т.д.)
+    # Если не задан явно — используем chat_id (обратная совместимость)
+    owner_chat_id = str(cfg.get("owner_chat_id") or chat_id)
 
     if not token or not chat_id:
         _log("ОШИБКА: bot_token или chat_id не настроены в telegram_config.json")
@@ -541,7 +619,7 @@ def run_bot():
 
     # Проверка токена
     try:
-        r = requests.get(f"{TG_BASE}/bot{token}/getMe", timeout=8)
+        r = requests.get(f"{TG_BASE}/bot{token}/getMe", timeout=8, proxies=_PROXIES)
         data = r.json()
         if not data.get("ok"):
             _log(f"ОШИБКА: Неверный bot_token: {data.get('description')}")
@@ -552,8 +630,9 @@ def run_bot():
         _log(f"ОШИБКА при проверке токена: {e}")
         sys.exit(1)
 
-    tg_send(token, str(chat_id),
+    tg_send(token, owner_chat_id,
             f"🤖 <b>Бот запущен</b>  |  {datetime.now().strftime('%H:%M:%S')}\n"
+            f"Сигналы → {chat_id}\n"
             f"/help — команды")
 
     offset = 0
@@ -578,7 +657,7 @@ def run_bot():
                 from_id = str(msg.get("chat", {}).get("id", ""))
                 text    = msg.get("text", "")
                 if text.startswith("/"):
-                    handle_command(text, token, from_id, str(chat_id))
+                    handle_command(text, token, from_id, owner_chat_id)
         except KeyboardInterrupt:
             _log("Остановлен вручную.")
             break
@@ -589,6 +668,20 @@ def run_bot():
 
 
 # ─── CLI ─────────────────────────────────────────────────────────────────────
+
+def _acquire_pid_lock():
+    """Не даёт запустить больше одного экземпляра бота."""
+    if PID_PATH.exists():
+        try:
+            existing_pid = int(PID_PATH.read_text().strip())
+            os.kill(existing_pid, 0)   # OSError если процесс мёртв
+            print(f"[PID Lock] Бот уже запущен (PID {existing_pid}). Выход.")
+            sys.exit(0)
+        except (ValueError, OSError):
+            PID_PATH.unlink(missing_ok=True)   # устаревший PID-файл
+    PID_PATH.write_text(str(os.getpid()))
+    atexit.register(lambda: PID_PATH.unlink(missing_ok=True))
+
 
 def main():
     args = sys.argv[1:]
@@ -612,6 +705,7 @@ def main():
         global _daemon_mode
         _daemon_mode = True
 
+    _acquire_pid_lock()
     run_bot()
 
 

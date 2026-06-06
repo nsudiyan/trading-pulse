@@ -44,6 +44,7 @@ KNOWLEDGE_PATH = BASE_DIR / "knowledge_base.md"
 CONSECUTIVE_LOSS_THRESHOLD = 3     # consecutive STOP/LOSS to trigger
 DRAWDOWN_R_THRESHOLD       = -6.0  # cumulative R in last DRAWDOWN_WINDOW trades
 DRAWDOWN_WINDOW            = 10    # trades to look back for drawdown
+AUTO_UNLOCK_HOURS          = 4     # hours before Audit Mode auto-expires
 
 LOSS_OUTCOMES = {"STOP", "LOSS"}
 
@@ -79,13 +80,32 @@ def _save_state(state: dict):
     )
 
 
+def _is_expired(state: dict) -> bool:
+    """True if active Audit Mode has exceeded AUTO_UNLOCK_HOURS since activation."""
+    if not state.get("active"):
+        return False
+    activated_at = state.get("activated_at", "")
+    if not activated_at:
+        return False
+    try:
+        activated_dt = datetime.strptime(activated_at[:19], "%Y-%m-%dT%H:%M:%S")
+        return (datetime.utcnow() - activated_dt).total_seconds() >= AUTO_UNLOCK_HOURS * 3600
+    except Exception:
+        return False
+
+
 # ─── screener gate ────────────────────────────────────────────────────────────
 
 def is_audit_mode() -> bool:
-    """Quick non-destructive check — used by screener.py at startup."""
+    """Used by screener.py at startup. Auto-deactivates silently if AUTO_UNLOCK_HOURS elapsed."""
     try:
         state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
-        return bool(state.get("active"))
+        if not state.get("active"):
+            return False
+        if _is_expired(state):
+            deactivate(reason="auto_unlock", silent=True)
+            return False
+        return True
     except Exception:
         return False
 
@@ -445,7 +465,9 @@ def check_and_activate(silent: bool = False) -> bool:
     """
     state = load_state()
     if state.get("active"):
-        return False  # already in audit mode, caller handles
+        if _is_expired(state):
+            deactivate(reason="auto_unlock")
+        return False  # already in audit mode (or just auto-unlocked), caller handles
 
     trades = _read_recent_resolved(max(DRAWDOWN_WINDOW + 5, 20))
     if not trades:
@@ -491,24 +513,28 @@ def check_and_activate(silent: bool = False) -> bool:
     return True
 
 
-def deactivate(reason: str = "manual_exit") -> bool:
+def deactivate(reason: str = "manual_exit", silent: bool = False) -> bool:
     """
     Exit Audit Mode. Removes the KB section and sends a clearance alert.
     Returns False if not currently active.
+    silent=True suppresses stdout (used by is_audit_mode() called from screener).
     """
     state = load_state()
     if not state.get("active"):
-        print("Audit Mode is not currently active.")
+        if not silent:
+            print("Audit Mode is not currently active.")
         return False
 
-    state["active"]   = False
-    state["exit_at"]  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    state["active"]      = False
+    state["exit_at"]     = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     state["exit_reason"] = reason
     _save_state(state)
     _remove_audit_from_knowledge_base()
     _send_telegram_alert(state, {})
 
-    print("✅ Audit Mode деактивирован. Screener разблокирован.")
+    if not silent:
+        label = f" (авто, через {AUTO_UNLOCK_HOURS}ч)" if reason == "auto_unlock" else ""
+        print(f"✅ Audit Mode деактивирован{label}. Screener разблокирован.")
     return True
 
 
@@ -539,6 +565,18 @@ def _print_status():
     if state.get("active"):
         print(f"  ⛔ AUDIT MODE АКТИВЕН")
         print(f"  Активирован : {state.get('activated_at', '')[:19]} UTC")
+        try:
+            activated_dt = datetime.strptime(state.get("activated_at", "")[:19], "%Y-%m-%dT%H:%M:%S")
+            elapsed_s = (datetime.utcnow() - activated_dt).total_seconds()
+            remaining_s = AUTO_UNLOCK_HOURS * 3600 - elapsed_s
+            if remaining_s > 0:
+                rh, rm = divmod(int(remaining_s), 3600)
+                rm //= 60
+                print(f"  Авто-снятие : через {rh}ч {rm}м  (лимит: {AUTO_UNLOCK_HOURS}ч)")
+            else:
+                print(f"  Авто-снятие : ⏰ срок истёк — снимется при следующем запуске screener или --check")
+        except Exception:
+            pass
         print(f"  Причина     : {state.get('trigger_reason')}")
         print(f"  Серия убытков: {state.get('streak_count')}")
         print(f"  Просадка R  : {state.get('drawdown_r', 0):.2f}")
