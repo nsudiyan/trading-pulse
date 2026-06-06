@@ -23,6 +23,8 @@ last_scan_cache.json
 
 # Переменные окружения (СЕКРЕТЫ — никогда не коммитить)
 .env
+.env.*
+!.env.example
 channel_signals_cache.json
 liqtracker.log
 liqtracker_error.log
