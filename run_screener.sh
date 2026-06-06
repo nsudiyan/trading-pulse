@@ -1,4 +1,7 @@
 #!/bin/bash
+# P1-8b: ранний cd — фикс "shell-init: getcwd" (битая cwd при рестарте)
+cd "$(dirname "$0")" || exit 1
+set -u
 # Wrapper для LaunchAgent: загружает .env и запускает screener.py
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
