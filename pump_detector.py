@@ -1701,8 +1701,12 @@ def send_pump_alert(c: dict, cfg: dict = None) -> bool:
                 if _act == "FAIL_OPEN" and FAIL_CLOSED_PUMP:
                     _log(f"[RT-Filter] {c['symbol']} FAIL_OPEN (Claude недоступен) → SKIP (fail-closed)")
                     return False
-                if _act not in ("GO", "FAIL_OPEN"):
-                    return False  # SKIP / WAIT — не шлём, не считаем в daily_limit
+                _macro_wait = (_act == "WAIT" and _v.get("macro_veto"))
+                if _macro_wait:
+                    # P0-1b (политика владельца): макро-вето → шлём с предупреждением
+                    c["macro_veto_note"] = (_v.get("macro_veto_reason") or _v.get("reasoning") or "")[:160]
+                if _act not in ("GO", "FAIL_OPEN") and not _macro_wait:
+                    return False  # SKIP / обычный WAIT — не шлём, не считаем в daily_limit
                 # Прикрепляем для рендера в TG
                 c["claude_reasoning"]  = _v.get("reasoning", "")
                 c["claude_confidence"] = _v.get("confidence", 0)
@@ -1742,6 +1746,11 @@ def send_pump_alert(c: dict, cfg: dict = None) -> bool:
             f"  CVD ({c.get('cvd_source','?')}): {c['cvd_pct']:+.1f}%",
             f"  Фандинг:    {c['funding']:+.4f}%  (было {c['fund_prev']:+.4f}%)",
         ]
+        if c.get("macro_veto_note"):
+            # P0-1b: предупреждение сразу под header-строкой
+            _mv_idx = (4 if _pump_experimental else 0) + 1
+            lines.insert(_mv_idx, f"⚠ <b>МАКРО ПРОТИВ:</b> {_esc(c['macro_veto_note'])}. "
+                                  f"Фильтр пропустил бы, вето переведено в предупреждение — решение за тобой.")
         if btc_str:
             lines.append(btc_str)
         if c["sweep"]:

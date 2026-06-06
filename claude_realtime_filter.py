@@ -152,6 +152,8 @@ def _shadow_log(symbol: str, candidate: dict, source: str, verdict: dict):
             "sl_pct":     verdict.get("sl_pct"),
             "reasoning":  (verdict.get("reasoning") or "")[:500],
             "verdict_source": verdict.get("source"),   # claude | cache | fail_open | paused | no_key
+            "macro_veto":        verdict.get("macro_veto", False),   # P0-1b: след для оценки «был ли прав фильтр»
+            "macro_veto_reason": verdict.get("macro_veto_reason"),
             "candidate":  candidate,                    # полный snapshot для воспроизводимости
         }
         with open(SHADOW_LOG_PATH, "a", encoding="utf-8") as f:
@@ -262,16 +264,19 @@ Score — ШУМНЫЙ, СЛАБЫЙ сигнал, НЕ предиктор ма�
 - НЕ используй день недели или час как ЕДИНСТВЕННУЮ причину для SKIP.
 - Сильная техническая структура (sweep + OI + CVD + confluence) ПЕРЕВЕШИВАЕТ слабую day-of-week статистику.
 - WR < 30% по дню = -0.10 к confidence, не veto.
-- Vet'и только если: late entry, противоречивые сигналы, плохой макрорежим (BTC рушится −3%+ за 4ч), structural break, нет confluence, или score < 50 без качественных подтверждений.
+- Vet'и (SKIP) только за КАЧЕСТВО: late entry, противоречивые сигналы САМОГО сетапа, structural break, нет confluence, или score < 50 без качественных подтверждений. Макро-возражения (включая «BTC рушится», F&G, skew, стейблы) — НЕ SKIP, а WAIT с macro_veto=true (см. МАКРО-ВЕТО ниже).
 
 Решение GO/SKIP/WAIT:
 - GO: сетап имеет confluence (минимум 2-3 подтверждающих сигнала), структура согласована хотя бы на одном TF, нет явных фундаментальных противоречий, catalyst для +5-15% реалистичен. Confidence ≥ 0.60.
-- SKIP: явно провальный сетап — фундаментальные противоречия (например, шорт в сильно перегруженном шорт-рынке), очевидный late entry (цена уже улетела на >+8% за 4ч до входа), structural break направления, нет ни одного confluence-фактора.
+- SKIP: явно провальный сетап ПО КАЧЕСТВУ — противоречия в самом сетапе (например, шорт в сильно перегруженном шорт-рынке), очевидный late entry (цена уже улетела на >+8% за 4ч до входа), structural break направления, нет ни одного confluence-фактора, плохой R:R / неторгуемая ликвидность.
 - WAIT: потенциал есть, но нужно подтверждение или таймин лучше. Укажи конкретный trigger (например: "цена закроется выше X на 1H" / "funding опустится ниже -0.04%" / "Coinalyze short_liq > $500K в 30 мин"). DEFAULT при неуверенности.
+
+⚠ МАКРО-ВЕТО — ПОЛИТИКА ВЛАДЕЛЬЦА (2026-06-06), ПРИОРИТЕТ НАД ОСТАЛЬНЫМИ ПРАВИЛАМИ SKIP:
+Макро-фон (F&G / Extreme Fear-Greed, опционный skew, потоки стейблов, BTC.D, contrarian-логика) САМ ПО СЕБЕ — НЕ основание для SKIP. ЖЁСТКАЯ ПРОВЕРКА ПЕРЕД ОТВЕТОМ: если твой главный аргумент против сетапа начинается с F&G / skew / стейблов / contrarian / «макро против SHORT (или LONG)» — вердикт ОБЯЗАН быть WAIT с "macro_veto": true и "macro_veto_reason" одной строкой, НЕ SKIP. SKIP с макро-аргументом в reasoning — НАРУШЕНИЕ политики. Такой WAIT-сигнал уйдёт пользователю с явным предупреждением — решение о входе принимает человек. GO при враждебном макро по-прежнему ставить нельзя. Если сетап плох ПО КАЧЕСТВУ (структура/late entry/CVD-дистрибуция/нет confluence/провальный рантайм-WR) — это SKIP независимо от макро, как раньше; макро-аргумент в таком SKIP можешь упомянуть только ВТОРЫМ.
 
 TP/SL: рассчитай ПОД ЭТУ КОНКРЕТНУЮ СТРУКТУРУ от entry. TP — ближайший структурный уровень / weekly high / ATR×3-5. SL — за структурный low/high / ATR×1.5. R:R должно быть ≥ 3.
 
-📊 MACRO-СЕКЦИЯ (если присутствует):
+📊 MACRO-СЕКЦИЯ (если присутствует) — контекст для confidence и macro_veto_reason, НЕ для SKIP:
 - Стейблы 24h > +$200M = buying power входит → LONG-сетапы получают +bonus
 - Стейблы 24h < -$200M = risk_off → SHORT-сетапы получают +bonus, LONG-сетапы более скептичны
 - Options skew BTC > +5 = хедж в путах (страх) → contrarian bullish для альтов
@@ -311,7 +316,9 @@ TP/SL: рассчитай ПОД ЭТУ КОНКРЕТНУЮ СТРУКТУРУ 
   "sl_pct": <число 1.5-5.0>,
   "reasoning": "<1-2 предложения — почему именно этот вердикт>",
   "risks": ["<риск 1>", "<риск 2>"],
-  "wait_trigger": <строка с условием для WAIT, либо null>
+  "wait_trigger": <строка с условием для WAIT, либо null>,
+  "macro_veto": <true ТОЛЬКО если вердикт WAIT вызван исключительно враждебным макро-фоном при нормальном качестве сетапа, иначе false>,
+  "macro_veto_reason": <"макро-причина одной строкой" либо null>
 }
 """
 
@@ -734,6 +741,10 @@ def _call_claude(context: str, symbol: str = "?", setup: str = "?",
         # юзеру нужны стопы, переживающие liquidity sweep (CLAUDE.md: ATR×1.8 для волатильных альтов).
         result["sl_pct"] = max(1.0, min(10.0, float(result.get("sl_pct") or 3.0)))
         result["confidence"] = max(0.0, min(1.0, float(result.get("confidence") or 0.5)))
+        # P0-1b: макро-вето — нормализация (флаг валиден только при WAIT)
+        result["macro_veto"] = bool(result.get("macro_veto")) and result.get("verdict") == "WAIT"
+        if not result["macro_veto"]:
+            result["macro_veto_reason"] = None
         _log_cost(symbol, setup, MODEL, msg.usage, result.get("verdict", "?"))
         return result
     except Exception as e:
@@ -877,6 +888,8 @@ def filter_candidate(symbol: str, candidate: dict, source: str = "screener") -> 
         "reasoning":   result.get("reasoning", ""),
         "risks":       result.get("risks", []) or [],
         "wait_trigger": result.get("wait_trigger"),
+        "macro_veto":  bool(result.get("macro_veto")),          # P0-1b
+        "macro_veto_reason": result.get("macro_veto_reason"),   # P0-1b
         "source":      "claude",
     }
 

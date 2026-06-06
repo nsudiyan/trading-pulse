@@ -117,6 +117,16 @@ def _apply_claude_filter(r: dict, plan: dict, source: str = "screener") -> tuple
             plan["claude_confidence"] = v.get("confidence", 0)
             plan["claude_risks"]      = v.get("risks", []) or []
         return True, v
+
+    # P0-1b (2026-06-06, политика владельца): WAIT с macro_veto — макро-возражение
+    # при нормальном качестве сетапа. Шлём ТЕМ ЖЕ путём, что GO (кулдауны/лимиты те же),
+    # но с предупреждением в начале сообщения. TP/SL скринера НЕ переопределяем.
+    if action == "WAIT" and v.get("macro_veto"):
+        plan["macro_veto_note"]   = (v.get("macro_veto_reason") or v.get("reasoning") or "")[:160]
+        plan["claude_reasoning"]  = v.get("reasoning", "")
+        plan["claude_confidence"] = v.get("confidence", 0)
+        plan["claude_risks"]      = v.get("risks", []) or []
+        return True, v
     return False, v
 
 
@@ -354,6 +364,11 @@ def send_signal_alert(r: dict, plan: dict, cfg: Optional[dict] = None) -> bool:
     # P0-1: сигнал прошёл бывший MAX_SCORE_GLOBAL-cap — честная пометка
     if r.get("score_capped"):
         lines.insert(3, "  ⚠ score>180 — исторически перегретые сетапы")
+
+    # P0-1b: макро-вето переведено в предупреждение (политика владельца)
+    if plan.get("macro_veto_note"):
+        lines.insert(1, f"⚠ <b>МАКРО ПРОТИВ:</b> {_esc(plan['macro_veto_note'])}. "
+                        f"Фильтр пропустил бы, вето переведено в предупреждение — решение за тобой.")
     if mtf_b or mtf_br:
         lines.append(f"  MTF: {mtf_b}↑ / {mtf_br}↓")
     if flags:
