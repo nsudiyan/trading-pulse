@@ -57,3 +57,6 @@ When the screener outputs top candidates:
 - `short_dist` setup threshold = 5
 - Stacked order walls flagged with ⚠ when R:R < 2 (from PDF "Механика раскачки депозита")
 - OI changes interpreted position-aware (rising OI in uptrend = new longs, not shorts)
+
+Текущее состояние проекта — ТОЛЬКО в STATE.md.
+Исторические доки в archive/ — им не верить как статусу.
