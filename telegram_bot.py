@@ -705,6 +705,97 @@ def handle_command(text: str, token: str, chat_id: str, authorized_chat_id: str)
         except Exception as e:
             tg_send(token, chat_id, f"❌ /wait error: {e}")
 
+    # ─── P0-2 (петля): реальные сделки ───────────────────────────────────
+    elif cmd == "/open":
+        try:
+            import trade_logger as _tl
+            _open = [t for t in _tl._load_trades() if t.get("status") == "open"]
+            if not _open:
+                tg_send(token, chat_id, "Открытых сделок нет.")
+            else:
+                out = ["<b>📂 Открытые сделки</b>", ""]
+                for i, t in enumerate(_open, 1):
+                    out.append(f"{i}. <b>{t.get('symbol')}</b> {t.get('direction','?')} "
+                               f"[{t.get('setup','—')}] entry={t.get('entry_price')} "
+                               f"sl={t.get('stop_price')} с {str(t.get('entry_ts',''))[:16]}")
+                out += ["", "Закрыть: /close SYMBOL +1.5R  или  /close SYMBOL 2.085"]
+                tg_send(token, chat_id, "\n".join(out))
+        except Exception as e:
+            tg_send(token, chat_id, f"❌ /open error: {e}")
+
+    elif cmd == "/close":
+        try:
+            import re as _re
+            import trade_logger as _tl
+            parts = text.split()
+            if len(parts) < 3:
+                tg_send(token, chat_id,
+                        "Формат: /close SYMBOL +1.5R  |  /close SYMBOL 2.085\n"
+                        "Если открытых по символу несколько: /close SYMBOL +1R #2")
+                return
+            sym = parts[1].upper()
+            if not sym.endswith("USDT"):
+                sym += "USDT"
+            val = parts[2]
+            sel = None
+            if len(parts) >= 4 and parts[3].startswith("#"):
+                try:
+                    sel = int(parts[3][1:]) - 1
+                except ValueError:
+                    sel = None
+            trades = _tl._load_trades()
+            open_i = [i for i, t in enumerate(trades)
+                      if t.get("symbol") == sym and t.get("status") == "open"]
+            if not open_i:
+                tg_send(token, chat_id, f"Открытых сделок по {sym} нет. /open — список.")
+                return
+            if len(open_i) > 1 and sel is None:
+                out = [f"По {sym} открыто {len(open_i)} сделок — какую закрыть?", ""]
+                for n, i in enumerate(open_i, 1):
+                    t = trades[i]
+                    out.append(f"#{n}: entry={t.get('entry_price')} от {str(t.get('entry_ts',''))[:16]}")
+                out.append(f"\nПовтори: /close {sym} {val} #N")
+                tg_send(token, chat_id, "\n".join(out))
+                return
+            if sel is not None and not (0 <= sel < len(open_i)):
+                tg_send(token, chat_id, f"#N вне диапазона (открыто {len(open_i)}).")
+                return
+            i = open_i[sel if sel is not None else 0]
+            t = trades[i]
+            m = _re.match(r"^([+-]?\d+(?:[.,]\d+)?)[rR]$", val)
+            now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+            if m:
+                r_mult = float(m.group(1).replace(",", "."))
+                t["r_multiple"] = r_mult
+                # честный пересчёт exit-цены из R по (entry, stop)
+                try:
+                    e_px, s_px = float(t["entry_price"]), float(t["stop_price"])
+                    risk = abs(e_px - s_px)
+                    t["exit_price"] = (e_px + r_mult * risk
+                                       if t.get("direction") == "long"
+                                       else e_px - r_mult * risk)
+                except (TypeError, ValueError, KeyError):
+                    pass   # R записан как есть, exit_price не вычислить без stop
+            else:
+                try:
+                    t["exit_price"] = float(val.replace(",", "."))
+                except ValueError:
+                    tg_send(token, chat_id,
+                            f"Не понял «{val}» — жду ±R (например +1.5R) или цену.")
+                    return
+            t["exit_ts"] = now_iso
+            t["status"] = "closed"
+            t["exit_reason"] = "manual"
+            t = _tl._derive_fields(t)
+            trades[i] = t
+            _tl._save_trades(trades)
+            r_str = t.get("r_multiple")
+            tg_send(token, chat_id,
+                    f"✅ Закрыто <b>{sym}</b>: exit={t.get('exit_price')}  "
+                    f"R=<b>{r_str if r_str is not None else '—'}</b>  ({t.get('outcome_label','—')})")
+        except Exception as e:
+            tg_send(token, chat_id, f"❌ /close error: {e}")
+
     elif cmd in ("/help", "/start"):
         text_out = (
             "<b>📈 Screener Bot — Команды</b>\n\n"
@@ -729,6 +820,11 @@ def handle_command(text: str, token: str, chat_id: str, authorized_chat_id: str)
             "/wait — текущий WAIT-watchlist\n"
             "/pause — выключить фильтр (всё в TG)\n"
             "/resume — включить обратно\n"
+            "\n"
+            "<b>📒 Петля сделок</b>\n"
+            "/open — открытые сделки\n"
+            "/close SYMBOL +1.5R — закрыть с результатом в R\n"
+            "/close SYMBOL 2.085 — закрыть по цене\n"
             "\n"
             "/help — эта справка\n\n"
             "<i>Автоматические сканы идут каждые 4ч (00, 04, 08, 12, 16, 20 UTC).\n"

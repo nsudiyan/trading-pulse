@@ -29,6 +29,8 @@ BASE_DIR        = Path(__file__).parent
 COST_CSV        = BASE_DIR / "outcomes" / "claude_cost.csv"
 PUMP_RESOLVED   = BASE_DIR / "outcomes" / "pump_resolved.csv"
 SCREENER_RESOLVED = BASE_DIR / "outcomes" / "resolved.csv"
+TRADES_JSON     = BASE_DIR / "outcomes" / "trades.json"        # P0-2: реальные сделки
+ALERTS_INDEX    = BASE_DIR / "outcomes" / "alerts_index.json"  # P0-2: дисциплина (skipped)
 WATCHLIST_JSON  = BASE_DIR / "outcomes" / "wait_watchlist.json"
 
 
@@ -139,6 +141,47 @@ def _watchlist_snapshot() -> dict:
     }
 
 
+def _real_trades_stats(hours: int) -> dict:
+    """P0-2 (петля): РЕАЛЬНЫЕ сделки (trades.json) + дисциплина (alerts_index).
+    Отдельный счёт от paper-симуляции — не смешивать."""
+    cutoff = datetime.now(timezone.utc).timestamp() - hours * 3600
+
+    def _ts_ok(ts) -> bool:
+        try:
+            dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.timestamp() >= cutoff
+        except Exception:
+            return False
+
+    entered = skipped = closed = open_now = 0
+    r_sum = 0.0
+    try:
+        trades = json.loads(TRADES_JSON.read_text(encoding="utf-8"))
+    except Exception:
+        trades = []
+    for t in trades:
+        if t.get("status") == "open":
+            open_now += 1
+        if _ts_ok(t.get("entry_ts") or t.get("logged_ts")):
+            entered += 1
+        if t.get("status") == "closed" and _ts_ok(t.get("exit_ts")):
+            closed += 1
+            try:
+                r_sum += float(t.get("r_multiple") or 0)
+            except (TypeError, ValueError):
+                pass
+    try:
+        idx = json.loads(ALERTS_INDEX.read_text(encoding="utf-8"))
+        skipped = sum(1 for v in (idx or {}).values()
+                      if (v or {}).get("status") == "skipped" and _ts_ok(v.get("action_ts")))
+    except Exception:
+        pass
+    return {"entered": entered, "skipped": skipped, "closed": closed,
+            "open_now": open_now, "r_sum": r_sum}
+
+
 def build_report(hours: int = 24) -> str:
     cost = _cost_stats(hours)
     pump = _outcome_stats(PUMP_RESOLVED, hours)
@@ -188,6 +231,19 @@ def build_report(hours: int = 24) -> str:
     ]
     for it in wl["items"][:5]:
         lines.append(f"  · {it['symbol']} [{it['setup']}] conf={it['conf']:.0%} ({it['age_min']}m)")
+
+    # P0-2 (петля): РЕАЛЬНЫЕ сделки — отдельный счёт, НЕ смешивать с paper выше
+    try:
+        real = _real_trades_stats(hours)
+        real_line = (f"  вошёл {real['entered']} / пропустил {real['skipped']} "
+                     f"/ закрыто {real['closed']}")
+        if real["closed"]:
+            real_line += f" / real R=<b>{real['r_sum']:+.2f}</b>"
+        lines += ["", f"<b>📒 РЕАЛЬНЫЕ СДЕЛКИ {period}</b>", real_line]
+        if real["open_now"]:
+            lines.append(f"  сейчас открыто: {real['open_now']}")
+    except Exception as _re_err:
+        lines += ["", f"<i>real trades: n/a ({_re_err})</i>"]
 
     return "\n".join(lines)
 
