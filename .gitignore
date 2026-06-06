@@ -1,52 +1,72 @@
-# Секреты — никогда не коммитить
+# ── Секреты — никогда не коммитить ──
 telegram_config.json
 obsidian_config.json
 channels_config.json
+.env
+.env.*
+!.env.example
 
-# Кэш
+# ── Кэш / системное ──
 __pycache__/
 *.pyc
 .DS_Store
 
-# Логи (большие, не нужны в репо)
-screener_auto.log
-screener_error.log
-bot.log
-bot_error.log
-weekly_report.log
+# ── Логи / локи / pid — все ──
+*.log
+*.lock
+*.pid
 
-# Локальный кэш бота
+# ── Бэкапы кода (физический архив — отдельным этапом) ──
+*.backup_*
+*.bak
+*.bak_*
+*.bak.*
+
+# ── Runtime-состояние и кэши ──
 last_scan_cache.json
-
-# outcomes/ — КОММИТИМ (данные бэктеста хранятся в репо)
-# !outcomes/
-
-# Переменные окружения (СЕКРЕТЫ — никогда не коммитить)
-.env
-.env.*
-!.env.example
 channel_signals_cache.json
-liqtracker.log
-liqtracker_error.log
-channelreader.log
-channelreader_error.log
-liquidations.db
+active_signals.json
+channel_accuracy.json
+claude_rt_state.json
+cooldown_cache.json
+dynamic_blacklist.json
+expansion_cooldown.json
+pump_alert_state.json
+.free_data_cache.json
+.score_gate_check_done
+.unlock_fetch_checkpoint.json
+skills-lock.json
 
-# Дополнительные логи
+# ── Базы данных ──
+*.db
+*.db-shm
+*.db-wal
 
-# Большой лог ликвидаций
-liquidations.db
-bot.log
+# ── Runtime-каталоги (состояние, не код) ──
+outcomes/
+data/
+charts/
+tv_charts/
 
-# run_*.sh wrapper-скрипты НЕ коммитим — они рядом с .env
-# (раскомментируй следующую строку если хочешь их исключить):
-# run_*.sh
-
-# pump_analysis generated data (large files)
+# ── Сгенерированные данные анализа (код .py и доки .md остаются в git) ──
+dump_analysis/*.csv
+dump_analysis/*.json
+dump_analysis/plots/
+pump_analysis/*.csv
+pump_analysis/*.json
+pump_analysis/plots/
+pump_analysis/catalyst_data/
 pump_analysis/klines_5m/
 pump_analysis/klines_15m/
 pump_analysis/klines_1h/
-pump_analysis/funding.csv
-pump_analysis/open_interest.csv
-pump_analysis/liquidations_summary.csv
-pump_analysis/fetch_historical.log
+backtests/*.json
+backtests/*.csv
+calibration/*.json
+calibration/*.png
+calibration/*.md
+
+# ── Инструменты (Claude Code / Cursor / CodeGraph) ──
+.codegraph/
+.cursor/
+.agents/
+.claude/
