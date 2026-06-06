@@ -351,6 +351,9 @@ def send_signal_alert(r: dict, plan: dict, cfg: Optional[dict] = None) -> bool:
         f"  Fund: <code>{fund:+.3f}%</code>  |  OI 24h: <code>{oi24:+.1f}%</code>"
         f"  |  VWAP: <code>{vwap:+.1f}%</code>",
     ]
+    # P0-1: сигнал прошёл бывший MAX_SCORE_GLOBAL-cap — честная пометка
+    if r.get("score_capped"):
+        lines.insert(3, "  ⚠ score>180 — исторически перегретые сетапы")
     if mtf_b or mtf_br:
         lines.append(f"  MTF: {mtf_b}↑ / {mtf_br}↓")
     if flags:

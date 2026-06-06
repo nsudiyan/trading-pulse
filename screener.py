@@ -6429,10 +6429,12 @@ def _passes_setup_tg_filter(r: dict) -> bool:
                                f"score={score},fund={r.get('fund_%',0):.4f},no_strong_signal")
             return False
 
+    # P0-1 (2026-06-06): cap превращён из reject в флаг — резал СИЛЬНЕЙШИЕ сигналы
+    # (238 отказов score>=180 за окно форензики 01–06.06, см. tools/gate_forensics.py).
+    # Константа остаётся порогом «перегретого» сетапа: флаг уходит пометкой в алерт.
+    # short_dist>=150 по-прежнему режется ниже через SETUP_TG_MAX_SCORE (осознанно).
     if score >= MAX_SCORE_GLOBAL:
-        if _RT_AVAILABLE:
-            _rt.log_reject(r, "ScoreGate", f"score={score}>=MAX_SCORE_GLOBAL={MAX_SCORE_GLOBAL}")
-        return False
+        r["score_capped"] = True
 
     min_sc = SETUP_TG_MIN_SCORE.get(setup, 80)
     if r.get("choch_conviction"):
@@ -7342,6 +7344,13 @@ def run_screener(top_n=50, min_score=35,
             saved = _ot.save_pending(to_save, results)
             if saved:
                 print(f"[Tracker] Сохранено {saved} сигналов для бэктеста")
+
+    # P0-1: одно-строчная сводка воронки в основной лог (мониторинг потока)
+    if _RT_AVAILABLE and getattr(_rt, "RUN_REJECT_COUNTS", None) is not None:
+        _frc = _rt.RUN_REJECT_COUNTS
+        _f_top = _frc.most_common(1)[0][0] if _frc else "—"
+        print(f"funnel: candidates={len(filtered)} passed={len(_tg_candidates)} "
+              f"rejected={sum(_frc.values())} top_reason={_f_top}")
 
     print(f"\nКандидатов: {len(filtered)} из {len(results)}  |  "
           f"min score: {min_score}  |  {datetime.now().strftime('%H:%M:%S')}\n")

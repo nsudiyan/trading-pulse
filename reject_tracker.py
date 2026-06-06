@@ -19,6 +19,7 @@ CLI:
 import json
 import sys
 import time
+from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -28,6 +29,10 @@ BASE_DIR     = Path(__file__).parent / "outcomes"
 REJECT_FILE  = BASE_DIR / "rejected.json"
 BASE_URL     = "https://api.bybit.com"
 MAX_REJECTS  = 3000   # rolling window cap
+
+# P0-1 (2026-06-06): per-run счётчик отказов по гейтам — для funnel-строки
+# в конце прогона скринера. In-memory, обнуляется с процессом.
+RUN_REJECT_COUNTS = Counter()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -95,6 +100,7 @@ def log_reject(r: dict, reject_gate: str, reject_reason: str):
     if (symbol, reject_gate, now_key) in existing_keys:
         return
 
+    RUN_REJECT_COUNTS[reject_gate] += 1   # P0-1: funnel-счётчик текущего прогона
     direction = _direction_from_result(r)
 
     entry = {
