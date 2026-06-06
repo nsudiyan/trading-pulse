@@ -17,10 +17,13 @@ CLI-использование:
   python3 obsidian_bridge.py list-notes     — показать все заметки в Trading/
 """
 
+import functools
 import json
+import logging
 import os
 import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -107,10 +110,32 @@ def _slug(text: str) -> str:
     return text.strip()
 
 
+def _fail_open_write(fn):
+    """P0-2 (2026-06-06): vault лежит в iCloud — выгруженные (dataless) файлы
+    дают OSError [Errno 11] «Resource deadlock avoided» и 12 раз подряд валили
+    прогон скринера. Запись в Obsidian — косметика: один ретрай через 2 сек,
+    при второй неудаче logging.warning и None. Наружу НИКОГДА не поднимаем."""
+    @functools.wraps(fn)
+    def _wrapped(*args, **kwargs):
+        for _attempt in (1, 2):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as e:
+                if _attempt == 1:
+                    time.sleep(2)   # iCloud мог успеть материализовать файл
+                    continue
+                _target = str(args[0])[:60] if args else ""
+                logging.warning("obsidian write skipped: %s(%s): %s",
+                                fn.__name__, _target, e)
+                return None
+    return _wrapped
+
+
 # ─────────────────────────────────────────────────────────────
 # Экспорт отчёта скринера
 # ─────────────────────────────────────────────────────────────
 
+@_fail_open_write
 def export_report(
     results: list,
     filtered: list,
@@ -280,6 +305,7 @@ def export_report(
 # Экспорт кандидатов на памп
 # ─────────────────────────────────────────────────────────────
 
+@_fail_open_write
 def export_pump_candidates(
     candidates: list,
     cfg: Optional[dict] = None,
@@ -553,6 +579,7 @@ _SETUP_SHORT  = {"squeeze": "SQZ", "bos_fvg": "BOS/FVG", "range_sweep": "SWEEP",
 _DIR_ICON     = {"ЛОНГ": "🟢ЛОНГ", "ШОРТ": "🔴ШОРТ"}
 
 
+@_fail_open_write
 def refresh_coin_note(symbol: str, cfg: Optional[dict] = None) -> Optional[Path]:
     """
     Пересоздаёт заметку Монеты/{symbol}.md из resolved.csv + pending.json.
@@ -695,6 +722,7 @@ def refresh_coin_note(symbol: str, cfg: Optional[dict] = None) -> Optional[Path]
 # Devlog: запись системных изменений из git commit
 # ─────────────────────────────────────────────────────────────
 
+@_fail_open_write
 def export_devlog(
     commit_hash: Optional[str] = None,
     cfg: Optional[dict] = None,

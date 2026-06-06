@@ -690,12 +690,18 @@ def check_and_resolve(silent: bool = False) -> int:
         if newly_closed:
             _update_channel_accuracy(newly_closed)
         # Обновляем заметки в Obsidian для всех затронутых символов
+        # P0-2 fail-open (2026-06-06): здесь скринер умирал 12 прогонов подряд
+        # (OSError 11 на dataless-файлах iCloud). Obsidian — косметика:
+        # любая ошибка → warning, резолв и прогон живут дальше.
         if _OBS_AVAILABLE:
-            _obs_cfg = _obs.load_config()
-            if _obs_cfg.get("enabled"):
-                _touched = {e["symbol"] for e in entries if e.get("price_4h") or e.get("price_24h")}
-                for sym in _touched:
-                    _obs.refresh_coin_note(sym, cfg=_obs_cfg)
+            try:
+                _obs_cfg = _obs.load_config()
+                if _obs_cfg.get("enabled"):
+                    _touched = {e["symbol"] for e in entries if e.get("price_4h") or e.get("price_24h")}
+                    for sym in _touched:
+                        _obs.refresh_coin_note(sym, cfg=_obs_cfg)
+            except Exception as _obs_err:
+                print(f"[Tracker] WARNING obsidian write skipped (refresh_coin_note batch): {_obs_err}")
 
     return resolved_count
 

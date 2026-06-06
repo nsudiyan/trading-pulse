@@ -6867,45 +6867,51 @@ def run_screener(top_n=50, min_score=35,
     export_results(filtered, json_path=export_json, csv_path=export_csv)
 
     # ── Obsidian export ────────────────────────────────────────────────────────
-    if obsidian and _OBS_AVAILABLE:
-        obs_cfg = _obs.load_config()
-        if not obs_cfg.get("enabled") or not obs_cfg.get("vault_path"):
-            print("[Obsidian] Интеграция не настроена. Запусти: python3 obsidian_bridge.py setup")
-        else:
-            # Отчёт скринера
-            rpt = _obs.export_report(
-                results=results,
-                filtered=filtered,
-                session_info=session_info,
-                fg_value=fg_value,
-                fg_label=fg_label,
-                cfg=obs_cfg,
-            )
-            if rpt:
-                print(f"[Obsidian] Отчёт сохранён: {rpt}")
+    # P0-2 fail-open (2026-06-06): vault в iCloud (dataless-файлы → OSError 11).
+    # Экспорт заметок — косметика, не имеет права валить прогон: любая ошибка
+    # (включая ImportError/неожиданное) → warning, едем дальше.
+    try:
+        if obsidian and _OBS_AVAILABLE:
+            obs_cfg = _obs.load_config()
+            if not obs_cfg.get("enabled") or not obs_cfg.get("vault_path"):
+                print("[Obsidian] Интеграция не настроена. Запусти: python3 obsidian_bridge.py setup")
+            else:
+                # Отчёт скринера
+                rpt = _obs.export_report(
+                    results=results,
+                    filtered=filtered,
+                    session_info=session_info,
+                    fg_value=fg_value,
+                    fg_label=fg_label,
+                    cfg=obs_cfg,
+                )
+                if rpt:
+                    print(f"[Obsidian] Отчёт сохранён: {rpt}")
 
-            # Кандидаты на памп
-            pump_candidates = []
-            for r in results:
-                conviction, stars, signals_list, trigger_hint = build_pump_narrative(r)
-                ps = r.get("pump_score", 0)
-                if ps >= 30:
-                    pump_candidates.append({
-                        "symbol":      r["symbol"],
-                        "price":       r.get("price", 0),
-                        "pump_score":  ps,
-                        "conviction":  conviction,
-                        "stars":       stars,
-                        "signals":     signals_list,
-                        "trigger_hint": trigger_hint,
-                    })
-            if pump_candidates:
-                pump_candidates.sort(key=lambda x: x["pump_score"], reverse=True)
-                pp = _obs.export_pump_candidates(pump_candidates, cfg=obs_cfg)
-                if pp:
-                    print(f"[Obsidian] Пампы сохранены: {pp}")
-    elif obsidian and not _OBS_AVAILABLE:
-        print("[Obsidian] Модуль obsidian_bridge.py не найден рядом со screener.py")
+                # Кандидаты на памп
+                pump_candidates = []
+                for r in results:
+                    conviction, stars, signals_list, trigger_hint = build_pump_narrative(r)
+                    ps = r.get("pump_score", 0)
+                    if ps >= 30:
+                        pump_candidates.append({
+                            "symbol":      r["symbol"],
+                            "price":       r.get("price", 0),
+                            "pump_score":  ps,
+                            "conviction":  conviction,
+                            "stars":       stars,
+                            "signals":     signals_list,
+                            "trigger_hint": trigger_hint,
+                        })
+                if pump_candidates:
+                    pump_candidates.sort(key=lambda x: x["pump_score"], reverse=True)
+                    pp = _obs.export_pump_candidates(pump_candidates, cfg=obs_cfg)
+                    if pp:
+                        print(f"[Obsidian] Пампы сохранены: {pp}")
+        elif obsidian and not _OBS_AVAILABLE:
+            print("[Obsidian] Модуль obsidian_bridge.py не найден рядом со screener.py")
+    except Exception as _obs_err:
+        print(f"[Obsidian] WARNING obsidian write skipped (export block): {_obs_err}")
 
     # ── Channel signal enrichment ─────────────────────────────────────────────
     if _CH_AVAILABLE:
