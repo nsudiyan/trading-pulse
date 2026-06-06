@@ -552,7 +552,8 @@ def analyze_with_claude(symbol: str, chart_path: Path, metrics: dict) -> Optiona
 
     metrics_text = _build_metrics_text(symbol, metrics)
 
-    client = anthropic.Anthropic(api_key=api_key)
+    from claude_client import get_client
+    client = get_client(api_key=api_key)
 
     try:
         resp = client.messages.create(

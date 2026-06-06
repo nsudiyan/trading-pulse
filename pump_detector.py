@@ -1865,6 +1865,17 @@ def send_pump_alert(c: dict, cfg: dict = None) -> bool:
         except Exception as e:
             _log(f"[ChartAI] памп/раг ошибка: {e}")
 
+        # TV-разметка 15m на РЕАЛЬНОЙ ликвидности (стенки+кластеры) — опционально,
+        # за флагом TV_PLAN_ENABLED=1, graceful, без API. По умолчанию выкл.
+        try:
+            from tv_pump_plan import attach_tv_plan_to_tg
+            _tvdir = "SHORT" if is_rug else "LONG"
+            attach_tv_plan_to_tg(c["symbol"], _tvdir, token, chat_id,
+                                 caption=f"📊 {c['symbol']} 15m · TV-разметка (визуал для анализа)",
+                                 entry=c.get("price"))
+        except Exception as _tve:
+            _log(f"[TVPlan] {_tve}")
+
         return True   # алерт реально ушёл
 
     except Exception as e:

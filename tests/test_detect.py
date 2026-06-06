@@ -113,10 +113,11 @@ class TestDetectFvg:
         highs  = [100.0] * n
         lows   = [99.0]  * n
         closes = [100.0] * n
-        # Candle at -3 has high=98, candle at -1 has low=100 → gap [98, 100]
-        highs[-3]  = 98.0
-        lows[-1]   = 100.5  # low above prior high → bullish FVG
-        closes[-1] = 101.0
+        # FIX 2026-06-01: паттерн на ЗАКРЫТОЙ свече -2 (detect_fvg исключает живую -1, range(start,n-1)).
+        # Candle at -4 has high=98, candle at -2 has low=100.5 → bullish gap [98, 100.5]
+        highs[-4]  = 98.0
+        lows[-2]   = 100.5  # low above prior high → bullish FVG
+        closes[-2] = 101.0
 
         fvgs = detect_fvg(highs, lows, closes, lookback=10, min_size_pct=0.0)
         bull_fvgs = [f for f in fvgs if f["type"] == "bull"]
@@ -130,10 +131,11 @@ class TestDetectFvg:
         highs  = [100.0] * n
         lows   = [99.0]  * n
         closes = [99.5]  * n
-        # Candle at -3 has low=102, candle at -1 has high=99 → bearish gap [99, 102]
-        lows[-3]   = 102.0
-        highs[-1]  = 99.0
-        closes[-1] = 98.5
+        # FIX 2026-06-01: паттерн на ЗАКРЫТОЙ свече -2 (detect_fvg исключает живую -1, range(start,n-1)).
+        # Candle at -4 has low=102, candle at -2 has high=99 → bearish gap [99, 102]
+        lows[-4]   = 102.0
+        highs[-2]  = 99.0
+        closes[-2] = 98.5
 
         fvgs = detect_fvg(highs, lows, closes, lookback=10, min_size_pct=0.0)
         bear_fvgs = [f for f in fvgs if f["type"] == "bear"]
@@ -182,11 +184,12 @@ class TestDetectOrderBlocks:
         volumes = [1000.0] * n
 
         # Prior 5 candles have highs at 101
+        # FIX 2026-06-01: BOS на ЗАКРЫТОЙ свече -2 (detect_order_blocks исключает живую -1, range(start,n-1))
         # BOS candle: close = 104 (above 101)
-        highs[-1]  = 105.0
-        closes[-1] = 104.0
+        highs[-2]  = 105.0
+        closes[-2] = 104.0
 
-        # Insert a bearish candle before the BOS to be the OB
+        # Insert a bearish candle before the BOS to be the OB (at -3)
         opens[-3]  = 102.0
         closes[-3] = 100.0  # bearish: open > close
 
