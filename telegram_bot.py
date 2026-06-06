@@ -28,6 +28,15 @@ from typing import Optional
 
 import requests
 
+# P1-8c: маскировка bot-токена в логируемых ошибках (URL в requests-исключениях)
+try:
+    from telegram_alerts import redact_token
+except Exception:                                  # автономный запуск без telegram_alerts
+    import re as _re_rt
+    def redact_token(s):
+        return _re_rt.sub(r"/bot\d+:[\w-]+", "/bot<REDACTED>", str(s))
+
+
 # ─── Пути ────────────────────────────────────────────────────────────────────
 
 DIR         = Path(__file__).parent
@@ -169,7 +178,7 @@ def tg_send(token: str, chat_id: str, text: str, parse_mode: str = "HTML") -> bo
                 _log(f"TG send error: {data.get('description')}")
                 ok = False
         except Exception as e:
-            _log(f"TG send exception: {e}")
+            _log(f"TG send exception: {redact_token(e)}")
             ok = False
         if i < len(chunks) - 1:
             time.sleep(0.4)

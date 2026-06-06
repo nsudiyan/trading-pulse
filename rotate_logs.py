@@ -32,8 +32,7 @@ KEEP        = 4                  # архивов на имя
 # НЕ добавлять календарные (screener, weekly, scannerdigest, forwardreport,
 # channelreader, pumpfadeforward) — kickstart запустит им внеплановый прогон!
 LAUNCHD_RESIDENT_LOGS = {
-    "monitor.log":             "com.trading.monitor",
-    "monitor_error.log":       "com.trading.monitor",
+    # monitor.log убран P1-8c: com.trading.monitor выключен (.disabled)
     "liqtracker.log":          "com.trading.liqtracker",
     "liqtracker_error.log":    "com.trading.liqtracker",
     "pump_detector.log":       "com.trading.pumpdetector",

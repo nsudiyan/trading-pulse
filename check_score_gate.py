@@ -20,6 +20,15 @@ import urllib.request
 import urllib.parse
 from pathlib import Path
 
+# P1-8c: маскировка bot-токена в логируемых ошибках (URL в requests-исключениях)
+try:
+    from telegram_alerts import redact_token
+except Exception:                                  # автономный запуск без telegram_alerts
+    import re as _re_rt
+    def redact_token(s):
+        return _re_rt.sub(r"/bot\d+:[\w-]+", "/bot<REDACTED>", str(s))
+
+
 BASE     = Path(__file__).parent
 RESOLVED = BASE / "outcomes" / "resolved.csv"
 MARKER   = BASE / ".score_gate_check_done"
@@ -115,7 +124,7 @@ def _send_personal(text):
         with urllib.request.urlopen(req, timeout=15) as r:
             return json.load(r).get("ok", False)
     except Exception as e:
-        print(f"[check_score_gate] ошибка отправки: {e}")
+        print(f"[check_score_gate] ошибка отправки: {redact_token(e)}")
         return False
 
 

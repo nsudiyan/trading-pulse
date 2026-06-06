@@ -23,6 +23,18 @@ from typing import Optional
 
 import requests
 
+_TOKEN_URL_RE = None
+
+def redact_token(s) -> str:
+    """P1-8c: маскирует bot-токен в строках (requests-исключения несут полный URL).
+    Применять во ВСЕХ принтерах ошибок рядом с запросами к api.telegram.org."""
+    global _TOKEN_URL_RE
+    if _TOKEN_URL_RE is None:
+        import re
+        _TOKEN_URL_RE = re.compile(r"/bot\d+:[\w-]+")
+    return _TOKEN_URL_RE.sub("/bot<REDACTED>", str(s))
+
+
 try:
     import free_data as _fd
     _FD_AVAILABLE = True
@@ -242,7 +254,7 @@ def _send(token: str, chat_id: str, text: str, parse_mode: str = "HTML",
             return False
         return (data.get("result") or {}).get("message_id") or True
     except Exception as e:
-        print(f"[TG] Ошибка отправки: {e}")
+        print(f"[TG] Ошибка отправки: {redact_token(e)}")
         return False
 
 
@@ -261,7 +273,7 @@ def _send_photo(token: str, chat_id: str, photo_bytes: bytes, caption: str = "")
             print(f"[TG] sendPhoto error: {data.get('description')}")
         return data.get("ok", False)
     except Exception as e:
-        print(f"[TG] Ошибка отправки фото: {e}")
+        print(f"[TG] Ошибка отправки фото: {redact_token(e)}")
         return False
 
 

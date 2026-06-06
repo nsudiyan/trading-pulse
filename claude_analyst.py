@@ -20,6 +20,15 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
+# P1-8c: маскировка bot-токена в логируемых ошибках (URL в requests-исключениях)
+try:
+    from telegram_alerts import redact_token
+except Exception:                                  # автономный запуск без telegram_alerts
+    import re as _re_rt
+    def redact_token(s):
+        return _re_rt.sub(r"/bot\d+:[\w-]+", "/bot<REDACTED>", str(s))
+
+
 import anthropic
 
 from claude_client import get_client  # единый singleton-клиент (без утечки сокетов)
@@ -256,7 +265,7 @@ def send_to_telegram(text: str):
             )
         print(f"[TG] Отправлено {len(chunks)} сообщений")
     except Exception as e:
-        print(f"[TG] Ошибка: {e}")
+        print(f"[TG] Ошибка: {redact_token(e)}")
 
 
 # ─── Функция 1: generate_code_prompt ─────────────────────────────────────────

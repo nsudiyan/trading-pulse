@@ -25,6 +25,15 @@ from pathlib import Path
 
 import requests
 
+# P1-8c: маскировка bot-токена в логируемых ошибках (URL в requests-исключениях)
+try:
+    from telegram_alerts import redact_token
+except Exception:                                  # автономный запуск без telegram_alerts
+    import re as _re_rt
+    def redact_token(s):
+        return _re_rt.sub(r"/bot\d+:[\w-]+", "/bot<REDACTED>", str(s))
+
+
 from file_lock import atomic_json_update, atomic_json_read
 
 # Obsidian интеграция (опционально)
@@ -1374,7 +1383,7 @@ def _tg_send(token: str, chat_id: str, text: str):
             if not resp.json().get("ok"):
                 print(f"[TG] Ошибка: {resp.json().get('description')}")
         except Exception as e:
-            print(f"[TG] {e}")
+            print(f"[TG] {redact_token(e)}")
         if i < len(chunks) - 1:
             time.sleep(0.4)
 

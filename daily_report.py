@@ -33,6 +33,15 @@ TRADES_JSON     = BASE_DIR / "outcomes" / "trades.json"        # P0-2: реал�
 ALERTS_INDEX    = BASE_DIR / "outcomes" / "alerts_index.json"  # P0-2: дисциплина (skipped)
 WATCHLIST_JSON  = BASE_DIR / "outcomes" / "wait_watchlist.json"
 
+# P1-8c: маскировка bot-токена в логируемых ошибках (URL в requests-исключениях)
+try:
+    from telegram_alerts import redact_token
+except Exception:                                  # автономный запуск без telegram_alerts
+    import re as _re_rt
+    def redact_token(s):
+        return _re_rt.sub(r"/bot\d+:[\w-]+", "/bot<REDACTED>", str(s))
+
+
 
 def _load_dotenv():
     p = BASE_DIR / ".env"
@@ -265,7 +274,7 @@ def send_to_telegram(text: str):
         ).json()
         return bool(r.get("ok"))
     except Exception as e:
-        print(f"[TG] ошибка: {e}")
+        print(f"[TG] ошибка: {redact_token(e)}")
         return False
 
 

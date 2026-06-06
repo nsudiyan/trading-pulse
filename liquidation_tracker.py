@@ -43,6 +43,15 @@ from typing import Optional
 
 import requests
 
+# P1-8c: маскировка bot-токена в логируемых ошибках (URL в requests-исключениях)
+try:
+    from telegram_alerts import redact_token
+except Exception:                                  # автономный запуск без telegram_alerts
+    import re as _re_rt
+    def redact_token(s):
+        return _re_rt.sub(r"/bot\d+:[\w-]+", "/bot<REDACTED>", str(s))
+
+
 try:
     import websockets
     # ленивые импорты websockets v12+: подмодуль exceptions надо импортировать явно
@@ -431,7 +440,7 @@ def _tg_send(text: str):
         for chat_id in targets:
             _tg_mod._send(token, chat_id, text, parse_mode="HTML")
     except Exception as e:
-        LOG.warning("tg_send: %s", e)
+        LOG.warning("tg_send: %s", redact_token(e))
 
 
 # ─── Bybit WebSocket ──────────────────────────────────────────────────────────
