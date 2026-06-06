@@ -65,6 +65,11 @@ calibration/*.json
 calibration/*.png
 calibration/*.md
 
+# ── Архивы гигиены (P1-6): gzip-логи, файловые бэкапы, снапшоты данных ──
+archive/logs/
+archive/file_backups/
+archive/outcomes_backups/
+
 # ── Инструменты (Claude Code / Cursor / CodeGraph) ──
 .codegraph/
 .cursor/
