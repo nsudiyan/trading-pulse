@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Карта системы — где рвётся цепочка</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --border:#30363d;
+    --green:#3fb950; --orange:#d29922; --red:#f85149; --blue:#58a6ff;
+    --text:#c9d1d9; --muted:#8b949e;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.45;padding:28px 16px 48px}
+  .wrap{max-width:1080px;margin:0 auto}
+  h1{font-size:23px;margin:0 0 4px;letter-spacing:.2px}
+  .date{color:var(--muted);font-size:13px;margin-bottom:18px}
+  code{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-size:.86em;
+    background:#0a2a3a;color:#9cdcfe;padding:1px 5px;border-radius:4px}
+  .mono{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace}
+
+  /* diagnosis chips */
+  .diag{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:26px}
+  .chip{flex:1 1 240px;background:var(--panel);border:1px solid var(--border);
+    border-left:4px solid var(--red);border-radius:8px;padding:11px 13px;font-size:13px}
+  .chip b{display:block;font-size:12px;letter-spacing:.4px;text-transform:uppercase;
+    color:var(--red);margin-bottom:3px}
+  .chip.o{border-left-color:var(--orange)} .chip.o b{color:var(--orange)}
+
+  /* funnel */
+  .stage{background:var(--panel);border:1px solid var(--border);border-radius:10px;
+    padding:14px 16px;position:relative}
+  .stage .lbl{font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted)}
+  .stage .ttl{font-size:17px;font-weight:650;margin:2px 0 2px}
+  .stage .sub{font-size:13px;color:var(--muted)}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-left:7px;vertical-align:middle}
+  .g{background:var(--green)} .o{background:var(--orange)} .r{background:var(--red)}
+  .bL-g{border-left:4px solid var(--green)} .bL-o{border-left:4px solid var(--orange)} .bL-r{border-left:4px solid var(--red)}
+
+  .conn{height:26px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:20px}
+
+  .callout{margin-top:10px;background:rgba(248,81,73,.09);border:1px dashed var(--red);
+    border-radius:8px;padding:9px 12px;font-size:12.5px;color:#ffb4ad}
+  .callout b{color:var(--red)}
+
+  /* split tracks */
+  .split{display:flex;gap:16px;margin-top:6px}
+  .track{flex:1;min-width:0}
+  .track h3{font-size:13px;margin:0 0 8px;letter-spacing:.3px}
+  .track.paper h3{color:var(--green)} .track.real h3{color:var(--red)}
+  @media(max-width:720px){.split{flex-direction:column}}
+
+  .mini{background:var(--panel2);border:1px solid var(--border);border-radius:8px;
+    padding:10px 12px;font-size:13px;margin-bottom:8px}
+  .mini .t{font-weight:600} .mini .d{color:var(--muted);font-size:12px}
+  .arrow-sm{text-align:center;color:var(--muted);font-size:14px;margin:-4px 0 4px}
+  .sever{background:rgba(248,81,73,.12);border:1px solid var(--red)}
+  .closes{background:rgba(63,185,80,.10);border:1px solid var(--green)}
+
+  /* health strip */
+  .section-t{font-size:13px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);
+    margin:34px 0 12px;border-bottom:1px solid var(--border);padding-bottom:6px}
+  .health{display:flex;gap:8px;flex-wrap:wrap}
+  .hc{background:var(--panel);border:1px solid var(--border);border-radius:7px;
+    padding:7px 10px;font-size:12.5px;display:flex;align-items:center;gap:7px}
+  .hc .nm{font-weight:550}
+  .hc .st{color:var(--muted);font-size:11px}
+
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:22px;font-size:12.5px;color:var(--muted)}
+  .legend span{display:flex;align-items:center;gap:6px}
+  .foot{margin-top:26px;font-size:11.5px;color:var(--muted);border-top:1px solid var(--border);padding-top:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🗺️ Карта системы — где рвётся цепочка сигнала</h1>
+  <div class="date">трейдинг-бот · аудит 2026-06-05 · проверено по коду, логам и данным</div>
+
+  <div class="diag">
+    <div class="chip"><b>Разрыв 1 · воронка</b>0 проходов за 3 дня (3–5 июн), 1157 отказов, 1139 со score≥70. <code>MAX_SCORE_GLOBAL=180</code> режет лучшие.</div>
+    <div class="chip"><b>Разрыв 2 · петля</b><code>trade_logger</code> ни к чему не подключён, <code>trades.json</code> пуст с 26 апр. Связи «алерт→сделка» нет.</div>
+    <div class="chip o"><b>Деградация · эдж</b>Валидированные эджи выключены: <code>USE_VALIDATED_V1=False</code> ×2. Скоринг по опровергнутым факторам.</div>
+  </div>
+
+  <!-- FUNNEL -->
+  <div class="stage bL-o">
+    <div class="lbl">1 · Детекторы<span class="dot o"></span></div>
+    <div class="ttl">Сбор и поиск сетапов</div>
+    <div class="sub"><span class="mono">screener · pump_detector · rug_detector · sweep_watcher · liquidation_tracker</span> — данные живые, но валидированные эджи отключены.</div>
+  </div>
+
+  <div class="conn">↓</div>
+
+  <div class="stage bL-r">
+    <div class="lbl">2 · Скоринг + Гейты<span class="dot r"></span></div>
+    <div class="ttl">Фильтрация кандидатов</div>
+    <div class="sub">score · funding · OI · FVG/OB · CVD · sweep · DOM → пропустить/отклонить.</div>
+    <div class="callout"><b>🔴 РАЗРЫВ 1.</b> 3–5 июня: <b>1157 отказов, 0 проходов</b>. <code>MAX_SCORE_GLOBAL=180</code> блокирует самые сильные (SOL@183), <code>min score=120</code>. Воронка перекрыта — наружу не выходит ничего.</div>
+  </div>
+
+  <div class="conn">↓</div>
+
+  <div class="stage bL-o">
+    <div class="lbl">3 · Telegram-алерт<span class="dot o"></span></div>
+    <div class="ttl">Отправка в чат</div>
+    <div class="sub">Только <code>sendMessage</code> — fire-and-forget. Нет кнопок/ответа: <b>нечем зафиксировать, вошёл ты или нет.</b></div>
+  </div>
+
+  <div class="conn">↓ &nbsp;развилка&nbsp; ↓</div>
+
+  <!-- SPLIT -->
+  <div class="split">
+    <div class="track paper">
+      <h3>🟢 Бумажный трек — петля ЗАМКНУТА</h3>
+      <div class="mini closes"><span class="t">pending.json</span><div class="d">сигнал сохраняется для отслеживания</div></div>
+      <div class="arrow-sm">↓</div>
+      <div class="mini closes"><span class="t">outcome_tracker</span><div class="d">резолвит на +4ч/+24ч, path-resolved, UTC-fixed (2 июн) — честно</div></div>
+      <div class="arrow-sm">↓</div>
+      <div class="mini closes"><span class="t">resolved.csv</span><div class="d">3616 строк · 47.0% win · +0.055R</div></div>
+      <div class="callout" style="border-style:solid;border-color:var(--green);background:rgba(63,185,80,.08);color:#7ee2a8">Работает — но это <b>симуляция сигналов</b>, а не твой счёт.</div>
+    </div>
+
+    <div class="track real">
+      <h3>🔴 Реальный трек — петля ОБОРВАНА</h3>
+      <div class="mini"><span class="t">ТЫ: решение</span><div class="d">вошёл / пропустил — нигде не фиксируется</div></div>
+      <div class="arrow-sm">↓</div>
+      <div class="mini"><span class="t">реальная сделка</span><div class="d">вход / стоп / тейк на бирже</div></div>
+      <div class="arrow-sm">↓</div>
+      <div class="mini sever"><span class="t">trade_logger.py · trades.json</span><div class="d">импортируется 0 файлами · trades.json = [] с 26 апр</div></div>
+      <div class="callout"><b>🔴 РАЗРЫВ 2.</b> Связи нет → <b>реальной статистики нет</b>. Именно здесь «сигналы уходят в трубу» и теряются напоминания.</div>
+    </div>
+  </div>
+
+  <!-- HEALTH -->
+  <div class="section-t">Здоровье процессов</div>
+  <div class="health">
+    <div class="hc"><span class="dot g"></span><span class="nm">telegram_bot</span><span class="st">живой</span></div>
+    <div class="hc"><span class="dot o"></span><span class="nm">screener</span><span class="st">падает на Obsidian</span></div>
+    <div class="hc"><span class="dot g"></span><span class="nm">sweep_watcher</span><span class="st">живой</span></div>
+    <div class="hc"><span class="dot g"></span><span class="nm">boost_watcher</span><span class="st">живой</span></div>
+    <div class="hc"><span class="dot r"></span><span class="nm">liquidation_tracker</span><span class="st">17k ошибок, реконнект-шторм</span></div>
+    <div class="hc"><span class="dot o"></span><span class="nm">pump_detector</span><span class="st">валится при выходе (Py3.14)</span></div>
+    <div class="hc"><span class="dot o"></span><span class="nm">channel_reader</span><span class="st">живой, restart сломан</span></div>
+    <div class="hc"><span class="dot r"></span><span class="nm">signal_monitor</span><span class="st">НЕ запущен (стоп-брейч)</span></div>
+    <div class="hc"><span class="dot r"></span><span class="nm">web_dashboard</span><span class="st">не запущен</span></div>
+    <div class="hc"><span class="dot g"></span><span class="nm">outcome_tracker</span><span class="st">честный резолвер</span></div>
+    <div class="hc"><span class="dot r"></span><span class="nm">trade_logger</span><span class="st">не подключён</span></div>
+  </div>
+
+  <!-- CHAOS -->
+  <div class="section-t">Хаос проекта (метрики)</div>
+  <div class="health">
+    <div class="hc"><span class="nm">72</span><span class="st">.md доков (3 противоречащих эпохи)</span></div>
+    <div class="hc"><span class="nm">44</span><span class="st">бэкап-файла (при рабочем git!)</span></div>
+    <div class="hc"><span class="nm">857</span><span class="st">.json файлов</span></div>
+    <div class="hc"><span class="nm">133 МБ</span><span class="st">логов (monitor.log = 105 МБ)</span></div>
+    <div class="hc"><span class="nm">777 МБ</span><span class="st">весь проект</span></div>
+    <div class="hc"><span class="nm">357 КБ</span><span class="st">screener.py (god-object)</span></div>
+    <div class="hc"><span class="nm">8</span><span class="st">залипших lock-файлов</span></div>
+  </div>
+
+  <div class="legend">
+    <span><span class="dot g"></span> работает</span>
+    <span><span class="dot o"></span> деградация / выключено</span>
+    <span><span class="dot r"></span> сломано / не запущено</span>
+  </div>
+
+  <div class="foot">
+    Хорошие новости: git активен (последний коммит 2 июн «honest both-hit resolve»), резолвер исходов починен, поток данных живой.
+    Главное лечение — замкнуть реальную петлю (трек справа) и открыть воронку (разрыв 1). Подробности и план — в <span class="mono">КАРТА_ПРОЕКТА.md</span>.
+  </div>
+</div>
+</body>
+</html>

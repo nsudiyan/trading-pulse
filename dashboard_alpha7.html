@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ALPHA-7 · Сигнальный движок</title>
+<style>
+  :root{
+    --bg:#0a0f10; --panel:#121a1b; --panel2:#0e1516; --line:#1f2b2c;
+    --txt:#e9f1f0; --muted:#728584; --accent:#2ee6a0; --blue:#6aa3ff;
+    --red:#ff5c6c; --purple:#a78bfa; --amber:#f5b455;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--txt);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  .app{display:grid;grid-template-columns:240px 1fr;min-height:100vh}
+  /* sidebar */
+  .sidebar{background:var(--panel2);border-right:1px solid var(--line);padding:20px 16px;display:flex;flex-direction:column;gap:8px}
+  .brand{display:flex;align-items:center;gap:12px;padding:6px 4px 18px}
+  .logo{width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,#2ee6a0,#1aa67a);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;color:#06231b}
+  .brand b{font-size:16px;letter-spacing:.5px}
+  .brand small{display:block;color:var(--muted);font-size:11px;margin-top:1px}
+  .nav{display:flex;flex-direction:column;gap:2px;margin-top:4px}
+  .nav a{display:flex;align-items:center;gap:11px;padding:11px 12px;border-radius:10px;color:var(--muted);text-decoration:none;font-weight:500;cursor:pointer;transition:.15s}
+  .nav a:hover{background:#16201f;color:var(--txt)}
+  .nav a.active{background:#10211c;color:var(--accent)}
+  .nav a .ic{width:18px;text-align:center;opacity:.9}
+  .botbox{margin-top:auto;background:#0c1413;border:1px solid var(--line);border-radius:12px;padding:13px}
+  .botbox .row{display:flex;align-items:center;gap:8px;font-weight:600}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--muted)}
+  .botbox.on .dot{background:var(--accent);box-shadow:0 0 0 4px rgba(46,230,160,.16)}
+  .botbox.off .dot{background:var(--red);box-shadow:0 0 0 4px rgba(255,92,108,.16)}
+  .pulse{margin-top:9px;height:30px;width:100%}
+  /* main */
+  main{padding:22px 26px 40px;overflow-x:hidden}
+  .top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:20px;flex-wrap:wrap}
+  .top h1{font-size:24px;font-weight:700}
+  .top .sub{color:var(--muted);font-size:12.5px;margin-top:4px}
+  .top .right{display:flex;align-items:center;gap:12px}
+  .clock{font-variant-numeric:tabular-nums;color:var(--muted);font-size:13px}
+  .pill{font-size:12px;font-weight:600;padding:7px 13px;border-radius:20px;border:1px solid var(--line)}
+  .pill.on{color:var(--accent);background:rgba(46,230,160,.08);border-color:rgba(46,230,160,.3)}
+  .pill.off{color:var(--red);background:rgba(255,92,108,.08);border-color:rgba(255,92,108,.3)}
+  .note{font-size:11.5px;color:var(--muted);background:#0d1414;border:1px solid var(--line);border-radius:9px;padding:8px 12px;margin-bottom:18px}
+  .note b{color:var(--amber)}
+  .grid{display:grid;gap:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px}
+  .card .lbl{color:var(--muted);font-size:11px;letter-spacing:.8px;text-transform:uppercase;font-weight:600}
+  /* hero */
+  .hero{margin-bottom:14px}
+  .hero .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+  .toggle{display:flex;gap:4px;background:#0d1514;border:1px solid var(--line);border-radius:9px;padding:3px}
+  .toggle button{background:none;border:0;color:var(--muted);font:inherit;font-size:12px;font-weight:600;padding:5px 12px;border-radius:7px;cursor:pointer}
+  .toggle button.active{background:#16302a;color:var(--accent)}
+  .hero .big{font-size:46px;font-weight:800;letter-spacing:-1px;line-height:1.05;margin:4px 0}
+  .hero .meta{color:var(--muted);font-size:13px}
+  .hero .meta .g{color:var(--accent)} .hero .meta .r{color:var(--red)}
+  .spark{width:100%;height:120px;margin-top:8px}
+  /* stat row */
+  .stats4{grid-template-columns:repeat(4,1fr);margin-bottom:14px}
+  .stat .v{font-size:27px;font-weight:700;margin-top:8px}
+  .stat .bar{height:5px;border-radius:4px;background:#1b2625;margin-top:10px;overflow:hidden}
+  .stat .bar i{display:block;height:100%;border-radius:4px}
+  .stat .sm{color:var(--muted);font-size:11px;margin-top:7px}
+  .two{grid-template-columns:1.3fr 1fr;margin-bottom:14px}
+  /* tables */
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line)}
+  td{padding:9px 10px;border-bottom:1px solid #182221}
+  tr:last-child td{border-bottom:0}
+  .sym{font-weight:700}
+  .tag{font-size:11px;font-weight:600;padding:2px 8px;border-radius:6px}
+  .long{color:var(--accent);background:rgba(46,230,160,.1)}
+  .short{color:var(--red);background:rgba(255,92,108,.1)}
+  .b-win{color:var(--accent);background:rgba(46,230,160,.1);padding:2px 8px;border-radius:6px;font-weight:600;font-size:11px}
+  .b-stop{color:var(--red);background:rgba(255,92,108,.1);padding:2px 8px;border-radius:6px;font-weight:600;font-size:11px}
+  .b-loss{color:var(--amber);background:rgba(245,180,85,.1);padding:2px 8px;border-radius:6px;font-weight:600;font-size:11px}
+  .b-flat{color:var(--muted);background:#1a2423;padding:2px 8px;border-radius:6px;font-weight:600;font-size:11px}
+  .svc{display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid #182221}
+  .svc:last-child{border-bottom:0}
+  .svc .s-ok{color:var(--accent);font-weight:600;font-size:12px}
+  .svc .s-down{color:var(--red);font-weight:600;font-size:12px}
+  .empty{color:var(--muted);text-align:center;padding:26px;font-size:13px}
+  .ttl{font-size:13px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+  .ttl .d{width:7px;height:7px;border-radius:50%;background:var(--accent)}
+  /* telegram signals long/short */
+  .tgsig{margin-bottom:14px}
+  .tgcols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .tgcol{border-radius:14px;padding:12px;border:1px solid var(--line)}
+  .tgcol.long{background:linear-gradient(180deg,rgba(46,230,160,.06),transparent);border-color:rgba(46,230,160,.25)}
+  .tgcol.short{background:linear-gradient(180deg,rgba(255,92,108,.06),transparent);border-color:rgba(255,92,108,.25)}
+  .tghead{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;font-weight:700;font-size:14px}
+  .tgcol.long .arrow{color:var(--accent)} .tgcol.short .arrow{color:var(--red)}
+  .tghead .cnt{font-size:13px;background:#0d1514;border:1px solid var(--line);border-radius:20px;padding:2px 11px;color:var(--txt)}
+  .tglist{display:flex;flex-direction:column;gap:8px;max-height:360px;overflow-y:auto}
+  .sig{display:flex;align-items:center;gap:10px;background:#0e1716;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+  .sig .ssym{font-weight:700;font-size:15px;min-width:92px}
+  .sig .smid{flex:1;min-width:0}
+  .sig .slabel{font-size:10px;font-weight:700;letter-spacing:.4px;padding:2px 7px;border-radius:5px;background:#16201f;color:var(--muted)}
+  .sig .slabel.pump{background:rgba(46,230,160,.14);color:var(--accent)}
+  .sig .slabel.rug{background:rgba(255,92,108,.14);color:var(--red)}
+  .sig .ssub{color:var(--muted);font-size:11px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sig .sscore{font-weight:800;font-size:18px;text-align:right;min-width:34px}
+  .tgempty{color:var(--muted);font-size:12px;text-align:center;padding:20px}
+  /* self-analysis */
+  .notes{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin-bottom:16px}
+  .ncard{background:#0e1716;border:1px solid var(--line);border-radius:11px;padding:12px;border-left:3px solid var(--muted)}
+  .ncard.good{border-left-color:var(--accent)} .ncard.bad{border-left-color:var(--red)} .ncard.warn{border-left-color:var(--amber)}
+  .ncard .nt{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+  .ncard .nx{font-size:13px;margin-top:5px;line-height:1.4}
+  .pm-ttl{font-size:12px;color:var(--muted);font-weight:600;margin:4px 0 9px}
+  .pmlist{display:flex;flex-direction:column;gap:7px}
+  .pm{display:flex;gap:9px;align-items:center;font-size:12.5px;padding:8px 11px;background:#0d1514;border-radius:9px;border:1px solid #182221}
+  .pm .pmsym{font-weight:700;min-width:80px}
+  .pm .pmcause{color:var(--muted);flex:1;min-width:0}
+  .pm .pmcause b{color:var(--txt)}
+  @media(max-width:860px){.app{grid-template-columns:1fr}.sidebar{flex-direction:row;flex-wrap:wrap;align-items:center}.botbox{margin:0}.stats4{grid-template-columns:repeat(2,1fr)}.two{grid-template-columns:1fr}.tgcols{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">a</div>
+      <div><b>ALPHA-7</b><small>Сигнальный движок</small></div>
+    </div>
+    <nav class="nav">
+      <a class="active"><span class="ic">▦</span> Обзор</a>
+      <a onclick="scrollTo2('#tg')"><span class="ic">↯</span> Сигналы TG</a>
+      <a onclick="scrollTo2('#setups')"><span class="ic">◈</span> Сетапы</a>
+      <a onclick="scrollTo2('#self')"><span class="ic">🧠</span> Самоанализ</a>
+      <a onclick="scrollTo2('#svc')"><span class="ic">◎</span> Демоны</a>
+    </nav>
+    <div class="botbox off" id="botbox">
+      <div class="row"><span class="dot"></span><span id="botlabel">подключение…</span></div>
+      <svg class="pulse" id="pulse" viewBox="0 0 200 30" preserveAspectRatio="none"></svg>
+    </div>
+  </aside>
+
+  <main>
+    <div class="top">
+      <div>
+        <h1>Обзор</h1>
+        <div class="sub" id="subtitle">Bybit Perp · ALPHA-7 · скринер сигналов</div>
+      </div>
+      <div class="right">
+        <span class="clock" id="clock">--:--:-- UTC</span>
+        <span class="pill off" id="conn">● подключение…</span>
+      </div>
+    </div>
+
+    <div class="note">⚠ Режим: <b>сигнальный движок</b>, не торговый счёт. Баланс/P&L не показываются — бот не исполняет сделки. Все цифры ниже (винрейт, исходы, статус) — <b>реальные</b>, из <span id="ndata">—</span> исходов.</div>
+
+    <!-- TELEGRAM SIGNALS LONG/SHORT -->
+    <div class="card tgsig" id="tg">
+      <div class="ttl"><span class="d"></span> Сигналы → Telegram <span id="tg-meta" style="color:var(--muted);font-weight:500;font-size:12px;margin-left:6px"></span></div>
+      <div class="tgcols">
+        <div class="tgcol long">
+          <div class="tghead"><span class="arrow">▲ ЛОНГ</span><span class="cnt" id="tg-long-cnt">0</span></div>
+          <div id="tg-long" class="tglist"></div>
+        </div>
+        <div class="tgcol short">
+          <div class="tghead"><span class="arrow">▼ ШОРТ</span><span class="cnt" id="tg-short-cnt">0</span></div>
+          <div id="tg-short" class="tglist"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- HERO -->
+    <div class="card hero">
+      <div class="head">
+        <span class="lbl">Эффективность сигналов · винрейт</span>
+        <div class="toggle">
+          <button id="t24" onclick="setMode('24h')">24Ч</button>
+          <button id="tall" class="active" onclick="setMode('all')">ВСЁ</button>
+        </div>
+      </div>
+      <div class="big" id="hero-wr">—</div>
+      <div class="meta" id="hero-meta">загрузка…</div>
+      <svg class="spark" id="spark" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
+    </div>
+
+    <!-- 4 STATS -->
+    <div class="grid stats4">
+      <div class="card stat"><div class="lbl">Активные сигналы</div><div class="v" id="s-active">—</div><div class="bar"><i id="s-active-bar" style="background:var(--blue)"></i></div><div class="sm">в работе сейчас</div></div>
+      <div class="card stat"><div class="lbl">Топ-кандидаты</div><div class="v" id="s-top">—</div><div class="bar"><i id="s-top-bar" style="background:var(--purple)"></i></div><div class="sm">по score</div></div>
+      <div class="card stat"><div class="lbl">Винрейт 24ч</div><div class="v" id="s-wr24">—</div><div class="bar"><i id="s-wr24-bar" style="background:var(--accent)"></i></div><div class="sm" id="s-wr24-sm">за сутки</div></div>
+      <div class="card stat"><div class="lbl">Resolved всего</div><div class="v" id="s-total">—</div><div class="bar"><i id="s-total-bar" style="background:var(--amber)"></i></div><div class="sm" id="s-total-sm">исходов</div></div>
+    </div>
+
+    <!-- SETUPS + MARKET -->
+    <div class="grid two">
+      <div class="card" id="setups">
+        <div class="ttl"><span class="d"></span> Винрейт по сетапам · всё время</div>
+        <table><thead><tr><th>Сетап</th><th>Сделок</th><th>Винрейт</th><th></th></tr></thead><tbody id="setup-rows"><tr><td colspan="4" class="empty">загрузка…</td></tr></tbody></table>
+      </div>
+      <div class="card">
+        <div class="ttl"><span class="d"></span> Рынок · направления</div>
+        <div id="market-box" style="color:var(--muted);font-size:13px;line-height:2"></div>
+        <table style="margin-top:8px"><thead><tr><th>Направление</th><th>Сделок</th><th>Винрейт</th></tr></thead><tbody id="dir-rows"></tbody></table>
+      </div>
+    </div>
+
+    <!-- SELF-ANALYSIS -->
+    <div class="card" id="self" style="margin-bottom:14px">
+      <div class="ttl"><span class="d"></span> 🧠 Самоанализ сделок <span id="self-meta" style="color:var(--muted);font-weight:500;font-size:12px;margin-left:6px"></span></div>
+      <div class="notes" id="self-notes"></div>
+      <div class="pm-ttl">Последние разборы · причина исхода</div>
+      <div id="self-recent" class="pmlist"></div>
+    </div>
+
+    <!-- FEED -->
+    <div class="card" id="feed" style="margin-bottom:14px">
+      <div class="ttl"><span class="d"></span> Лента сигналов · активные + последние исходы</div>
+      <table>
+        <thead><tr><th>Символ</th><th>Напр.</th><th>Сетап</th><th>Score</th><th>Funding</th><th>Изм.24ч</th><th>Исход</th></tr></thead>
+        <tbody id="feed-rows"><tr><td colspan="7" class="empty">загрузка…</td></tr></tbody>
+      </table>
+    </div>
+
+    <!-- SERVICES -->
+    <div class="card" id="svc">
+      <div class="ttl"><span class="d"></span> Демоны · статус</div>
+      <div id="svc-rows"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+let MODE='all', LAST=null;
+
+function fmt(v,d=2){return v==null||isNaN(v)?'—':(+v).toFixed(d)}
+function pct(v,d=2){return v==null||isNaN(v)?'—':((+v>=0?'+':'')+(+v).toFixed(d)+'%')}
+function wrCol(wr){return wr==null?'var(--muted)':wr>=55?'var(--accent)':wr>=45?'var(--blue)':'var(--red)'}
+function dirCls(x){return x==='ЛОНГ'||x==='LONG'?'long':x==='ШОРТ'||x==='SHORT'?'short':''}
+function outBadge(o){
+  if(o==='TP1'||o==='WIN')return '<span class="b-win">WIN</span>';
+  if(o==='STOP')return '<span class="b-stop">STOP</span>';
+  if(o==='LOSS')return '<span class="b-loss">LOSS</span>';
+  if(o==='FLAT')return '<span class="b-flat">FLAT</span>';
+  return '<span class="b-flat">в работе</span>';
+}
+function scrollTo2(s){const e=$(s);if(e)e.scrollIntoView({behavior:'smooth',block:'start'})}
+function setMode(m){MODE=m;$('#t24').classList.toggle('active',m==='24h');$('#tall').classList.toggle('active',m==='all');if(LAST)render(LAST)}
+
+function setConn(ok){
+  const p=$('#conn');
+  p.className='pill '+(ok?'on':'off');
+  p.textContent=ok?'● подключено':'● нет связи';
+  const live=ok&&LAST&&LAST.services&&Object.values(LAST.services).some(Boolean);
+  const bb=$('#botbox'); bb.className='botbox '+(ok?(live?'on':'on'):'off');
+  $('#botlabel').textContent=!ok?'нет связи с сервером':(live?'Бот работает':'данные есть');
+}
+
+function sparkline(el,pts,col,fill){
+  if(!pts.length){el.innerHTML='';return}
+  const W=600,H=120,min=Math.min(...pts),max=Math.max(...pts),rng=(max-min)||1;
+  const X=i=>pts.length<2?W/2:i/(pts.length-1)*W;
+  const Y=v=>H-8-((v-min)/rng)*(H-16);
+  let d=pts.map((v,i)=>(i?'L':'M')+X(i).toFixed(1)+' '+Y(v).toFixed(1)).join(' ');
+  let area=d+` L ${W} ${H} L 0 ${H} Z`;
+  el.innerHTML=`<defs><linearGradient id="g1" x1=0 y1=0 x2=0 y2=1><stop offset=0 stop-color="${col}" stop-opacity=.28/><stop offset=1 stop-color="${col}" stop-opacity=0/></linearGradient></defs>`+
+    (fill?`<path d="${area}" fill="url(#g1)"/>`:'')+
+    `<path d="${d}" fill="none" stroke="${col}" stroke-width="2.2" stroke-linejoin="round"/>`;
+}
+
+function render(d){
+  LAST=d;
+  const st=MODE==='24h'?(d.stats_24h||{}):(d.stats||{});
+  const all=d.stats||{}, s24=d.stats_24h||{};
+  // honest data count
+  $('#ndata').textContent=(all.total!=null?all.total:'—');
+  // subtitle
+  const ls=d.market&&d.market.last_scan?(' · скан '+String(d.market.last_scan).slice(11,16)):'';
+  $('#subtitle').textContent='Bybit Perp · ALPHA-7 · скринер сигналов'+ls;
+  // hero
+  $('#hero-wr').innerHTML=(st.wr!=null?st.wr.toFixed(1)+'%':'—');
+  $('#hero-wr').style.color=wrCol(st.wr);
+  const w=st.wins||0,t=st.total||0,sl=(st.stops||0)+(st.losses||0);
+  $('#hero-meta').innerHTML=`<span class="g">${w} WIN</span> · <span class="r">${sl} STOP/LOSS</span> · ${t} исходов (${MODE==='24h'?'24ч':'всё время'})`;
+  // hero curve from recent_resolved cumulative (W=+1, S/L=-1)
+  let cum=0;const curve=[0];
+  (d.recent_resolved||[]).forEach(r=>{const o=r.outcome_24h;if(o==='TP1'||o==='WIN')cum++;else if(o==='STOP'||o==='LOSS')cum--;curve.push(cum)});
+  sparkline($('#spark'),curve,curve[curve.length-1]>=curve[0]?'var(--accent)':'var(--red)',true);
+  // 4 stats
+  const na=(d.active_signals||[]).length, nt=(d.top_candidates||[]).length;
+  $('#s-active').textContent=na; $('#s-active-bar').style.width=Math.min(na*10,100)+'%';
+  $('#s-top').textContent=nt; $('#s-top-bar').style.width=Math.min(nt/35*100,100)+'%';
+  $('#s-wr24').textContent=s24.wr!=null?s24.wr.toFixed(1)+'%':'—'; $('#s-wr24').style.color=wrCol(s24.wr);
+  $('#s-wr24-bar').style.width=(s24.wr||0)+'%'; $('#s-wr24-bar').style.background=wrCol(s24.wr);
+  $('#s-wr24-sm').textContent=(s24.total||0)+' исходов за сутки';
+  $('#s-total').textContent=all.total!=null?all.total:'—'; $('#s-total-bar').style.width='100%';
+  $('#s-total-sm').textContent=`${all.wins||0}W / ${all.stops||0}S / ${all.losses||0}L`;
+  // setups
+  const sr=$('#setup-rows');const bs=all.by_setup||{};
+  const keys=Object.keys(bs).sort((a,b)=>(bs[b].t||0)-(bs[a].t||0));
+  sr.innerHTML=keys.length?keys.map(k=>{const v=bs[k];return `<tr><td class="sym">${k}</td><td>${v.t}</td><td style="color:${wrCol(v.wr)};font-weight:700">${v.wr!=null?v.wr+'%':'—'}</td><td style="width:90px"><div class="bar" style="margin:0"><i style="width:${v.wr||0}%;background:${wrCol(v.wr)}"></i></div></td></tr>`}).join(''):'<tr><td colspan=4 class="empty">нет данных</td></tr>';
+  // direction
+  const dr=$('#dir-rows');const bd=all.by_direction||{};
+  dr.innerHTML=Object.keys(bd).map(k=>{const v=bd[k];return `<tr><td><span class="tag ${dirCls(k)}">${k}</span></td><td>${v.t}</td><td style="color:${wrCol(v.wr)};font-weight:700">${v.wr!=null?v.wr+'%':'—'}</td></tr>`}).join('')||'<tr><td colspan=3 class="empty">—</td></tr>';
+  // market
+  const m=d.market||{};
+  $('#market-box').innerHTML=`BTC тренд 4ч: <b style="color:var(--txt)">${m.btc_trend_4h||'—'}</b> &nbsp; · &nbsp; Alt breadth: <b style="color:var(--txt)">${m.alt_breadth_pct!=null?m.alt_breadth_pct+'%':'—'}</b>`;
+  // ── Сигналы → Telegram (LONG/SHORT) ──
+  const tg=d.tg_signals||[];
+  const L=tg.filter(s=>s.dir==='LONG'), S=tg.filter(s=>s.dir==='SHORT');
+  $('#tg-long-cnt').textContent=L.length; $('#tg-short-cnt').textContent=S.length;
+  const nScr=tg.filter(s=>s.source==='screener').length, nPump=tg.filter(s=>s.source==='pump').length;
+  $('#tg-meta').textContent=`${tg.length} активных · скринер ${nScr} / памп-раг ${nPump}`;
+  const sigCard=s=>{
+    const lc=s.source==='pump'?(s.dir==='LONG'?'pump':'rug'):'';
+    const tm=s.run_ts?String(s.run_ts).slice(11,16):'';
+    const sub=[s.entry!=null?('вход '+(+s.entry).toPrecision(5)):'',s.funding!=null?('fund '+(+s.funding).toFixed(3)+'%'):'',tm].filter(Boolean).join(' · ');
+    return `<div class="sig"><div class="ssym">${s.symbol||'—'}</div><div class="smid"><span class="slabel ${lc}">${s.label||s.source||''}</span><div class="ssub">${sub}</div></div><div class="sscore" style="color:${s.dir==='LONG'?'var(--accent)':'var(--red)'}">${s.score!=null?s.score:'—'}</div></div>`;
+  };
+  $('#tg-long').innerHTML=L.length?L.map(sigCard).join(''):'<div class="tgempty">нет лонг-сигналов</div>';
+  $('#tg-short').innerHTML=S.length?S.map(sigCard).join(''):'<div class="tgempty">нет шорт-сигналов</div>';
+
+  // feed = active first, then recent resolved (newest)
+  const act=(d.active_signals||[]).map(s=>({...s,_live:true}));
+  const rec=(d.recent_resolved||[]).slice().reverse();
+  const rows=[...act,...rec].slice(0,30);
+  $('#feed-rows').innerHTML=rows.length?rows.map(s=>`<tr>
+     <td class="sym">${s.symbol||'—'}</td>
+     <td><span class="tag ${dirCls(s.direction)}">${s.direction||'—'}</span></td>
+     <td style="color:var(--muted)">${s.setup||'—'}</td>
+     <td style="font-weight:700">${s.score!=null?s.score:'—'}</td>
+     <td style="color:${(+s.funding>=0)?'var(--accent)':'var(--red)'}">${s.funding!=null?pct(s.funding,3):'—'}</td>
+     <td style="color:${(+s.change_24h_pct>=0)?'var(--accent)':'var(--red)'}">${s.change_24h_pct!=null?pct(s.change_24h_pct):'—'}</td>
+     <td>${s._live?'<span class="b-flat">активен</span>':outBadge(s.outcome_24h)}</td></tr>`).join(''):'<tr><td colspan=7 class="empty">сейчас сигналов нет — движок сканит рынок</td></tr>';
+  // services
+  const sv=d.services||{};const SN={bot:'Trading bot',screener:'Screener',channelreader:'Channel reader',liqtracker:'Liq tracker',pumpdetector:'Pump detector'};
+  $('#svc-rows').innerHTML=Object.keys(sv).map(k=>`<div class="svc"><span>${SN[k]||k}</span><span class="${sv[k]?'s-ok':'s-down'}">${sv[k]?'● OK':'● DOWN'}</span></div>`).join('');
+  // pulse mini
+  sparkline($('#pulse'),[6,8,5,12,7,14,9,16,8,11,7,13],'var(--accent)',false);
+}
+
+function clock(){const n=new Date();$('#clock').textContent=n.toISOString().slice(11,19)+' UTC'}
+async function tick(){
+  try{const r=await fetch('/api/data',{cache:'no-store'});if(!r.ok)throw 0;const d=await r.json();render(d);setConn(true);}
+  catch(e){setConn(false);}
+}
+async function tickRca(){
+  try{const r=await fetch('/api/rca',{cache:'no-store'});if(!r.ok)throw 0;renderRca(await r.json());}catch(e){}
+}
+function renderRca(d){
+  const c=d.counts||{};
+  $('#self-meta').textContent=c.total?`${c.win}W / ${c.loss}L / ${c.flat}F из ${c.total} разобранных`:'';
+  $('#self-notes').innerHTML=(d.notes||[]).map(n=>`<div class="ncard ${n.tone||''}"><div class="nt">${n.icon||''} ${n.title}</div><div class="nx">${n.text}</div></div>`).join('')||'<div class="tgempty">нет данных RCA</div>';
+  $('#self-recent').innerHTML=(d.recent||[]).map(r=>`<div class="pm"><div class="pmsym">${r.symbol||'—'}</div>${outBadge(r.outcome)}<div class="pmcause"><b>${r.setup||''} ${r.direction||''}</b> — ${r.cause||'—'}</div></div>`).join('')||'<div class="tgempty">—</div>';
+}
+clock();setInterval(clock,1000);
+tick();setInterval(tick,10000);
+tickRca();setInterval(tickRca,300000);
+</script>
+</body>
+</html>
