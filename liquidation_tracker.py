@@ -33,6 +33,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import sqlite3
 import sys
 import time
@@ -44,9 +45,21 @@ import requests
 
 try:
     import websockets
+    # ленивые импорты websockets v12+: подмодуль exceptions надо импортировать явно
+    from websockets.exceptions import WebSocketException as _WSBaseError
     _WS_OK = True
 except ImportError:
     _WS_OK = False
+    _WSBaseError = None
+
+# P1-7 (2026-06-07): тихий реконнект. Мак регулярно спит — обрывы WS и DNS-икоты
+# после пробуждения НЕУСТРАНИМЫ. Штатные сетевые ошибки → одна WARNING-строка,
+# полный traceback — только на неожиданное.
+_EXPECTED_WS_ERRORS = (
+    (asyncio.TimeoutError, TimeoutError, ConnectionError, OSError, EOFError)
+    + ((_WSBaseError,) if _WS_OK else ())
+)
+STABLE_RESET_SEC = 300   # коннект прожил ≥5 мин → сбой считаем новым, backoff с начала
 
 # Telegram: опциональный импорт
 try:
@@ -429,6 +442,7 @@ async def _bybit_batch(symbols: list[str], con: sqlite3.Connection,
     topics = [f"allLiquidation.{s}" for s in symbols]
     backoff = 1.0
     fails = 0
+    connected_at = None   # P1-7: сброс backoff только после 5 мин стабильности
 
     while True:
         try:
@@ -437,9 +451,8 @@ async def _bybit_batch(symbols: list[str], con: sqlite3.Connection,
                 open_timeout=15,
             ) as ws:
                 await ws.send(json.dumps({"op": "subscribe", "args": topics}))
-                LOG.debug("[bybit] connected, %d symbols", len(symbols))
-                backoff = 1.0
-                fails = 0
+                LOG.info("[bybit] connected, %d symbols", len(symbols))
+                connected_at = time.monotonic()
 
                 async for raw in ws:
                     try:
@@ -492,11 +505,18 @@ async def _bybit_batch(symbols: list[str], con: sqlite3.Connection,
                             )
 
         except Exception as e:
-            fails += 1   # FIX 2026-06-02: шум reconnect → debug; WARNING только при устойчивом сбое (≥3 подряд)
-            (LOG.warning if fails >= 3 else LOG.debug)(
-                "[bybit] batch error (#%d): %s — retry in %.0fs", fails, e, backoff)
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 60)
+            # P1-7: тихий реконнект — одна строка, без трейсбеков на штатное
+            if connected_at and time.monotonic() - connected_at >= STABLE_RESET_SEC:
+                backoff, fails = 1.0, 0
+            connected_at = None
+            fails += 1
+            delay = backoff * (0.5 + random.random())   # джиттер 0.5–1.5×
+            if isinstance(e, _EXPECTED_WS_ERRORS):
+                LOG.warning("[bybit] reconnect #%d after %.1fs: %s", fails, delay, e)
+            else:
+                LOG.exception("[bybit] НЕОЖИДАННАЯ ошибка — reconnect #%d after %.1fs", fails, delay)
+            await asyncio.sleep(delay)
+            backoff = min(backoff * 2, 60.0)
 
 
 async def bybit_liq_stream(symbols: list[str], con: sqlite3.Connection,
@@ -515,6 +535,7 @@ async def _hl_batch(coins: list[str], con: sqlite3.Connection, alert_usd: float)
     """Одно WS-соединение Hyperliquid на HL_BATCH монет."""
     backoff = 1.0
     fails = 0
+    connected_at = None   # P1-7: сброс backoff только после 5 мин стабильности
 
     while True:
         try:
@@ -529,9 +550,8 @@ async def _hl_batch(coins: list[str], con: sqlite3.Connection, alert_usd: float)
                     }
                     await ws.send(json.dumps(sub))
                     await asyncio.sleep(0.15)   # пауза между подписками — HL рвёт при flood
-                LOG.debug("[hl] connected, %d coins", len(coins))
-                backoff = 1.0
-                fails = 0
+                LOG.info("[hl] connected, %d coins", len(coins))
+                connected_at = time.monotonic()
 
                 async for raw in ws:
                     try:
@@ -579,11 +599,18 @@ async def _hl_batch(coins: list[str], con: sqlite3.Connection, alert_usd: float)
                             )
 
         except Exception as e:
-            fails += 1   # FIX 2026-06-02: шум reconnect → debug; WARNING только при устойчивом сбое (≥3 подряд)
-            (LOG.warning if fails >= 3 else LOG.debug)(
-                "[hl] batch error (#%d): %s — retry in %.0fs", fails, e, backoff)
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 60)
+            # P1-7: тихий реконнект — одна строка, без трейсбеков на штатное
+            if connected_at and time.monotonic() - connected_at >= STABLE_RESET_SEC:
+                backoff, fails = 1.0, 0
+            connected_at = None
+            fails += 1
+            delay = backoff * (0.5 + random.random())   # джиттер 0.5–1.5×
+            if isinstance(e, _EXPECTED_WS_ERRORS):
+                LOG.warning("[hl] reconnect #%d after %.1fs: %s", fails, delay, e)
+            else:
+                LOG.exception("[hl] НЕОЖИДАННАЯ ошибка — reconnect #%d after %.1fs", fails, delay)
+            await asyncio.sleep(delay)
+            backoff = min(backoff * 2, 60.0)
 
 
 async def hyperliquid_liq_stream(coins: list[str], con: sqlite3.Connection,
@@ -762,7 +789,12 @@ def main():
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s  %(levelname)-7s  %(message)s",
-        datefmt="%H:%M:%S",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        # P1-7: явный stdout. Без stream= дефолт = stderr → ВСЁ (INFO+WARNING)
+        # утекало в liqtracker_error.log, а liqtracker.log стоял пустым с 14.04.
+        # Теперь: INFO/WARNING → stdout → liqtracker.log (редирект плиста);
+        # stderr/error.log — только реальные краши интерпретатора.
+        stream=sys.stdout,
     )
 
     # ── Режимы только-чтение ──
