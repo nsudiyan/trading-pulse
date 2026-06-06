@@ -1836,11 +1836,43 @@ def send_pump_alert(c: dict, cfg: dict = None) -> bool:
 
         lines += ["", action]
 
-        _send(token, chat_id, "\n".join(lines))
+        # P0-2 (петля): кнопки [Вошёл/Пропустил] + регистрация в alerts_index
+        _kb = None
+        try:
+            from telegram_alerts import _alert_short_id, _register_alert, _trade_buttons
+            from datetime import timezone as _tz
+            _alert_ts = datetime.now(_tz.utc).strftime("%Y-%m-%dT%H:%M")
+            _dirn  = "short" if is_rug else "long"
+            _entry = c.get("price")
+            _sl_px = _tp_px = None
+            if _entry and c.get("claude_sl_pct"):
+                _sl_px = _entry * (1 + c["claude_sl_pct"] / 100) if is_rug else _entry * (1 - c["claude_sl_pct"] / 100)
+            if _entry and c.get("claude_tp_pct"):
+                _tp_px = _entry * (1 - c["claude_tp_pct"] / 100) if is_rug else _entry * (1 + c["claude_tp_pct"] / 100)
+            _sid = _alert_short_id(c["symbol"], _alert_ts, c.get("signal_type", "pump"))
+            _register_alert(_sid, {
+                "run_ts": _alert_ts, "symbol": c["symbol"],
+                "setup": c.get("signal_type", "pump"), "direction": _dirn,
+                "entry": _entry, "sl": _sl_px, "tp": _tp_px,
+                "score": c.get("score"), "grade": None,
+                "verdict": "WAIT" if c.get("macro_veto_note") else "GO",
+                "macro_veto": bool(c.get("macro_veto_note")),
+                "msg_id": None, "ts": _alert_ts, "status": "sent",
+            })
+            _kb = _trade_buttons(_sid)
+        except Exception as _btn_e:
+            _log(f"[Петля] кнопки/индекс не прикрутились (алерт уйдёт без них): {_btn_e}")
+
+        _mid = _send(token, chat_id, "\n".join(lines), reply_markup=_kb)
+        if _kb is not None and _mid and _mid is not True:
+            try:
+                _register_alert(_sid, {"msg_id": _mid})
+            except Exception:
+                pass
         for extra in cfg.get("extra_chat_ids", []):
             cid = str(extra)
             if cid != chat_id:
-                _send(token, cid, "\n".join(lines))
+                _send(token, cid, "\n".join(lines), reply_markup=_kb)
 
         # Vision chart analysis — график 1H + AI разбор после памп/раг алерта
         try:

@@ -17,7 +17,7 @@ import json
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -216,24 +216,31 @@ def notify_suppression(reason_key: str, text: str, cfg: Optional[dict] = None, c
         return False
 
 
-def _send(token: str, chat_id: str, text: str, parse_mode: str = "HTML") -> bool:
-    """Отправляет одно сообщение. Возвращает True при успехе."""
+def _send(token: str, chat_id: str, text: str, parse_mode: str = "HTML",
+          reply_markup: Optional[dict] = None):
+    """Отправляет одно сообщение.
+    Возвращает message_id (int, truthy) при успехе — обратно совместимо со старым bool —
+    или False при ошибке. reply_markup: dict для inline-кнопок (P0-2, петля)."""
     try:
+        payload = {
+            "chat_id":    chat_id,
+            "text":       text,
+            "parse_mode": parse_mode,
+            "disable_web_page_preview": True,
+        }
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
         resp = requests.post(
             f"{TG_BASE}/bot{token}/sendMessage",
-            json={
-                "chat_id":    chat_id,
-                "text":       text,
-                "parse_mode": parse_mode,
-                "disable_web_page_preview": True,
-            },
+            json=payload,
             timeout=10,
             proxies=_PROXIES,
         )
         data = resp.json()
         if not data.get("ok"):
             print(f"[TG] API error: {data.get('description')} | text[:80]={text[:80]!r}")
-        return data.get("ok", False)
+            return False
+        return (data.get("result") or {}).get("message_id") or True
     except Exception as e:
         print(f"[TG] Ошибка отправки: {e}")
         return False
@@ -294,6 +301,45 @@ def _fmt_ago(ts_str: str) -> str:
         return f"{h}ч {mm}м" if h else f"{mm}м"
     except Exception:
         return "?"
+
+
+# ─── P0-2 (петля «алерт → действие → результат»): кнопки + индекс алертов ────
+ALERTS_INDEX_PATH = Path(__file__).parent / "outcomes" / "alerts_index.json"
+ALERTS_INDEX_MAX  = 500   # ротация: храним последние ~500 алертов
+
+
+def _alert_short_id(symbol: str, alert_ts: str, setup: str = "") -> str:
+    """Короткий id для callback_data (лимит TG 64 байта)."""
+    import hashlib
+    return hashlib.sha1(f"{symbol}|{alert_ts}|{setup}".encode()).hexdigest()[:10]
+
+
+def _trade_buttons(short_id: str) -> dict:
+    """Inline-клавиатура [✅ Вошёл] [⏭ Пропустил]. callback_data ≤ 64 байт."""
+    return {"inline_keyboard": [[
+        {"text": "✅ Вошёл",     "callback_data": f"tr:in:{short_id}"},
+        {"text": "⏭ Пропустил", "callback_data": f"tr:skip:{short_id}"},
+    ]]}
+
+
+def _register_alert(short_id: str, payload: dict):
+    """Регистрирует/обновляет (merge) запись алерта в alerts_index.json —
+    атомарно через file_lock, с ротацией по ts. Ошибка индекса не валит отправку."""
+    try:
+        from file_lock import atomic_json_update
+
+        def _upd(idx):
+            if not isinstance(idx, dict):
+                idx = {}
+            idx[short_id] = {**idx.get(short_id, {}), **payload}
+            if len(idx) > ALERTS_INDEX_MAX:
+                for k in sorted(idx, key=lambda k: (idx[k] or {}).get("ts", ""))[:len(idx) - ALERTS_INDEX_MAX]:
+                    idx.pop(k, None)
+            return idx
+
+        atomic_json_update(ALERTS_INDEX_PATH, _upd, default={})
+    except Exception as e:
+        print(f"[TG] alerts_index error (алерт уйдёт без индекса): {e}")
 
 
 def send_signal_alert(r: dict, plan: dict, cfg: Optional[dict] = None) -> bool:
@@ -383,11 +429,39 @@ def send_signal_alert(r: dict, plan: dict, cfg: Optional[dict] = None) -> bool:
 
     text = "\n".join(lines)
 
+    # P0-2 (петля): регистрируем алерт ДО отправки (защита от мгновенного нажатия)
+    # и вешаем кнопки [Вошёл/Пропустил] на ВСЕ торговые алерты, включая WAIT+macro_veto.
+    alert_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M")
+    sid = _alert_short_id(sym, alert_ts, str(setup))
+    _register_alert(sid, {
+        "run_ts":     alert_ts,
+        "symbol":     sym,
+        "setup":      str(setup),
+        "direction":  side if side in ("long", "short") else "long",
+        "entry":      entry,
+        "sl":         stop,
+        "tp":         tp1,
+        "score":      score,
+        "grade":      grade,
+        "verdict":    "WAIT" if plan.get("macro_veto_note") else "GO",
+        "macro_veto": bool(plan.get("macro_veto_note")),
+        "msg_id":     None,
+        "ts":         alert_ts,
+        "status":     "sent",
+    })
+    kb = _trade_buttons(sid)
+
     all_targets = [chat_id] + [str(c) for c in cfg.get("extra_chat_ids", []) if str(c) != chat_id]
     ok = True
+    first_msg_id = None
     for cid in all_targets:
-        ok = _send(token, cid, text) and ok
+        res = _send(token, cid, text, reply_markup=kb)
+        if res and res is not True and first_msg_id is None:
+            first_msg_id = res
+        ok = bool(res) and ok
         time.sleep(0.3)
+    if first_msg_id:
+        _register_alert(sid, {"msg_id": first_msg_id})
     return ok
 
 
