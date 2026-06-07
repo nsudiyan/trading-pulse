@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.trading.scannerdigest</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/python3</string>
+    <string>/Users/nikitasudian/Desktop/трейдинг/scanner_assistant.py</string>
+    <string>--digest</string>
+    <string>--send</string>
+    <string>owner</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/nikitasudian/Desktop/трейдинг</string>
+
+  <!-- 3 раза в день (локальное время): утро / день / вечер -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>15</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+
+  <key>StandardOutPath</key>
+  <string>/Users/nikitasudian/Desktop/трейдинг/scanner_digest.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/nikitasudian/Desktop/трейдинг/scanner_digest.log</string>
+</dict>
+</plist>
