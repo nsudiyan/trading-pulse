@@ -13,7 +13,7 @@ import claude_realtime_filter as crf
 
 
 @pytest.fixture
-def isolated_filter(monkeypatch):
+def isolated_filter(monkeypatch, tmp_path):
     """Глушит всё вокруг veto: Claude → GO, side-effects → no-op."""
     monkeypatch.setattr(crf, "is_enabled", lambda: True)
     monkeypatch.setattr(crf, "_ensure_macro_thread", lambda: None)
@@ -22,6 +22,9 @@ def isolated_filter(monkeypatch):
     monkeypatch.setattr(crf, "_persist_verdict_cache_entry", lambda *a, **k: None)
     monkeypatch.setattr(crf, "_add_to_watchlist", lambda *a, **k: None)
     monkeypatch.setattr(crf, "build_context", lambda *a, **k: "ctx")
+    # F-61: персист-cooldown в tmp (не засорять боевой файл; эти тесты повторяют
+    # один и тот же ARBUSDT/squeeze/LONG — без изоляции второй GO ловит cooldown).
+    monkeypatch.setattr(crf, "COOLDOWN_STORE_PATH", tmp_path / "claude_cooldown.json")
     monkeypatch.setattr(crf, "_call_claude", lambda *a, **k: {
         "verdict": "GO", "confidence": 0.7, "tp_pct": 12.0, "sl_pct": 3.0,
         "reasoning": "strong setup", "risks": [],

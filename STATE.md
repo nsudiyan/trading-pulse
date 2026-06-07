@@ -29,6 +29,14 @@
   и loop ДО выхода (`_shutdown_loop`, try/finally в `__main__`). Шум `_ssock` AttributeError
   (×569 в error.log до 28.05) устранён корректным закрытием, без подавления. Проверено:
   ручной прогон 30с + SIGTERM → stderr 0 байт.
+- **Персистентный общий cooldown Claude-фильтра** (F-61): `outcomes/claude_cooldown.json`
+  под file_lock — вход `filter_candidate` первым делом отбивает дубль symbol|setup|direction
+  (TTL пер-источник: pump 4ч / прочие 8ч — те же проектные числа) и дневной лимит
+  5 send-able/день **ПЕР-ИСТОЧНИК** (решение владельца) ДО обращения к API; переживает
+  рестарт. Отметка — на send-able (GO / macro-veto WAIT), как у старых in-memory механизмов
+  (те остались pre-check'ами). Промоушен из wait_watchlist идёт МИМО precheck (trigger =
+  подтверждение, не дубль — решение владельца). Известный минор: парный precheck/mark
+  не атомарен между процессами (±1 к лимиту в гонке) — класс pre-existing, принято.
 
 ## 2. СЛОМАНО / МОНИТОРИМ
 

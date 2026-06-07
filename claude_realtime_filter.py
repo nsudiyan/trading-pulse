@@ -59,6 +59,14 @@ STATE_PATH      = BASE_DIR / "claude_rt_state.json"   # /pause /resume конт�
 LOG_PATH        = BASE_DIR / "claude_realtime_filter.log"
 VERDICT_CACHE_PATH = BASE_DIR / "outcomes" / "claude_verdict_cache.json"
 SHADOW_LOG_PATH = BASE_DIR / "outcomes" / "shadow_verdicts.jsonl"   # для honest backtest
+# F-61 (2026-06-07): персистентный ОБЩИЙ cooldown/дневной-лимит фильтра.
+# До этого cooldown/лимит жили в памяти каждого вызывающего (screener, pump_detector)
+# → рестарт демона обнулял → дубли алертов + обход лимита. Источник правды теперь файл,
+# in-memory копии вызывающих остаются как pre-check. Свой файл (не cooldown_cache.json,
+# который принадлежит screener.py и symbol-keyed): тут ключ symbol|setup|direction + date-keyed лимит.
+# Путь переопределяется через CLAUDE_COOLDOWN_STORE (тесты — НЕ засорять боевой файл).
+COOLDOWN_STORE_PATH = Path(os.environ.get("CLAUDE_COOLDOWN_STORE")
+                           or (BASE_DIR / "outcomes" / "claude_cooldown.json"))
 
 MODEL           = "claude-sonnet-4-6"
 MAX_TOKENS      = 800
@@ -67,6 +75,17 @@ TEMPERATURE     = 0.0           # детерминированные verdict'ы 
 CACHE_TTL_SEC   = 1800          # 30 мин
 WATCH_TTL_SEC   = 4 * 3600      # 4 часа жизни WAIT-записи
 WATCH_MAX       = 20            # максимум одновременно в watchlist
+
+# ── F-61: персистентный cooldown/дневной-лимит ────────────────────────────────
+# TTL берём ИЗ существующих проектных значений вызывающих (НЕ выдумываем):
+#   pump_detector.COOLDOWN_SEC = 14400 (4ч) — pump_detector.py:78
+#   screener.COOLDOWN_HOURS    = 8ч       — screener.py:59 (≡ default для остальных источников)
+# Дневной лимит — date-keyed (UTC), переживает рестарт; ПЕР-ИСТОЧНИК (решение
+# владельца 07.06: pump 5/день и screener 5/день отдельно, НЕ общий потолок):
+#   pump_detector.MAX_DAILY_ALERTS = 5 — pump_detector.py:152 (цель «1-2 идеальных в день»)
+COOLDOWN_SEC_PUMP    = 14400          # 4ч — source=="pump_detector"
+COOLDOWN_SEC_DEFAULT = 8 * 3600       # 8ч — screener и прочие источники
+MAX_DAILY_GO         = 5              # дневной лимит send-able вердиктов НА ИСТОЧНИК
 
 # Стоимость моделей (USD за миллион токенов)
 _PRICING = {
@@ -135,6 +154,115 @@ def _persist_verdict_cache_entry(key: tuple, ts: float, verdict: dict):
     except Exception as e:
         # Persist — best-effort, не падаем если файл недоступен
         log.warning(f"verdict cache persist failed: {type(e).__name__}: {e}")
+
+
+# ── F-61: персистентный общий cooldown / дневной лимит ────────────────────────
+# Формат файла COOLDOWN_STORE_PATH:
+#   {"cooldown": {"BTCUSDT|squeeze|LONG": <last_send_ts>, ...},
+#    "daily":    {"2026-06-07": {"pump_detector": 3, "screener": 1}, ...}}
+# daily — ПЕР-ИСТОЧНИК (решение владельца 07.06), по MAX_DAILY_GO на каждый source.
+# Семантика КОГДА ставится отметка — как у существующих механизмов (screener
+# _record_cooldown после send_report, pump _sent_recently[sym]=now только при _sent_ok):
+# отметка ставится на ОТПРАВЛЯЕМЫЙ вердикт (GO либо macro-veto WAIT — оба идут в TG тем
+# же путём). SKIP/обычный WAIT/FAIL_OPEN отправку не порождают → не маркируем (точно как
+# вызывающие НЕ зовут _record_cooldown / не бампят _sent_recently для них).
+
+def _cooldown_key(symbol: str, setup: str, direction: str) -> str:
+    """('BTCUSDT','squeeze','LONG') → 'BTCUSDT|squeeze|LONG' (стабильный, верхним регистром)."""
+    return f"{symbol.upper()}|{(setup or '?').lower()}|{(direction or '?').upper()}"
+
+
+def _cooldown_ttl(source: str) -> int:
+    """TTL по источнику — то же число, что у вызывающего (см. константы выше)."""
+    return COOLDOWN_SEC_PUMP if source == "pump_detector" else COOLDOWN_SEC_DEFAULT
+
+
+def _utc_date_str() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _yesterday_utc_str() -> str:
+    from datetime import timedelta
+    return (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+
+
+def _is_sendable_action(verdict: dict) -> bool:
+    """GO, либо macro-veto WAIT (оба уходят в TG тем же путём) — на них ставим отметку."""
+    act = verdict.get("action")
+    return act == "GO" or (act == "WAIT" and bool(verdict.get("macro_veto")))
+
+
+def _cooldown_precheck(symbol: str, setup: str, direction: str, source: str) -> Optional[str]:
+    """Читает персист-стор ПОД ЛОКОМ. Возвращает строку-причину блока или None.
+    Блокирует если (а) символ+setup+direction уже отправлялся < TTL назад, ЛИБО
+    (б) дневной лимит send-able вердиктов по UTC-дате исчерпан. Никаких записей."""
+    try:
+        data = atomic_json_read(COOLDOWN_STORE_PATH, default={})
+    except Exception as e:
+        # Стор недоступен — не блокируем (fail-open для pre-check, как in-memory копии).
+        log.warning(f"cooldown precheck read failed: {type(e).__name__}: {e}")
+        return None
+    if not isinstance(data, dict):
+        return None
+    now = time.time()
+    key = _cooldown_key(symbol, setup, direction)
+    last = (data.get("cooldown") or {}).get(key, 0)
+    try:
+        last = float(last)
+    except (TypeError, ValueError):
+        last = 0.0
+    ttl = _cooldown_ttl(source)
+    if last and now - last < ttl:
+        ago_min = int((now - last) / 60)
+        return f"cooldown {key}: {ago_min}мин назад (< {ttl // 60}мин)"
+    today = _utc_date_str()
+    day = (data.get("daily") or {}).get(today)
+    cnt = day.get(source, 0) if isinstance(day, dict) else 0   # пер-источник; legacy-int игнор
+    try:
+        cnt = int(cnt)
+    except (TypeError, ValueError):
+        cnt = 0
+    if cnt >= MAX_DAILY_GO:
+        return f"daily limit {cnt}/{MAX_DAILY_GO} ({source}) на {today} (UTC) исчерпан"
+    return None
+
+
+def _cooldown_mark(symbol: str, setup: str, direction: str, source: str):
+    """Атомарно ставит отметку отправки: cooldown[key]=now + bump daily[UTC-date].
+    Чистит протухшие cooldown-ключи и старые (>2 дней) date-ключи под тем же локом."""
+    key = _cooldown_key(symbol, setup, direction)
+    now = time.time()
+    today = _utc_date_str()
+    ttl = _cooldown_ttl(source)
+
+    def _mutate(data):
+        if not isinstance(data, dict):
+            data = {}
+        cooldown = data.get("cooldown")
+        if not isinstance(cooldown, dict):
+            cooldown = {}
+        # прунинг протухших (> макс TTL) — файл не растёт безгранично
+        max_ttl = max(COOLDOWN_SEC_PUMP, COOLDOWN_SEC_DEFAULT)
+        cooldown = {k: v for k, v in cooldown.items()
+                    if isinstance(v, (int, float)) and now - v < max_ttl}
+        cooldown[key] = now
+        daily = data.get("daily")
+        if not isinstance(daily, dict):
+            daily = {}
+        # держим только последние 2 даты (текущая + вчера на стыке суток)
+        daily = {d: c for d, c in daily.items() if d >= _yesterday_utc_str()}
+        day = daily.get(today)
+        if not isinstance(day, dict):       # пер-источник; legacy-int отбрасываем
+            day = {}
+        day[source] = int(day.get(source, 0) or 0) + 1
+        daily[today] = day
+        return {"cooldown": cooldown, "daily": daily}
+
+    try:
+        atomic_json_update(COOLDOWN_STORE_PATH, _mutate, default={})
+    except Exception as e:
+        # Mark — best-effort, не валим фильтр если файл недоступен.
+        log.warning(f"cooldown mark failed: {type(e).__name__}: {e}")
 
 
 def _shadow_log(symbol: str, candidate: dict, source: str, verdict: dict):
@@ -800,6 +928,32 @@ def filter_candidate(symbol: str, candidate: dict, source: str = "screener") -> 
     key = (symbol.upper(), candidate.get("setup") or candidate.get("stage", "?"))
     now = time.time()
 
+    # ── F-61: ПЕРВЫМ ДЕЛОМ — персистентный общий cooldown/дневной лимит ────────
+    # Источник правды на диске (под file_lock) переживает рестарт демонов: дубль
+    # одного symbol+setup+direction в пределах TTL и превышение дневного лимита
+    # отбиваются ДО любого обращения к Claude API (общий кошелёк — экономим токен).
+    # In-memory копии вызывающих остаются как pre-check; здесь — единая точка правды.
+    # Промоушен из wait_watchlist precheck НЕ проходит (решение владельца 07.06):
+    # сработавший trigger = подтверждение сетапа, не дубль — иначе macro-veto WAIT
+    # самоблокировал бы свой апгрейд (cooldown 8ч > WATCH_TTL 4ч). Mark при GO ставится.
+    _is_promotion = bool(candidate.pop("_watchlist_promotion", False))
+    _setup_key = candidate.get("setup") or candidate.get("stage", "?")
+    _dir_key   = (candidate.get("direction") or "?").upper()
+    _cd_block  = None if _is_promotion else _cooldown_precheck(symbol, _setup_key, _dir_key, source)
+    if _cd_block is not None:
+        log.info(f"{symbol} {_setup_key} {_dir_key} → SKIP (персист-кулдаун: {_cd_block})")
+        return {
+            "action":      "SKIP",
+            "verdict":     "SKIP",
+            "confidence":  0.0,
+            "tp_pct":      0.0,
+            "sl_pct":      0.0,
+            "reasoning":   f"Персистентный cooldown/лимит: {_cd_block}",
+            "risks":       [],
+            "wait_trigger": None,
+            "source":      "cooldown",
+        }
+
     # Pre-filter источников: sector_heat и channel_reader доказали 0% GO в shadow log
     # (n=9 за период, все SKIP). Не тратим Claude tokens и не засоряем shadow для них.
     # Эти источники остаются в системе для аналитики, но не идут в TG-алерты.
@@ -918,6 +1072,11 @@ def filter_candidate(symbol: str, candidate: dict, source: str = "screener") -> 
     _persist_verdict_cache_entry(key, now, out)
     log.info(f"{symbol} {key[1]} → {out['action']} conf={out['confidence']:.2f} tp={out['tp_pct']:.1f}% "
              f"sl={out['sl_pct']:.1f}%  {out['reasoning'][:120]}")
+
+    # F-61: на send-able вердикт (GO / macro-veto WAIT) ставим персист-отметку —
+    # та же семантика, что у screener._record_cooldown / pump _sent_recently=now.
+    if _is_sendable_action(out):
+        _cooldown_mark(symbol, _setup_key, _dir_key, source)
 
     if out["action"] == "WAIT":
         _add_to_watchlist(symbol, candidate, source, out)
@@ -1047,7 +1206,10 @@ def promote_watchlist(check_fn) -> list[dict]:
         if not resolved or not fresh:
             survivors.append(it)
             continue
-        # Trigger сработал — перепроверяем через Claude
+        # Trigger сработал — перепроверяем через Claude.
+        # Флаг промоушена: precheck персист-кулдауна пропускается (trigger =
+        # подтверждение, не дубль; см. комментарий в filter_candidate).
+        fresh["_watchlist_promotion"] = True
         v = filter_candidate(it["symbol"], fresh, source=it.get("source", "watchlist"))
         if v["action"] == "GO":
             promoted.append({"symbol": it["symbol"], "verdict": v, "candidate": fresh})
