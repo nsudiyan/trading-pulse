@@ -46,6 +46,30 @@ MIN_WINDOW_ENTRIES  = 6     # минимум строк в окне, чтобы 
 BOOTSTRAP_TAIL      = 262_144   # 256 КБ хвоста при первом запуске
 CADENCE_H           = 4     # шаг аппроксимации времени в bootstrap
 
+STALE_GRACE_MIN = 30        # грейс активной разработки (правка→рестарт через минуту)
+
+# Сторож устаревшего кода (баг 06.06: демон стартовал 23:31 < коммит кнопок 23:43,
+# крутил старый код 16ч). Карта: label → (сигнатура pgrep -f, [файлы кода демона]).
+# Только истинно-персистентные демоны (KeepAlive=true). channelreader НЕ включён:
+# StartInterval, не персистентный → каждый прогон берёт свежий код, stale невозможен.
+# Карта первого-второго уровня импортов, кураторская (транзитив не раскручиваем —
+# хрупко). При добавлении нового локального импорта в демон — дописать сюда вручную.
+DAEMON_CODE_MAP = {
+    "com.trading.pumpdetector": ("pump_detector.py watch", [
+        "pump_detector.py", "file_lock.py", "outcome_model.py", "telegram_alerts.py",
+        "claude_realtime_filter.py", "screener.py", "rug_detector.py", "vol_core.py",
+        "spot_perp_basis.py", "top_trader_positions.py", "orderbook_imbalance.py",
+        "chart_analyzer.py", "tv_pump_plan.py", "streak_monitor.py", "reject_tracker.py"]),
+    "com.trading.bot": ("telegram_bot.py daemon", [
+        "telegram_bot.py", "telegram_alerts.py", "trade_logger.py", "claude_realtime_filter.py",
+        "screener.py", "liquidation_tracker.py", "channel_reader.py", "file_lock.py"]),
+    "com.trading.liqtracker": ("liquidation_tracker.py", [
+        "liquidation_tracker.py", "telegram_alerts.py"]),
+    "com.trading.boostwatcher": ("boost_watcher.py", [
+        "boost_watcher.py", "rug_detector.py", "telegram_alerts.py"]),
+    "com.trading.dashboard": ("web_dashboard.py", ["web_dashboard.py"]),
+}
+
 
 def _now():
     return datetime.now(timezone.utc)
@@ -196,6 +220,105 @@ def decide(state: dict, index_path: Path) -> list[str]:
     return []
 
 
+def _proc_start_epoch(signature: str) -> int | None:
+    """Epoch старта процесса по сигнатуре. None если демон не найден (лежит).
+
+    pgrep -f signature → PID(ы); LC_ALL=C ps -o lstart= (единственный
+    локаль-независимый способ — etimes этот macOS ps не знает). Парс
+    '%a %b %d %H:%M:%S %Y' в локальной TZ → .timestamp() (UTC-epoch).
+    Если PID'ов несколько — берём старейший (минимальный epoch): если хоть
+    один процесс крутит старый код — сирена справедлива.
+    """
+    try:
+        out = subprocess.run(["pgrep", "-f", signature], capture_output=True,
+                             text=True, timeout=10).stdout
+    except Exception:
+        return None
+    pids = [p for p in out.split() if p.isdigit()]
+    if not pids:
+        return None
+    starts = []
+    for pid in pids:
+        try:
+            r = subprocess.run(["ps", "-o", "lstart=", "-p", pid],
+                               capture_output=True, text=True, timeout=10,
+                               env={"LC_ALL": "C", "PATH": "/bin:/usr/bin"})
+            raw = r.stdout.strip()
+            if not raw:
+                continue
+            dt = datetime.strptime(raw, "%a %b %d %H:%M:%S %Y")
+            starts.append(int(dt.timestamp()))
+        except Exception:
+            continue
+    return min(starts) if starts else None
+
+
+def _code_mtime_epoch(files: list[str]) -> tuple[int, bool, str]:
+    """(max(git_commit_ct, file_mtime по всем files), dirty, culprit).
+
+    git_commit_ct = git log -1 --format=%ct -- <file> (cwd=BASE) — ловит
+    «закоммичено, но демон не перезапущен» (кейс 06.06). 0 если untracked
+    или git упал (безопасный фолбэк — тогда работает только mtime).
+    file_mtime — ловит незакоммиченную правку файла. culprit = файл,
+    давший максимум (чтобы сразу видеть, кто протух).
+    dirty = True если ЛЮБОЙ файл имеет незакоммиченную правку
+    (`git diff --quiet -- <file>` вернул !=0) → идёт разработка, не сиреним.
+    """
+    best_epoch, culprit, dirty = 0, "", False
+    for f in files:
+        # git commit time
+        commit_ct = 0
+        try:
+            r = subprocess.run(["git", "log", "-1", "--format=%ct", "--", f],
+                               capture_output=True, text=True, timeout=10, cwd=str(BASE))
+            commit_ct = int(r.stdout.strip()) if r.stdout.strip().isdigit() else 0
+        except Exception:
+            commit_ct = 0      # git упал → только mtime, не сиреним зря
+        # file mtime
+        try:
+            file_mt = int((BASE / f).stat().st_mtime)
+        except Exception:
+            file_mt = 0
+        eff = max(commit_ct, file_mt)
+        if eff > best_epoch:
+            best_epoch, culprit = eff, f
+        # незакоммиченная правка → активная разработка
+        try:
+            r = subprocess.run(["git", "diff", "--quiet", "--", f],
+                               capture_output=True, timeout=10, cwd=str(BASE))
+            if r.returncode != 0:
+                dirty = True
+        except Exception:
+            pass
+    return best_epoch, dirty, culprit
+
+
+def check_stale_daemons(grace_min: int = STALE_GRACE_MIN) -> list[str]:
+    """Сирена на демоны, крутящие устаревший код (баг класса 06.06).
+
+    Для каждого персистентного демона: старт процесса vs самое позднее
+    изменение его кода. proc_start старше кода более чем на грейс → сирена.
+    Демон лежит (нет PID) → skip (живость = другой механизм/KeepAlive).
+    Грязное дерево по файлам демона → skip (правка не финализирована).
+    Пустой список = весь код свежее процессов, молчим.
+    """
+    msgs = []
+    for label, (sig, files) in DAEMON_CODE_MAP.items():
+        proc_start = _proc_start_epoch(sig)
+        if proc_start is None:
+            continue    # демон лежит — не наша забота
+        code_mtime, dirty, culprit = _code_mtime_epoch(files)
+        if dirty:
+            continue    # идёт разработка, рестарт преждевременен
+        if proc_start < code_mtime - grace_min * 60:
+            ps = datetime.fromtimestamp(proc_start, tz=timezone.utc)
+            cm = datetime.fromtimestamp(code_mtime, tz=timezone.utc)
+            msgs.append(
+                f"⚠ {label} крутит устаревший код: процесс с {ps:%d.%m %H:%M}, "
+                f"код изменён {cm:%d.%m %H:%M} (файл {culprit}). Нужен рестарт демона.")
+    return msgs
+
+
 def send_alarm(messages: list[str]) -> bool:
     """Сирена — владельцу в личку (owner_chat_id), fallback на основной chat."""
     sys.path.insert(0, str(BASE))
@@ -220,6 +343,7 @@ def main():
 
     state = collect(args.log, args.state)
     messages = decide(state, args.index)
+    messages += check_stale_daemons()      # сторож устаревшего кода демонов
     _save_state(args.state, state)
 
     if args.dry_run:
