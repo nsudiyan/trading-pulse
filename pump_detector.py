@@ -43,6 +43,53 @@ _HTTP_ADAPTER = _requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize
 _HTTP.mount("https://", _HTTP_ADAPTER)
 _HTTP.mount("http://", _HTTP_ADAPTER)
 
+# ── Грязный выход на py3.14 fix (2026-06-07, этап 10) ──────────────────────────
+# Раньше каждый async-батч в scan_once звал свой asyncio.run() → новый event loop
+# на каждый вызов. async_http держит ОДИН ClientSession на loop: при смене loop
+# старый session БРОСАЛСЯ без await-закрытия (async_http._get_session: _SESSION=None),
+# а сами loop-объекты копились и собирались GC позже. На py3.14 BaseEventLoop.__del__
+# → close() → _close_self_pipe() падал с AttributeError '_ssock' (×569 в error.log) —
+# "Exception ignored while calling deallocator" при завершении демона.
+# Лечение: ОДИН резидентный loop на всю жизнь демона (модель asyncio.run(main())),
+# session закрывается через async_http.close_session() корректным await ДО выхода.
+_LOOP: Optional[asyncio.AbstractEventLoop] = None
+
+
+def _arun(coro):
+    """Гоняет coroutine на одном резидентном loop вместо asyncio.run() на каждый вызов.
+
+    Так aiohttp-session (async_http._SESSION) живёт на одном loop весь скан и не
+    бросается недозакрытым при каждой смене loop — без этого py3.14 шумит _ssock'ом
+    при сборке брошенных loop-объектов на выходе демона.
+    """
+    global _LOOP
+    if _LOOP is None or _LOOP.is_closed():
+        _LOOP = asyncio.new_event_loop()
+        asyncio.set_event_loop(_LOOP)
+    return _LOOP.run_until_complete(coro)
+
+
+def _shutdown_loop():
+    """Корректно гасит резидентный loop: await-закрытие aiohttp-session + close loop.
+
+    Зовётся из пути завершения демона (SIGTERM/KeyboardInterrupt) и one-shot CLI.
+    Закрытие session ДО close(loop) убирает источник _ssock-шума.
+    """
+    global _LOOP
+    if _LOOP is None or _LOOP.is_closed():
+        return
+    try:
+        from async_http import close_session
+        _LOOP.run_until_complete(close_session())
+    except Exception:
+        pass
+    try:
+        _LOOP.run_until_complete(_LOOP.shutdown_asyncgens())
+    except Exception:
+        pass
+    _LOOP.close()
+    _LOOP = None
+
 # ── Пороги ────────────────────────────────────────────────────────────────────
 
 # Accumulation: OI растёт, цена стоит
@@ -1485,7 +1532,7 @@ def scan_once() -> list[dict]:
     basis_map: dict = {}
     try:
         from spot_perp_basis import get_basis_batch
-        basis_map = asyncio.run(get_basis_batch([s for s, _ in by_vol]))
+        basis_map = _arun(get_basis_batch([s for s, _ in by_vol]))
         if basis_map:
             _log(f"Basis: spot/perp по {len(basis_map)} символам")
     except Exception as e:
@@ -1514,7 +1561,7 @@ def scan_once() -> list[dict]:
     if skew_targets:
         try:
             from top_trader_positions import get_position_skew_batch
-            skew_map = asyncio.run(get_position_skew_batch(skew_targets, period="1h"))
+            skew_map = _arun(get_position_skew_batch(skew_targets, period="1h"))
             if skew_map:
                 _log(f"PosSkew: top-trader данные по {len(skew_map)}/{len(skew_targets)} rug-кандидатам")
             for r in results:
@@ -1543,7 +1590,7 @@ def scan_once() -> list[dict]:
                 tasks = [get_book_metrics(r["symbol"], use_stream=False) for r in results]
                 return await asyncio.gather(*tasks, return_exceptions=True)
 
-            book_metrics = asyncio.run(_book_batch())
+            book_metrics = _arun(_book_batch())
             n_book = 0
             for r, m in zip(results, book_metrics):
                 if isinstance(m, Exception) or not m:
@@ -2196,6 +2243,17 @@ def watch():
     except Exception:
         tg_cfg = {}
 
+    # SIGTERM (launchctl гасит демон именно им) → переиспользуем штатный KeyboardInterrupt-выход,
+    # чтобы пройти корректный teardown (_shutdown_loop) и не оставить недозакрытый loop под GC.
+    import signal as _signal
+
+    def _on_sigterm(_signum, _frame):
+        raise KeyboardInterrupt
+    try:
+        _signal.signal(_signal.SIGTERM, _on_sigterm)
+    except (ValueError, OSError):
+        pass   # не в главном потоке — пропускаем, поведение прежнее
+
     _load_alert_state()   # FIX 2026-05-30: восстановить cooldown/лимит после рестарта (in-memory обнулялся → дубли)
 
     last_full_scan        = 0.0
@@ -2295,23 +2353,37 @@ def watch():
             _log(f"Ошибка цикла: {e}")
         time.sleep(30)
 
+    # Корректный выход: await-закрытие aiohttp-session + close резидентного loop
+    # ДО завершения процесса → без _ssock-шума при сборке loop под py3.14.
+    _log("Завершение — закрываю async-session и event loop")
+    _shutdown_loop()
+
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "watch":
-        watch()
+        # try/finally на случай если SIGTERM→KeyboardInterrupt прилетит в time.sleep(30)
+        # ВНЕ внутреннего try watch() (строка ~2354) — тогда он выходит из watch() мимо
+        # своего _shutdown_loop(); добиваем teardown тут (идемпотентно — _LOOP уже None ок).
+        try:
+            watch()
+        finally:
+            _shutdown_loop()
     else:
-        results = scan_once()
-        if not results:
-            print("Предварительных сигналов не найдено")
-        else:
-            print(f"\n{'SYM':15} {'STAGE':22} {'SC':>4}  {'OI4h':>6}  {'CVD':>6}  {'FUND':>7}  СИГНАЛЫ")
-            print("─" * 100)
-            for c in results[:15]:
-                src  = c.get("cvd_source", "?")[:1]  # T=Taker K=Kline
-                tldb = " ⚠TLDB" if c.get("tldb_notes") else ""
-                sigs = " | ".join(c["signals"])[:50]
-                print(f"  {c['symbol']:13} {c['stage']:20} {c['score']:4}  "
-                      f"{c['oi_chg_4h']:+5.1f}%  {c['cvd_pct']:+5.0f}%({src})  "
-                      f"{c['funding']:+6.4f}%  BTC{c.get('btc_4h',0):+.1f}%{tldb}  {sigs}")
+        try:
+            results = scan_once()
+            if not results:
+                print("Предварительных сигналов не найдено")
+            else:
+                print(f"\n{'SYM':15} {'STAGE':22} {'SC':>4}  {'OI4h':>6}  {'CVD':>6}  {'FUND':>7}  СИГНАЛЫ")
+                print("─" * 100)
+                for c in results[:15]:
+                    src  = c.get("cvd_source", "?")[:1]  # T=Taker K=Kline
+                    tldb = " ⚠TLDB" if c.get("tldb_notes") else ""
+                    sigs = " | ".join(c["signals"])[:50]
+                    print(f"  {c['symbol']:13} {c['stage']:20} {c['score']:4}  "
+                          f"{c['oi_chg_4h']:+5.1f}%  {c['cvd_pct']:+5.0f}%({src})  "
+                          f"{c['funding']:+6.4f}%  BTC{c.get('btc_4h',0):+.1f}%{tldb}  {sigs}")
+        finally:
+            _shutdown_loop()   # one-shot: тоже закрываем session+loop без _ssock-шума
