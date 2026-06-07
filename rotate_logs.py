@@ -35,6 +35,8 @@ LAUNCHD_RESIDENT_LOGS = {
     # monitor.log убран P1-8c: com.trading.monitor выключен (.disabled)
     "liqtracker.log":          "com.trading.liqtracker",
     "liqtracker_error.log":    "com.trading.liqtracker",
+    "trade_watcher.log":       "com.trading.tradewatcher",
+    "trade_watcher_error.log": "com.trading.tradewatcher",
     "pump_detector.log":       "com.trading.pumpdetector",
     "pump_detector_error.log": "com.trading.pumpdetector",
     "boost_watcher.log":       "com.trading.boostwatcher",

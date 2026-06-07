@@ -65,6 +65,8 @@ DAEMON_CODE_MAP = {
         "screener.py", "liquidation_tracker.py", "channel_reader.py", "file_lock.py"]),
     "com.trading.liqtracker": ("liquidation_tracker.py", [
         "liquidation_tracker.py", "telegram_alerts.py"]),
+    "com.trading.tradewatcher": ("trade_watcher.py", [
+        "trade_watcher.py", "telegram_alerts.py", "file_lock.py"]),
     "com.trading.boostwatcher": ("boost_watcher.py", [
         "boost_watcher.py", "rug_detector.py", "telegram_alerts.py"]),
     "com.trading.dashboard": ("web_dashboard.py", ["web_dashboard.py"]),
