@@ -925,6 +925,33 @@ def _mean_chg(group: list, horizon: str) -> float:
 # Паттерн-анализ
 # ─────────────────────────────────────────────────────────────
 
+# A3 (2026-06-08): честное окно авто-аналитики. История <HONEST_WINDOW_START НЕ
+# перемигрирована — both-hit там держит look-ahead (r_multiple_24h всегда TP, 246/246
+# проверено), линейка кривая. Честный 5m-first-touch резолвер + UTC — с этой даты (FIX 02.06).
+HONEST_WINDOW_START = "2026-06-02"
+
+
+def _mean_r(rows_sub: list, horizon: str) -> float:
+    """Средний СЫРОЙ r_multiple по группе (0.0 если нет данных)."""
+    vals = [_try_float(r.get(f"r_multiple_{horizon}")) for r in rows_sub]
+    vals = [v for v in vals if v is not None]
+    return sum(vals) / len(vals) if vals else 0.0
+
+
+def _mean_net_r(rows_sub: list, horizon: str):
+    """Средний costed net-R (fee+slip+funding) через costed_r_report; None если недоступен."""
+    try:
+        from costed_r_report import costed_r
+    except Exception:
+        return None
+    nets = []
+    for r in rows_sub:
+        c = costed_r(r, horizon)
+        if c and c.get("net") is not None:
+            nets.append(c["net"])
+    return round(sum(nets) / len(nets), 3) if nets else None
+
+
 def analyze_patterns(rows: list) -> dict:
     """
     Находит сигнальные комбинации с наивысшим/наименьшим WR.
@@ -942,9 +969,17 @@ def analyze_patterns(rows: list) -> dict:
         "total_n":      int,
       }
     """
-    MIN_N = 3        # минимум для отображения (с меткой "provisional" при N<10)
-    STABLE_N = 10   # от этого порога считаем статистику стабильной
+    MIN_N = 3            # минимум для расчёта статистики
+    STABLE_N = 10        # provisional при n < этого
+    MIN_PUBLISH = 25     # A3: WR/R НЕ публикуем при n < этого → «недостаточно данных»
 
+    if not rows:
+        return {}
+
+    # A3: считаем ТОЛЬКО на честном окне (≥HONEST_WINDOW_START). До него история
+    # не перемигрирована (both-hit look-ahead) — числа врут.
+    n_raw = len(rows)
+    rows = [r for r in rows if (r.get("run_ts") or "")[:10] >= HONEST_WINDOW_START]
     if not rows:
         return {}
 
@@ -964,9 +999,12 @@ def analyze_patterns(rows: list) -> dict:
             "wr24h":      round(_wr(grp, "24h"), 1),
             "mean4h":     round(_mean_chg(grp, "4h"), 2),
             "mean24h":    round(_mean_chg(grp, "24h"), 2),
+            "raw_r24h":   round(_mean_r(grp, "24h"), 3),
+            "net_r24h":   _mean_net_r(grp, "24h"),
             "tp1_4h":     sum(1 for r in grp if r.get("outcome_4h") == "TP1"),
             "sl_4h":      sum(1 for r in grp if r.get("outcome_4h") == "STOP"),
-            "provisional": len(grp) < STABLE_N,
+            "provisional":  len(grp) < STABLE_N,
+            "insufficient": len(grp) < MIN_PUBLISH,
         }
 
     global_wr4h  = round(_wr(rows, "4h"), 1)
@@ -974,11 +1012,9 @@ def analyze_patterns(rows: list) -> dict:
 
     # ── 2. Комбинации сигналов ────────────────────────────────────────────────
     def _combo(rows_sub, label):
-        if len(rows_sub) < MIN_N:
+        if len(rows_sub) < MIN_PUBLISH:   # A3: не публикуем комбо при n<25
             return None
-        provisional = len(rows_sub) < STABLE_N
-        lbl = f"{label}*" if provisional else label
-        return (lbl, len(rows_sub), round(_wr(rows_sub, "4h"), 1), round(_wr(rows_sub, "24h"), 1))
+        return (label, len(rows_sub), round(_wr(rows_sub, "4h"), 1), round(_wr(rows_sub, "24h"), 1))
 
     combos = []
 
@@ -1061,7 +1097,7 @@ def analyze_patterns(rows: list) -> dict:
     top_signals = []
     for label, fn in signal_checks:
         grp = [r for r in rows if fn(r)]
-        if len(grp) < MIN_N:
+        if len(grp) < MIN_PUBLISH:   # A3: предиктор не публикуем при n<25
             continue
         wr = _wr(grp, "4h")
         delta = wr - global_wr4h
@@ -1070,8 +1106,11 @@ def analyze_patterns(rows: list) -> dict:
     top_signals.sort(key=lambda x: x[3], reverse=True)
 
     # ── 4. Итог ──────────────────────────────────────────────────────────────
-    best  = max(setup_stats, key=lambda s: setup_stats[s]["wr4h"]) if setup_stats else "?"
-    worst = min(setup_stats, key=lambda s: setup_stats[s]["wr4h"]) if setup_stats else "?"
+    # A3: «лучший/худший сетап» — ТОЛЬКО из публикуемых (n≥25), иначе заголовок врёт
+    # (бывший баг: range_sweep 58% на n=12).
+    _pub = {s: v for s, v in setup_stats.items() if not v["insufficient"]}
+    best  = max(_pub, key=lambda s: _pub[s]["wr4h"], default="?")
+    worst = min(_pub, key=lambda s: _pub[s]["wr4h"], default="?")
 
     return {
         "by_setup":    setup_stats,
@@ -1082,6 +1121,8 @@ def analyze_patterns(rows: list) -> dict:
         "global_wr4h": global_wr4h,
         "global_wr24h":global_wr24h,
         "total_n":     len(rows),
+        "n_raw":       n_raw,
+        "window_start": HONEST_WINDOW_START,
     }
 
 
@@ -1102,21 +1143,36 @@ def write_knowledge_insights(patterns: dict):
     if not patterns or not patterns.get("total_n"):
         return
 
-    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    now   = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    win   = patterns.get("window_start", "?")
+    n_raw = patterns.get("n_raw", patterns["total_n"])
+    excl  = max(0, n_raw - patterns["total_n"])
     lines = [
         f"{_INSIGHTS_MARKER}",
-        f"> Обновлено автоматически: {now}  |  N={patterns['total_n']} сигналов\n",
+        f"> Обновлено: {now}  |  N={patterns['total_n']} (честное окно с {win}; исключено {excl} строк до {win})",
+        f"> **Линейка:** честный 5m-first-touch резолвер + UTC с {win}. История до {win} держит "
+        f"look-ahead в both-hit (r всегда TP) → исключена из расчёта.",
+        f"> **Режим:** окно ≈ один режим (конец мая–июнь, Extreme Fear) → числа РЕЖИМ-УСЛОВНЫ, "
+        f"это НЕ доказанные эджи (см. `C1_shortdist_reconciliation.md`).",
+        f"> **R:** сырой + net (косты ≈ fee 0.11% + slip 0.10% + funding, RT — оценка). "
+        f"WR/R НЕ публикуем при n<25 → «недостаточно данных».\n",
     ]
 
     # По сетапу
-    lines.append("### Сетапы")
-    lines.append("| Сетап | N | WR 4h | WR 24h | Avg 4h | TP1 | SL |")
-    lines.append("|-------|---|-------|--------|--------|-----|----|")
-    for setup, s in sorted(patterns["by_setup"].items(), key=lambda x: x[1]["wr4h"], reverse=True):
-        prov = " \\*" if s.get("provisional") else ""
+    lines.append("### Сетапы (честное окно)")
+    lines.append("| Сетап | N | WR 4h | WR 24h | Raw R 24h | Net R 24h |")
+    lines.append("|-------|---|-------|--------|-----------|-----------|")
+    # публикуемые (n≥25) по WR4h убыв., затем недостаточные
+    for setup, s in sorted(patterns["by_setup"].items(),
+                           key=lambda x: (not x[1].get("insufficient"), x[1]["wr4h"]), reverse=True):
+        if s.get("insufficient"):
+            lines.append(f"| {setup} | {s['n']} | _недостаточно данных_ | | | |")
+            continue
+        net = s.get("net_r24h")
+        net_str = f"{net:+.3f}" if net is not None else "—"
         lines.append(
-            f"| {setup}{prov} | {s['n']} | **{s['wr4h']}%** | {s['wr24h']}% "
-            f"| {s['mean4h']:+.1f}% | {s['tp1_4h']} | {s['sl_4h']} |"
+            f"| {setup} | {s['n']} | **{s['wr4h']}%** | {s['wr24h']}% "
+            f"| {s.get('raw_r24h', 0.0):+.3f} | {net_str} |"
         )
     lines.append("")
 
@@ -1145,7 +1201,13 @@ def write_knowledge_insights(patterns: dict):
     lines.append("### Ключевые выводы")
     best = patterns["best_setup"]
     bs   = patterns["by_setup"].get(best, {})
-    lines.append(f"- **Лучший сетап**: `{best}` — WR {bs.get('wr4h','?')}% (n={bs.get('n','?')})")
+    if best and best != "?" and not bs.get("insufficient"):
+        net = bs.get("net_r24h")
+        net_str = f", net R {net:+.3f}" if net is not None else ""
+        lines.append(f"- **Лучший сетап (по WR4h, n≥25)**: `{best}` — WR {bs.get('wr4h','?')}% "
+                     f"(n={bs.get('n','?')}{net_str}) — ⚠️ режим-условно, НЕ доказанный эдж")
+    else:
+        lines.append("- **Достаточной выборки (n≥25) на честном окне мало** — выводы по сетапам преждевременны")
 
     # Находим лучшую комбо
     if patterns["by_combo"]:
