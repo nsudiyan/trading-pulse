@@ -82,6 +82,12 @@
 
 ## 4. НЕ ДЕЛАЕМ ОСОЗНАННО / БЭКЛОГ
 
+- **C1 (08.06): short_dist/SHORT — НЕ боевой размер. Вердикт «закрыто» СТОИТ.** «+0.288 (n=233) GO»
+  оказался кумулятивным ПИКОМ той же path-resolved метрики на обрезке 07.06 (Extreme-Fear 01–05.06,
+  шорты +0.75…+0.89R/день), осыпавшимся до **−0.002 (n=306)** за день отскока 06.06 (n=66, −0.97R = сквиз).
+  Регим-зависимая BTC-бета + optional stopping (правило сработало ещё на n=141/31.05). ×2-косты −0.019;
+  n=306 = лишь 8 дней (cluster-CI ×6 шире); maker-филлы недоказаны. Разбор: `C1_shortdist_reconciliation.md`,
+  `tools/c1_shortdist_stress.py`. Условия пересмотра — там же (форвард через смену режима + cluster-robust + филлы из trades.json).
 - `USE_VALIDATED_V1=False` — ждёт честных форвард-данных (не in-sample)
   (факторы: archive/docs_2026H1/{PUMP,DUMP}_PATTERNS_ANALYSIS.md; комменты
   pump_detector.py:368 / rug_detector.py:104 ссылаются туда)
