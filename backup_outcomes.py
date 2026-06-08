@@ -3,9 +3,10 @@
 backup_outcomes.py — еженедельный gzip-снапшот критичных данных (P1-6).
 
 Бэкапит единственные экземпляры:
-  outcomes/resolved.csv       — paper-история исходов (из git убрана этапом 0.5)
-  outcomes/pump_resolved.csv  — pump/rug-история
-  outcomes/trades.json        — РЕАЛЬНЫЕ сделки (живой с P0-3)
+  outcomes/resolved.csv         — paper-история исходов (из git убрана этапом 0.5)
+  outcomes/pump_resolved.csv    — pump/rug-история
+  outcomes/trades.json          — РЕАЛЬНЫЕ сделки (живой с P0-3)
+  outcomes/rejected_history.csv — персист-сток реджектов с контрфактами (A2)
 
 → archive/outcomes_backups/<имя>_YYYY-MM-DD.gz, хранится 8 последних на имя.
 
@@ -26,6 +27,7 @@ TARGETS = [
     BASE / "outcomes" / "resolved.csv",
     BASE / "outcomes" / "pump_resolved.csv",
     BASE / "outcomes" / "trades.json",
+    BASE / "outcomes" / "rejected_history.csv",   # A2: персист-сток реджектов (контрфакты)
 ]
 
 

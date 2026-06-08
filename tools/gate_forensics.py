@@ -40,6 +40,19 @@ def bucket_label(lo, hi):
 
 
 def load():
+    """A2 (2026-06-08): читаем ПОЛНОЕ окно из персист-стока rejected_history.csv
+    (+ свежий rejected.json), приоритет — история. Fallback на rolling rejected.json,
+    если стока ещё нет — чтобы форензика №2 шла на полной выборке, а не на 5.6 днях."""
+    try:
+        import sys as _sys
+        if str(BASE) not in _sys.path:
+            _sys.path.insert(0, str(BASE))
+        import reject_tracker as _rt
+        recs = _rt.load_history(include_live=True)
+        if recs:
+            return recs
+    except Exception as e:
+        print(f"[forensics] history load failed ({e}) — fallback rejected.json")
     recs = json.load(open(REJ_PATH))
     assert isinstance(recs, list), "rejected.json: ожидаю list"
     return recs
@@ -72,7 +85,8 @@ def main():
 
     days = sorted({day(r) for r in recs if day(r)})
     per_day = Counter(day(r) for r in scr)
-    print(f"Всего записей: {len(recs)} (rolling 3000 {'ДОСТИГНУТ — старое срезано' if len(recs) >= 3000 else 'не достигнут'})")
+    print(f"Всего записей: {len(recs)}  (полное окно из rejected_history.csv, если засеян; "
+          f"иначе rolling rejected.json — макс 3000)")
     print(f"Окно: {min(days)} … {max(days)}  ({len(days)} календ. дней; первый/последний могут быть неполными)")
     print(f"Скринер-гейты: {len(scr)}  |  pump_detector (FundGate/PumpGate): {len(pmp)}")
     print("\nЗаписей скринера по дням: " + "  ".join(f"{d[5:]}:{per_day.get(d,0)}" for d in days))

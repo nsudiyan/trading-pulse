@@ -13,9 +13,14 @@ CLI:
   python3 reject_tracker.py stats          — per-gate analytics table
   python3 reject_tracker.py resolve        — update future prices now
   python3 reject_tracker.py list [gate]    — show recent rejects
+  python3 reject_tracker.py seed           — залить rejected.json в персист-сток (идемпотентно)
   python3 reject_tracker.py clear          — wipe reject log (confirm required)
+
+Персистентный сток: outcomes/rejected_history.csv (A2, 2026-06-08) — append-only,
+upsert по ключу минута|symbol|gate, контрфакты не теряются при rolling-срезе rejected.json.
 """
 
+import csv
 import json
 import sys
 import time
@@ -29,6 +34,25 @@ BASE_DIR     = Path(__file__).parent / "outcomes"
 REJECT_FILE  = BASE_DIR / "rejected.json"
 BASE_URL     = "https://api.bybit.com"
 MAX_REJECTS  = 3000   # rolling window cap
+
+# A2 (2026-06-08): персистентный append-only сток реджектов с контрфактами.
+# rejected.json — rolling 3000 (~5.6 дн), старое затирается; это хранилище НЕ теряет
+# историю (upsert по ключу, контрфакты обновляются по мере дозревания). НЕ ломает живую
+# логику rejected.json. Источник правды для форензики №2 на полном окне.
+HISTORY_FILE = BASE_DIR / "rejected_history.csv"
+HISTORY_COLS = [
+    "ts", "symbol", "setup", "direction", "reject_gate", "reject_reason",
+    "score_pre_gate", "price_at_reject",
+    "oi_regime", "fund_regime", "htf_trend", "grade", "vwap_dev", "rsi_1h", "bq_score",
+    "narrative", "narr_conf",
+    # контрфакты — СЫРЫЕ ценовые % (не costed-R; костинга для реджектов нет)
+    "future_1h", "future_4h", "future_12h",
+    "move_1h_pct", "move_4h_pct", "move_12h_pct",
+]
+_HIST_INT_COLS   = {"score_pre_gate"}
+_HIST_FLOAT_COLS = {"price_at_reject", "vwap_dev", "rsi_1h", "bq_score", "narr_conf",
+                    "future_1h", "future_4h", "future_12h",
+                    "move_1h_pct", "move_4h_pct", "move_12h_pct"}
 
 # P0-1 (2026-06-06): per-run счётчик отказов по гейтам — для funnel-строки
 # в конце прогона скринера. In-memory, обнуляется с процессом.
@@ -61,6 +85,103 @@ def _save_rejects(entries: list):
     REJECT_FILE.write_text(
         json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+
+
+# ─────────────────────────────────────────────────────────────
+# A2: персистентный сток истории реджектов (rejected_history.csv)
+# ─────────────────────────────────────────────────────────────
+
+def _history_key(e: dict) -> str:
+    """Ключ апсерта = минута|symbol|reject_gate — 1:1 с живым дедупом log_reject."""
+    return f"{(e.get('ts') or '')[:16]}|{e.get('symbol','')}|{e.get('reject_gate','')}"
+
+
+def _entry_to_history_row(e: dict) -> dict:
+    """Запись реджекта → CSV-строка (str-значения; None → '')."""
+    return {c: ("" if e.get(c) is None else str(e.get(c))) for c in HISTORY_COLS}
+
+
+def _cast_history_row(row: dict) -> dict:
+    """CSV-строка → типизированный dict (числа из str, '' → None) для аналитики."""
+    out = {c: (row.get(c) if row.get(c) not in ("", None) else None) for c in HISTORY_COLS}
+    for k in _HIST_INT_COLS:
+        if out.get(k) is not None:
+            try: out[k] = int(float(out[k]))
+            except (TypeError, ValueError): out[k] = None
+    for k in _HIST_FLOAT_COLS:
+        if out.get(k) is not None:
+            try: out[k] = float(out[k])
+            except (TypeError, ValueError): out[k] = None
+    return out
+
+
+def _read_history_rows() -> dict:
+    """{key: raw_str_row} из CSV (без кастинга — для апсерта/сравнения)."""
+    if not HISTORY_FILE.exists():
+        return {}
+    out = {}
+    try:
+        with open(HISTORY_FILE, newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                out[_history_key(row)] = {c: row.get(c, "") for c in HISTORY_COLS}
+    except Exception:
+        return out
+    return out
+
+
+def _write_history_rows(rows_by_key: dict):
+    """Атомарная перезапись CSV (tmp + replace), порядок по ts."""
+    BASE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = HISTORY_FILE.with_suffix(".csv.tmp")
+    with open(tmp, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=HISTORY_COLS, extrasaction="ignore")
+        w.writeheader()
+        for key in sorted(rows_by_key, key=lambda k: rows_by_key[k].get("ts", "")):
+            w.writerow(rows_by_key[key])
+    tmp.replace(HISTORY_FILE)
+
+
+def persist_history(entries: list) -> tuple:
+    """Upsert реджектов в rejected_history.csv (append-only сток, без roll-off).
+    Ключ = минута|symbol|reject_gate. Контрфакты обновляются при дозревании.
+    Идемпотентно: повторный вызов с теми же данными ничего не пишет.
+    Возвращает (новых, обновлённых). Ошибка стока НЕ ломает живую логику реджектов."""
+    if not entries:
+        return (0, 0)
+    try:
+        from file_lock import _file_lock
+        with _file_lock(HISTORY_FILE):
+            existing = _read_history_rows()
+            n_new = n_upd = 0
+            for e in entries:
+                key = _history_key(e)
+                new_row = _entry_to_history_row(e)
+                old = existing.get(key)
+                if old is None:
+                    existing[key] = new_row; n_new += 1
+                elif old != new_row:
+                    existing[key] = new_row; n_upd += 1
+            if n_new or n_upd:
+                _write_history_rows(existing)
+            return (n_new, n_upd)
+    except Exception as ex:
+        print(f"[reject_history] persist error (rejected.json не затронут): {ex}")
+        return (0, 0)
+
+
+def load_history(include_live: bool = True) -> list:
+    """Полная выборка реджектов с контрфактами (history CSV + свежий rejected.json),
+    типизированная, дедуп по ключу. Приоритет — history; live добавляет лишь ещё не
+    персистнутые свежие записи. Для форензики №2 на ПОЛНОМ окне (не rolling 5.6 дн)."""
+    merged = {}
+    for key, row in _read_history_rows().items():
+        merged[key] = _cast_history_row(row)
+    if include_live:
+        for e in _load_rejects():
+            key = _history_key(e)
+            if key not in merged:
+                merged[key] = e
+    return list(merged.values())
 
 
 def _direction_from_result(r: dict) -> str:
@@ -202,6 +323,18 @@ def resolve_rejects(silent: bool = False) -> int:
 
     if changed:
         _save_rejects(entries)
+
+    # A2 (2026-06-08): дозапись в персистентный сток — upsert ВСЕХ текущих записей
+    # (новых + дозревших контрфактов) в rejected_history.csv, чтобы история не терялась
+    # при rolling-срезе rejected.json. resolve_rejects идёт в конце КАЖДОГО прогона
+    # скринера (~4ч) → запись попадает в сток задолго до выпадения из 5.6-дн окна.
+    try:
+        n_new, n_upd = persist_history(entries)
+        if not silent and (n_new or n_upd):
+            print(f"  [history] +{n_new} новых / ~{n_upd} обновлено → rejected_history.csv")
+    except Exception as _hx:
+        print(f"  [history] persist skipped (rejected.json не затронут): {_hx}")
+
     return updated
 
 
@@ -358,6 +491,15 @@ def main():
 
     elif cmd == "list":
         print_recent(gate_filter=gate_arg)
+
+    elif cmd == "seed":
+        # Одноразовый (идемпотентный) залив текущего rejected.json в персистентный сток,
+        # чтобы не потерять нынешнее окно ~3000. Повторный seed дубли не плодит (upsert).
+        ents = _load_rejects()
+        n_new, n_upd = persist_history(ents)
+        total = len(_read_history_rows())
+        print(f"Seed: из rejected.json {len(ents)} записей → "
+              f"+{n_new} новых / ~{n_upd} обновлено. Всего в rejected_history.csv: {total}")
 
     elif cmd == "clear":
         confirm = input("Удалить все данные reject tracker? [yes/NO]: ").strip()
