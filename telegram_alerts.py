@@ -354,8 +354,16 @@ def _register_alert(short_id: str, payload: dict):
         print(f"[TG] alerts_index error (алерт уйдёт без индекса): {e}")
 
 
-def send_signal_alert(r: dict, plan: dict, cfg: Optional[dict] = None) -> bool:
-    """Немедленный одиночный алерт о новом сигнале (без батча)."""
+def send_signal_alert(r: dict, plan: dict, cfg: Optional[dict] = None,
+                      verdict: Optional[dict] = None) -> bool:
+    """Немедленный одиночный алерт о новом сигнале (без батча) с кнопками [Вошёл/Пропустил].
+
+    verdict: если передан вызывающим (напр. send_top_setup_alerts), фильтр УЖЕ прогнан —
+    повторно Claude НЕ зовём (иначе 2-й платный вызов + другой cooldown-бакет + риск
+    разъехавшегося вердикта). Тогда plan ОБЯЗАН быть финальным: entry/stop/tp1/tp2/rr +
+    claude_reasoning/claude_confidence/claude_risks/macro_veto_note уже проставлены
+    вызывающим. allow = sendable-вердикт (GO или macro-veto WAIT), как на памп-пути.
+    """
     if cfg is None:
         cfg = load_config()
     token = cfg.get("bot_token", "")
@@ -363,10 +371,16 @@ def send_signal_alert(r: dict, plan: dict, cfg: Optional[dict] = None) -> bool:
     if not token or not chat_id:
         return False
 
-    # Claude RT-фильтр: либо одобряет с (опционально) новыми TP/SL, либо блокирует
-    _allow, _claude = _apply_claude_filter(r, plan, source="screener")
-    if not _allow:
-        return False
+    if verdict is None:
+        # Claude RT-фильтр: либо одобряет с (опционально) новыми TP/SL, либо блокирует
+        _allow, _claude = _apply_claude_filter(r, plan, source="screener")
+        if not _allow:
+            return False
+    else:
+        # Вызывающий уже прогнал фильтр (source=top_setups и т.п.) — не зовём повторно.
+        _act = verdict.get("action")
+        if not (_act == "GO" or (_act == "WAIT" and verdict.get("macro_veto"))):
+            return False
 
     sym   = r.get("symbol", "?")
     setup = r.get("setup", r.get("best_setup", "?"))
@@ -1271,148 +1285,138 @@ def _conviction_score(r: dict, fg_value: Optional[int]) -> tuple:
     return pct, reasons[:5]
 
 
-def format_top_setups(
+def _build_top_setup_plan(r: dict, v: dict) -> Optional[dict]:
+    """A1 (2026-06-08): финальный торговый план для actionable-алерта топ-сетапа.
+
+    Уровни — Claude tp/sl (как на памп-пути): показанное == записанное в trades.json ==
+    то, что сторожит trade_watcher. Направление — каноничный r['setup_dir'] (фикс 2026-05-30,
+    `screener.py:4004`), а НЕ эвристика по имени сетапа (она расходилась на bos_fvg/range_sweep).
+    GUARD (CLAUDE.md): дистанция стопа НЕ уже ATR×0.65 — защита от выноса свипом, даже если
+    Claude вернул слишком узкий sl_pct (флэт-клэмп фильтра [1%..10%] пола по ATR не даёт).
+    """
+    price = r.get("price") or 0
+    if not price:
+        return None
+    side = str(r.get("setup_dir") or "").lower()
+    if side not in ("long", "short"):
+        setup = r.get("setup") or r.get("best_setup") or ""
+        side = "long" if setup in ("squeeze", "breakout") else "short"
+
+    tp_pct = float(v.get("tp_pct") or 0)
+    sl_pct = float(v.get("sl_pct") or 0)
+    if tp_pct <= 0 or sl_pct <= 0:
+        return None   # без Claude-уровней actionable-алерт не эмитим
+
+    atr_pct  = r.get("atr_%") or 1.0
+    atr_abs  = price * atr_pct / 100.0
+    min_dist = max(atr_abs * 0.65, price * 0.002)        # GUARD: пол ширины стопа
+    entry     = price                                    # mirror пампа: вход = текущая цена
+    stop_dist = max(entry * sl_pct / 100.0, min_dist)    # Claude sl, но не уже ATR×0.65
+    tp_dist   = entry * tp_pct / 100.0
+
+    if side == "long":
+        stop = max(entry - stop_dist, 0)
+        tp1  = entry + tp_dist
+        tp2  = entry + 2 * tp_dist
+    else:
+        stop = entry + stop_dist
+        tp1  = max(entry - tp_dist, 0)
+        tp2  = max(entry - 2 * tp_dist, 0)
+    rr = (tp_dist / stop_dist) if stop_dist > 0 else 0.0
+
+    plan = {
+        "side": side, "entry": entry, "stop": stop, "tp1": tp1, "tp2": tp2, "rr": rr,
+        "claude_reasoning":  v.get("reasoning", ""),
+        "claude_confidence": v.get("confidence", 0),
+        "claude_risks":      v.get("risks", []) or [],
+    }
+    if v.get("action") == "WAIT" and v.get("macro_veto"):
+        plan["macro_veto_note"] = (v.get("macro_veto_reason") or v.get("reasoning") or "")[:160]
+    return plan
+
+
+def send_top_setup_alerts(
     filtered: list,
     fg_value: Optional[int] = None,
+    cfg: Optional[dict] = None,
     top_n: int = 5,
-) -> str:
-    """
-    Последнее сообщение отчёта: топ-N сетапов отсортированных по убеждённости.
-    Убеждённость = разнообразие независимых сигналов, а не величина одного.
+) -> int:
+    """A1 (2026-06-08): топ-сетапы скринера → ОТДЕЛЬНЫЕ кнопочные алерты [Вошёл/Пропустил].
 
-    После сортировки прогоняем кандидатов через Claude RT-фильтр и оставляем
-    только GO. SKIP/WAIT не показываются, чтобы не засорять личку шумом.
+    Замыкает петлю учёта для главного (скринерного) потока: раньше топ уходил бесконтактным
+    текст-блоком, кнопки были ТОЛЬКО на памп/раг → trades.json по скринеру = 0. Теперь каждый
+    actionable кандидат (GO ИЛИ macro-veto WAIT — как памп-путь) шлётся своим сообщением через
+    send_signal_alert(verdict=...): фильтр прогоняется ОДИН раз здесь (source=top_setups —
+    тот же cooldown-бакет/лимит 5-в-день), повторно Claude НЕ зовётся.
+
+    Побочно чинит лик бюджета: macro-veto WAIT помечался sendable в фильтре (ел дневной лимит),
+    но GO-only текст-блок его НЕ доставлял. Теперь маркировка == доставка.
+
+    Дублей нет: топ больше НЕ идёт в батч-текст send_report (watchlist/deep-dive — обзор по
+    score, оставлены как есть). Возвращает число отправленных кнопочных алертов.
     """
     if not filtered:
-        return ""
+        return 0
+    if cfg is None:
+        cfg = load_config()
+    if not cfg.get("bot_token") or not cfg.get("chat_id"):
+        return 0
+
+    rt_enabled = os.environ.get("CLAUDE_RT_FILTER", "on").lower() in ("on", "true", "1", "yes")
+    if not rt_enabled:
+        # actionable-петля требует вердикт (GO + Claude tp/sl). Без фильтра кнопки не шлём;
+        # обзор по-прежнему виден в watchlist/deep-dive. Раньше тут показывался текст-топ.
+        print("[Top-Setups] CLAUDE_RT_FILTER off — actionable-алерты не шлём (нужен вердикт)")
+        return 0
+    try:
+        from claude_realtime_filter import filter_candidate
+    except Exception as e:
+        print(f"[Top-Setups] filter import failed: {e} — actionable-алерты не шлём")
+        return 0
 
     scored = []
     for r in filtered:
-        conv, reasons = _conviction_score(r, fg_value)
-        scored.append((conv, r, reasons))
+        conv, _reasons = _conviction_score(r, fg_value)
+        scored.append((conv, r))
     scored.sort(key=lambda x: x[0], reverse=True)
-    pre_filter = scored[:max(top_n * 3, 8)]   # берём шире, чтобы Claude отобрал
+    pre_filter = scored[:max(top_n * 3, 8)]   # берём шире — Claude отберёт
 
-    # Claude RT-фильтр массовая обработка топ-кандидатов
-    rt_enabled = os.environ.get("CLAUDE_RT_FILTER", "on").lower() in ("on", "true", "1", "yes")
-    top: list = []
-    if rt_enabled:
+    sent = 0
+    seen = 0
+    for conv, r in pre_filter:
+        if sent >= top_n:
+            break
+        cand = dict(r)
+        cand["setup"] = r.get("setup") or r.get("best_setup") or "?"
+        _sd = str(r.get("setup_dir") or "").lower()
+        if _sd not in ("long", "short"):
+            _sd = "long" if cand["setup"] in ("squeeze", "breakout") else "short"
+        cand["direction"] = _sd.upper()   # каноничное направление (== плану и записи)
+        cand.setdefault("funding",     r.get("fund_%") or r.get("funding"))
+        cand.setdefault("oi_24h_pct",  r.get("oi24h_%"))
+        cand.setdefault("rsi_1h",      r.get("rsi_1h"))
+        cand.setdefault("vwap_dev",    r.get("vwap_dev"))
+        cand.setdefault("rs_btc",      r.get("rs_btc"))
+        cand.setdefault("cvd_pct",     r.get("cvd_k%") or r.get("cvd_t%"))
         try:
-            from claude_realtime_filter import filter_candidate
-            for conv, r, reasons in pre_filter:
-                cand = dict(r)
-                cand["setup"] = r.get("setup") or r.get("best_setup") or "?"
-                cand.setdefault("direction", "LONG" if cand["setup"] in ("squeeze","bos_fvg","breakout") else "SHORT")
-                cand.setdefault("funding",     r.get("fund_%") or r.get("funding"))
-                cand.setdefault("oi_24h_pct",  r.get("oi24h_%"))
-                cand.setdefault("rsi_1h",      r.get("rsi_1h"))
-                cand.setdefault("vwap_dev",    r.get("vwap_dev"))
-                cand.setdefault("rs_btc",      r.get("rs_btc"))
-                cand.setdefault("cvd_pct",     r.get("cvd_k%") or r.get("cvd_t%"))
-                v = filter_candidate(cand["symbol"], cand, source="top_setups")
-                if v.get("action") == "GO":   # fail-CLOSED: FAIL_OPEN не пропускаем
-                    r["_claude_verdict"] = v
-                    top.append((conv, r, reasons))
-                if len(top) >= top_n:
-                    break
-            if not top:
-                print(f"[Top-Setups] Claude отфильтровал все {len(pre_filter)} кандидатов — топ пуст")
-                return ""
-            print(f"[Top-Setups] Claude пропустил {len(top)} из {len(pre_filter)} кандидатов")
+            v = filter_candidate(cand["symbol"], cand, source="top_setups")
         except Exception as e:
-            print(f"[Top-Setups] RT filter error: {e} — fail-open")
-            top = pre_filter[:top_n]
-    else:
-        top = pre_filter[:top_n]
-
-    SETUP_NAME = {
-        "squeeze":     "Сквиз",
-        "bos_fvg":     "BOS/FVG",
-        "range_sweep": "Sweep",
-        "breakout":    "Pre-Pump",
-    }
-    SETUP_ICON = {
-        "squeeze":     "⚡",
-        "bos_fvg":     "📐",
-        "range_sweep": "↔️",
-        "breakout":    "🚀",
-    }
-
-    lines = ["🎯 <b>ТОП СЕТАПОВ — убеждённость в реализации</b>", ""]
-
-    for i, (conv, r, reasons) in enumerate(top, 1):
-        sym   = r["symbol"]
-        score = r.get("score", 0)
-        setup = r.get("setup", "")
-        price = r["price"]
-        bull  = setup in ("squeeze", "breakout")
-
-        # Визуальный бар
-        filled = conv // 10
-        bar    = "█" * filled + "░" * (10 - filled)
-
-        # Торговый план
-        atr_pct = (r.get("atr_%") or 1.0)
-        atr_abs = price * atr_pct / 100
-        buf     = max(atr_abs * 0.65, price * 0.002)
-
-        if bull:
-            bfvg_top, bfvg_bot, _ = r.get("lvl_bfvg") or (None, None, None)
-            entry = bfvg_bot or price
-            stop  = max(entry - buf, 0)
-            sfvg_top, sfvg_bot, _ = r.get("lvl_sfvg") or (None, None, None)
-            tp1   = sfvg_top if (sfvg_top and sfvg_top > price) else price + atr_abs * 1.8
-            tp2   = entry + 2 * (tp1 - entry)
-            side_icon = "🟢"; side_txt = "ЛОНГ"
-        else:
-            sfvg_top, sfvg_bot, _ = r.get("lvl_sfvg") or (None, None, None)
-            entry = sfvg_top or price
-            stop  = entry + buf
-            bfvg_top, bfvg_bot, _ = r.get("lvl_bfvg") or (None, None, None)
-            tp1   = bfvg_bot if (bfvg_bot and bfvg_bot < price) else price - atr_abs * 1.8
-            tp2   = max(entry - 2 * (entry - tp1), 0)
-            side_icon = "🔴"; side_txt = "ШОРТ"
-
-        risk_dist = abs(entry - stop)
-        if risk_dist > 0:
-            rr       = abs(tp1 - entry) / risk_dist
-            risk_pct = risk_dist / entry * 100 if entry > 0 else 0
-        else:
-            rr       = 0.0
-            risk_pct = 0.0
-
-        se       = SETUP_ICON.get(setup, "📊")
-        sn       = SETUP_NAME.get(setup, setup)
-        in_zone   = (r.get("in_bfvg") or r.get("in_bob")) if bull else (r.get("in_sfvg") or r.get("in_sob"))
-        now_tag    = "  ⚡<b>СЕЙЧАС</b>" if in_zone else ""
-        h24_tag    = "  📅<b>[24H HIGH CONVICTION]</b>" if r.get("tg_24h_hold") else ""
-        choch_tag  = "  🔷<b>[CHoCH CONFIRMED]</b>" if r.get("choch_conviction") else ""
-        golden_tag = "  <b>[GOLDEN]</b>" if r.get("golden") else ""
-
-        lines += [
-            f"{i}. {se}{side_icon} <b>{_esc(sym)}</b>  [{sn}]  score={score}{now_tag}{h24_tag}{choch_tag}{golden_tag}",
-            f"   Убеждённость: <b>{conv}%</b>  {bar}",
-            f"   Entry <code>{_fmt_price(entry)}</code>"
-            f"  Stop <code>{_fmt_price(stop)}</code>"
-            f"  ({risk_pct:.2f}%)",
-            f"   TP1 <code>{_fmt_price(tp1)}</code>"
-            f"  TP2 <code>{_fmt_price(tp2)}</code>"
-            f"  R:R <b>{rr:.1f}</b>",
-        ]
-        if reasons:
-            lines.append(f"   ✓ {' · '.join(reasons)}")
-        # Claude reasoning если есть
-        _cv = r.get("_claude_verdict") or {}
-        if _cv.get("reasoning") and _cv.get("verdict") == "GO":
-            lines.append(f"   🧠 conf={_cv.get('confidence',0):.0%}: {_esc(_cv['reasoning'])[:180]}")
-        lines.append("")
-
-    lines.append(
-        "<i>Убеждённость = разнообразие независимых сигналов.\n"
-        "Чем больше несвязанных категорий согласны — тем выше.\n"
-        "Это не гарантия. Всегда ставь стоп.</i>"
-    )
-    return "\n".join(lines)
+            print(f"[Top-Setups] filter error {cand.get('symbol')}: {e}")
+            continue
+        seen += 1
+        act = v.get("action")
+        if not (act == "GO" or (act == "WAIT" and v.get("macro_veto"))):
+            continue   # fail-CLOSED: SKIP / plain-WAIT / FAIL_OPEN — не шлём
+        plan = _build_top_setup_plan(r, v)
+        if not plan:
+            continue
+        try:
+            if send_signal_alert(r, plan, cfg=cfg, verdict=v):
+                sent += 1
+        except Exception as e:
+            print(f"[Top-Setups] send error {r.get('symbol')}: {e}")
+    print(f"[Top-Setups] actionable: отправлено {sent} (кнопки) из {seen} прошедших фильтр")
+    return sent
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1498,10 +1502,10 @@ def send_report(
         m = format_pump_section(results, min_ps, max_sym)
         if m: messages.append(m)
 
-    # Топ сетапов — тоже не шлём в макро-окне (соблазн войти прямо перед релизом)
-    if not in_macro_blackout:
-        m = format_top_setups(filtered, fg_value, top_n=5)
-        if m: messages.append(m)
+    # A1 (2026-06-08): топ-сетапы больше НЕ идут текст-блоком в батч — они уходят
+    # ОТДЕЛЬНЫМИ кнопочными алертами (send_top_setup_alerts) ПОСЛЕ рассылки обзора,
+    # чтобы (а) замкнуть петлю учёта по скринеру, (б) не дублировать монету в батче.
+    # См. вызов в конце функции; macro-blackout по-прежнему душит и их.
 
     messages.append(f"✅ <b>Готово</b>  {datetime.now().strftime('%H:%M:%S')}")
 
@@ -1549,6 +1553,18 @@ def send_report(
             time.sleep(0.5)
         if len(all_targets) > 1:
             time.sleep(1.0)   # пауза между чатами
+
+    # A1 (2026-06-08): actionable кнопочные алерты по топ-сетапам — ПОСЛЕ обзора.
+    # send_signal_alert сам рассылает по всем chat'ам (свой цикл targets); идемпотентность
+    # и cooldown (source=top_setups, 5/день) предотвращают дубли между 4-часовыми прогонами.
+    # macro-blackout душит и их (как раньше душил текст-блок).
+    if not in_macro_blackout:
+        try:
+            n_act = send_top_setup_alerts(filtered, fg_value, cfg=cfg, top_n=5)
+            if n_act:
+                print(f"[TG] top-setup actionable-алертов отправлено: {n_act}")
+        except Exception as _tse:
+            print(f"[TG] top-setup alerts error (обзор уже ушёл): {_tse}")
 
 
 # ─────────────────────────────────────────────────────────────
