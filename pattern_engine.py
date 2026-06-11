@@ -36,7 +36,7 @@ import argparse
 import itertools
 from collections import defaultdict
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 BASE_DIR      = Path(__file__).parent
@@ -220,9 +220,11 @@ def _utc_session(r):
 
 
 def _direction_norm(r):
-    raw = r.get("direction", "")
-    if "ОН" in raw or raw == "ЛОНГ":   return "dir_long"   # ЛОНГ
-    if "ОРТ" in raw or raw == "ШОРТ": return "dir_short"  # ШОРТ
+    raw = r.get("direction", "").upper()
+    if "ЛОНГ" in raw or "LONG" in raw:
+        return "dir_long"
+    if "ШОРТ" in raw or "SHORT" in raw:
+        return "dir_short"
     return "dir_wait"
 
 
@@ -469,7 +471,7 @@ def generate_patterns(
     )[:50]
 
     return {
-        "generated_at":     datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated_at":     datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "horizon":          horizon,
         "min_n":            min_n,
         "exclude_wait":     exclude_wait,

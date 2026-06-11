@@ -612,8 +612,8 @@ def _grade_emoji(grade: str) -> str:
 
 
 def _grade_risk(grade: str) -> float:
-    """Риск на сделку по грейду (AVEVA-57). A+=2.5%, A=1.5%, B=0.75%, rest=1%."""
-    return {"A+": 0.025, "A": 0.015, "B": 0.0075}.get(grade, 0.01)
+    """Риск на сделку по грейду (AVEVA-57). A+=2.5%, A=1.5%, B+=1.0%, B=0.75%, rest=1%."""
+    return {"A+": 0.025, "A": 0.015, "B+": 0.010, "B": 0.0075}.get(grade, 0.01)
 
 
 def _setup_emoji(setup: str) -> str:
@@ -737,7 +737,7 @@ def format_watchlist(filtered: list, max_symbols: int = 5,
         header = "🟢 <b>WATCHLIST LONG</b>"
     else:
         candidates = [r for r in filtered
-                      if r.get("setup") in ("bos_fvg", "range_sweep")
+                      if r.get("setup") in ("bos_fvg", "range_sweep", "short_dist")
                       and r.get("score", 0) >= min_score]
         header = "🔴 <b>WATCHLIST SHORT</b>"
 
@@ -924,27 +924,7 @@ def format_pump_section(results: list, min_pump_score: int = 80,
 
 def format_sector_rotation(results: list) -> str:
     """Ротация секторов (краткая)."""
-    SECTOR_MAP = {
-        "L1":     ["SOLUSDT","AVAXUSDT","TONUSDT","NEARUSDT","APTUSDT","SUIUSDT","SEIUSDT",
-                   "MOVEUSDT","BERAAUSDT","MONADUSDT"],
-        "DeFi":   ["AAVEUSDT","CRVUSDT","MKRUSDT","UNIUSDT","SNXUSDT","COMPUSDT",
-                   "JUPUSDT","PENDLEUSDT","EIGENUSDT"],
-        "AI":     ["FETUSDT","RENDERUSDT","WLDUSDT","AGIXUSDT","TAOBYBIT","TAOUSDT",
-                   "AIUSDT","VIRTUSDT","ACTUSDT","CHESHIREUSDT"],
-        "Meme":   ["DOGEUSDT","SHIBUSDT","PEPEUSDT","FLOKIUSDT","BONKUSDT",
-                   "1000PEPEUSDT","SHIB1000USDT","WIFUSDT","POPCATUSDT",
-                   "MOODENGUSDT","GOATUSDT","BRETTUSDT","NEIROCTOBYBIT"],
-        "L2":     ["ARBUSDT","OPUSDT","MATICUSDT","STRKUSDT","SCROLLUSDT",
-                   "ZKUSDT","WUSDT","PYTHUSD"],
-        "RWA":    ["ONDOUSDT","CFGUSDT","POLIXUSDT","REALUSDT",
-                   "OPENUSDT","POLYXUSDT"],
-        "DePIN":  ["IOUSDT","HIVEUSDT","ALUSDT","XNETUSDT"],
-        "Perp":   ["HYPEUSDT","DYDXUSDT","GMXUSDT","SNSUSDT"],
-        "LST":    ["ENAUSDT","ETHFIUSDT","RETHUSDT","SFRXETHUSDT"],
-        "GameFi": ["AXSUSDT","SANDUSDT","GALAUSDT","IMXUSDT","BEAMUSDT","RONUSDT"],
-        "ETH":    ["ETHUSDT","STETHUSDT"],
-        "BTC":    ["BTCUSDT"],
-    }
+    from config_sectors import SECTOR_MAP
 
     sector_data: dict[str, dict] = {}
     for r in results:

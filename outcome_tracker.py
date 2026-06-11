@@ -223,7 +223,7 @@ def _first_touch_order(symbol: str, from_dt: datetime, to_dt: datetime,
 
 
 def _now_ts() -> str:
-    return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _parse_ts(ts_str: str) -> datetime:
@@ -320,7 +320,7 @@ def save_pending(filtered: list, all_results: list = None) -> int:
                 bool(r.get("whale") and r.get("whale") != "—")
             ),
             # v4: контекстные фичи для регрессии
-            "utc_hour":         datetime.utcnow().hour,
+            "utc_hour":         datetime.now(timezone.utc).hour,
             "btc_trend_4h":     r.get("btc_ema_pos", "unknown"),
             "alt_breadth_pct":  r.get("alt_breadth_pct"),
             "listing_age_days": r.get("listing_age_days"),
@@ -729,9 +729,8 @@ def _load_channel_accuracy() -> dict:
 
 def _save_channel_accuracy(data: dict):
     try:
-        CHANNEL_ACCURACY_PATH.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        from file_lock import atomic_json_update
+        atomic_json_update(CHANNEL_ACCURACY_PATH, lambda _: data, default={})
     except Exception:
         pass
 
@@ -1143,7 +1142,7 @@ def write_knowledge_insights(patterns: dict):
     if not patterns or not patterns.get("total_n"):
         return
 
-    now   = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    now   = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     win   = patterns.get("window_start", "?")
     n_raw = patterns.get("n_raw", patterns["total_n"])
     excl  = max(0, n_raw - patterns["total_n"])
@@ -1259,7 +1258,7 @@ def format_weekly_telegram(patterns: dict, week_rows: list, all_rows: list) -> s
     if not patterns:
         return "📊 <b>Недельный отчёт</b>\n\nДанных пока нет. Запускай скан каждый день — через неделю появится статистика."
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     week_start = (now - timedelta(days=7)).strftime("%d.%m")
     week_end   = now.strftime("%d.%m.%Y")
 

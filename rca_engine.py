@@ -27,6 +27,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Optional
 
+from file_lock import atomic_json_update
+
 BASE_DIR    = Path(__file__).parent
 CSV_PATH    = BASE_DIR / "outcomes" / "resolved.csv"
 RCA_PATH    = BASE_DIR / "outcomes" / "rca_results.json"
@@ -449,21 +451,17 @@ def analyze_csv(csv_path: Path = CSV_PATH, horizon: str = "24h",
 
 def store_rca(rca: dict, out_path: Path = RCA_PATH):
     """Append a single RCA record to rca_results.json (create if missing)."""
-    existing: list[dict] = []
-    if out_path.exists():
-        try:
-            existing = json.loads(out_path.read_text(encoding="utf-8"))
-        except Exception:
-            existing = []
-
-    # Dedup by (symbol, run_ts, horizon, outcome)
     key = (rca.get("symbol"), rca.get("run_ts"), rca.get("horizon"), rca.get("outcome"))
-    for r in existing:
-        if (r.get("symbol"), r.get("run_ts"), r.get("horizon"), r.get("outcome")) == key:
-            return  # already stored
 
-    existing.append(rca)
-    out_path.write_text(json.dumps(existing, indent=2, default=str), encoding="utf-8")
+    def _append(existing):
+        existing = existing or []
+        for r in existing:
+            if (r.get("symbol"), r.get("run_ts"), r.get("horizon"), r.get("outcome")) == key:
+                return existing
+        existing.append(rca)
+        return existing
+
+    atomic_json_update(out_path, _append, default=[])
 
 
 # ─── aggregate ───────────────────────────────────────────────────────────────

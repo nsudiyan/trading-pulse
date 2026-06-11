@@ -27,8 +27,10 @@ import csv
 import json
 import sys
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+
+from file_lock import atomic_json_update
 
 BASE_DIR    = Path(__file__).parent / "outcomes"
 TRADES_JSON = BASE_DIR / "trades.json"
@@ -128,13 +130,11 @@ def _load_trades() -> list[dict]:
 
 def _save_trades(trades: list[dict]):
     _ensure_dirs()
-    TRADES_JSON.write_text(
-        json.dumps(trades, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    atomic_json_update(TRADES_JSON, lambda _: trades, default=[])
 
 
 def _now_ts() -> str:
-    return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _parse_ts(ts: str) -> datetime:

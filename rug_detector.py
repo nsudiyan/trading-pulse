@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 import time
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -110,7 +110,7 @@ SUPPLY_RATIO_MAX  = 30.0   # % circulating — если меньше, красн
 PUMP_7D_MIN       = 150.0  # % памп за 7 дней без основания
 LISTINGS_30D_MIN  = 3      # кол-во крупных CEX за 30 дней
 DEX_LIQ_MIN_USD   = 200_000
-WHALE_TRANSFER_PCT= 0.30   # % от circ supply — крупный перевод
+WHALE_TRANSFER_PCT= 30.0    # % от circ supply — крупный перевод (30% = настоящий кит)
 
 # Крупные CEX для подсчёта листингов
 MAJOR_CEX = {"binance","bybit","okex","okx","kucoin","gate","mexc","huobi","htx",
@@ -173,7 +173,7 @@ def _check_listings(data: dict, age_days: Optional[int] = None) -> tuple[int, li
     """Count major CEX listings in last 30 days. Only flags young tokens (< 180 days)."""
     flags   = []
     # Established tokens naturally have many active tickers — only relevant for new ones
-    if age_days is not None and age_days >= 180:
+    if age_days is None or age_days >= 180:
         return 0, []
     tickers = data.get("tickers", [])
     cutoff  = datetime.now() - timedelta(days=30)
@@ -220,13 +220,13 @@ def _token_age_days(data: dict) -> Optional[int]:
             ath_str = data.get("market_data", {}).get("ath_date", {}).get("usd", "")
             if ath_str:
                 ath = datetime.fromisoformat(ath_str[:10])
-                return (datetime.utcnow() - ath).days
+                return (datetime.now(timezone.utc) - ath).days
         except Exception:
             pass
         return None
     try:
         genesis = datetime.strptime(gd, "%Y-%m-%d")
-        return (datetime.utcnow() - genesis).days
+        return (datetime.now(timezone.utc) - genesis).days
     except Exception:
         return None
 
@@ -412,8 +412,9 @@ def check_news(symbol: str, hours: int = 48) -> list[dict]:
                 pub = None
                 if hasattr(entry, "published_parsed") and entry.published_parsed:
                     import calendar
-                    pub = datetime.utcfromtimestamp(
-                        calendar.timegm(entry.published_parsed)
+                    pub = datetime.fromtimestamp(
+                        calendar.timegm(entry.published_parsed),
+                        tz=timezone.utc
                     )
                 if pub and pub < cutoff:
                     continue

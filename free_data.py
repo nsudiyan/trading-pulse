@@ -31,6 +31,11 @@ SESSION.headers.update({
                   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121 Safari/537.36",
 })
 
+# In-memory cache:避免 repeated disk reads from concurrent threads
+_MEM_CACHE: dict = {}
+_MEM_CACHE_TS: float = 0.0
+_MEM_CACHE_TTL: float = 2.0  # reload from disk at most every 2 seconds
+
 TTL_ETF   = 3600      # 1 час — Farside обновляется раз в день
 TTL_MACRO = 6 * 3600  # 6 часов — календарь на неделю
 TTL_OPT   = 30 * 60   # 30 минут — опционы (Deribit нестабилен, реже ретраи)
@@ -43,10 +48,16 @@ MEXC_BASE    = "https://contract.mexc.com"
 
 
 def _cache_load() -> dict:
+    global _MEM_CACHE, _MEM_CACHE_TS
+    now = time.time()
+    if _MEM_CACHE and (now - _MEM_CACHE_TS) < _MEM_CACHE_TTL:
+        return _MEM_CACHE
     if not CACHE_FILE.exists():
         return {}
     try:
-        return json.loads(CACHE_FILE.read_text())
+        _MEM_CACHE = json.loads(CACHE_FILE.read_text())
+        _MEM_CACHE_TS = now
+        return _MEM_CACHE
     except Exception:
         return {}
 
@@ -62,9 +73,11 @@ def _cache_put(key: str, value) -> None:
     """FIX 2026-06-02: сохраняет ТОЛЬКО изменённый ключ под локом (atomic merge).
     Раньше 12 тредов screener'а + 2-й демон писали весь файл без лока → потеря апдейтов +
     битый JSON → _cache_load отдавал {} → self-inflicted re-fetch шторм к API."""
+    global _MEM_CACHE, _MEM_CACHE_TS
     try:
         from file_lock import atomic_json_update
         atomic_json_update(CACHE_FILE, lambda cur: {**(cur or {}), key: value}, default={})
+        _MEM_CACHE_TS = 0.0  # invalidate in-memory cache
     except Exception as e:
         LOG.debug("cache put failed: %s", e)
 
@@ -237,7 +250,7 @@ def _fetch_deribit_summary(currency: str):
     r = SESSION.get(
         "https://www.deribit.com/api/v2/public/get_book_summary_by_currency",
         params={"currency": currency, "kind": "option"},
-        timeout=3,
+        timeout=8,
     )
     r.raise_for_status()
     data = r.json()
@@ -248,7 +261,7 @@ def _fetch_deribit_index(currency: str) -> Optional[float]:
     r = SESSION.get(
         "https://www.deribit.com/api/v2/public/get_index_price",
         params={"index_name": f"{currency.lower()}_usd"},
-        timeout=2,
+        timeout=8,
     )
     r.raise_for_status()
     return r.json().get("result", {}).get("index_price")

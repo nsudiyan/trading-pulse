@@ -568,10 +568,15 @@ async def _hl_batch(coins: list[str], con: sqlite3.Connection, alert_usd: float)
                     except Exception:
                         continue
 
+                    # Пропускаем служебные ответы (subscribe ack, pong, ...)
+                    if not isinstance(msg, dict):
+                        continue
                     if msg.get("channel") != "trades":
                         continue
 
                     for trade in msg.get("data", []):
+                        if not isinstance(trade, dict):
+                            continue
                         # Ликвидации помечены полем "liquidation" в объекте сделки
                         liq = trade.get("liquidation")
                         if not liq:

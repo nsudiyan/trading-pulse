@@ -25,7 +25,7 @@ import json
 import sys
 import time
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
@@ -64,7 +64,7 @@ RUN_REJECT_COUNTS = Counter()
 # ─────────────────────────────────────────────────────────────
 
 def _now_ts() -> str:
-    return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _parse_ts(ts_str: str) -> datetime:
@@ -288,7 +288,7 @@ def resolve_rejects(silent: bool = False) -> int:
     if not entries:
         return 0
 
-    now     = datetime.utcnow()
+    now     = datetime.now(timezone.utc)
     updated = 0
     changed = False
 

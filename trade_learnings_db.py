@@ -38,7 +38,7 @@ CLI:
 
 import json
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -60,7 +60,7 @@ _MIN_CONF_AUTO      = {"high", "medium"}
 # ─── helpers ─────────────────────────────────────────────────────────────────
 
 def _now() -> str:
-    return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _short_id(prefix: str, existing_ids: set) -> str:
@@ -580,7 +580,7 @@ def _featurize_result(r: dict) -> set:
 
     # utc_session — use current UTC hour
     try:
-        hour = datetime.utcnow().hour
+        hour = datetime.now(timezone.utc).hour
         if 1 <= hour < 9:     tokens.add("utc_session:session_asia")
         elif 9 <= hour < 13:  tokens.add("utc_session:session_london")
         elif 13 <= hour < 21: tokens.add("utc_session:session_ny")

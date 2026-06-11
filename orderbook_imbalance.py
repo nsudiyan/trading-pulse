@@ -151,8 +151,8 @@ def _process_ws_msg(msg: dict):
         # Delta-update: для простоты сейчас replace, не merge
         if st.last_snap and msg.get("type") == "delta":
             # apply delta in-place
-            _apply_delta(st.last_snap.bids, b)
-            _apply_delta(st.last_snap.asks, a)
+            _apply_delta(st.last_snap.bids, b, reverse=True)
+            _apply_delta(st.last_snap.asks, a, reverse=False)
             st.last_snap.ts = time.time()
         else:
             st.last_snap = OrderBookSnapshot(sym, time.time(), b, a)
@@ -171,8 +171,8 @@ def _process_ws_msg(msg: dict):
                 continue
 
 
-def _apply_delta(target: list[_BookLevel], delta: list[_BookLevel]):
-    """In-place merge L2 delta. Size=0 удаляет уровень."""
+def _apply_delta(target: list[_BookLevel], delta: list[_BookLevel], reverse: bool = True):
+    """In-place merge L2 delta. Size=0 удаляет уровень. reverse=True для bids, False для asks."""
     by_price = {lvl.price: lvl for lvl in target}
     for d in delta:
         if d.size == 0:
@@ -180,7 +180,7 @@ def _apply_delta(target: list[_BookLevel], delta: list[_BookLevel]):
         else:
             by_price[d.price] = d
     target.clear()
-    target.extend(sorted(by_price.values(), key=lambda x: x.price, reverse=True))
+    target.extend(sorted(by_price.values(), key=lambda x: x.price, reverse=reverse))
 
 
 async def get_book_metrics(symbol: str, use_stream: bool = False) -> Optional[dict]:

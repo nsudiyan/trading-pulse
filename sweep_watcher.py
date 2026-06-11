@@ -274,7 +274,7 @@ def _analyze_symbol(symbol: str, sweep_type: str) -> None:
         min_score = SETUP_TG_MIN_SCORE.get(setup, SETUP_TG_MIN_SCORE.get("range_sweep", 140))
 
         # Time gate
-        utc_hour = datetime.utcnow().hour
+        utc_hour = datetime.now(timezone.utc).hour
         if utc_hour in BAD_SIGNAL_HOURS and score < BAD_HOUR_MIN_SCORE:
             LOG.info("[%s] Time-gated (UTC %02d, score=%d < %d)",
                      symbol, utc_hour, score, BAD_HOUR_MIN_SCORE)

@@ -26,7 +26,7 @@ import argparse
 import csv
 import json
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -89,7 +89,7 @@ def _is_expired(state: dict) -> bool:
         return False
     try:
         activated_dt = datetime.strptime(activated_at[:19], "%Y-%m-%dT%H:%M:%S")
-        return (datetime.utcnow() - activated_dt).total_seconds() >= AUTO_UNLOCK_HOURS * 3600
+        return (datetime.now(timezone.utc) - activated_dt).total_seconds() >= AUTO_UNLOCK_HOURS * 3600
     except Exception:
         return False
 
@@ -282,7 +282,7 @@ _AUDIT_END    = "\n---\n"
 
 def _log_to_knowledge_base(state: dict, analysis: dict):
     """Prepend/replace the AUDIT MODE section in knowledge_base.md."""
-    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     streak = state.get("streak_count", 0)
     drawdown = state.get("drawdown_r", 0.0)
     trigger = state.get("trigger_reason", "unknown")
@@ -493,7 +493,7 @@ def check_and_activate(silent: bool = False) -> bool:
 
     state = {
         "active":          True,
-        "activated_at":    datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "activated_at":    datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "exit_at":         None,
         "trigger_reason":  trigger_reason,
         "streak_count":    streak_count,
@@ -526,7 +526,7 @@ def deactivate(reason: str = "manual_exit", silent: bool = False) -> bool:
         return False
 
     state["active"]      = False
-    state["exit_at"]     = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    state["exit_at"]     = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     state["exit_reason"] = reason
     _save_state(state)
     _remove_audit_from_knowledge_base()
@@ -567,7 +567,7 @@ def _print_status():
         print(f"  Активирован : {state.get('activated_at', '')[:19]} UTC")
         try:
             activated_dt = datetime.strptime(state.get("activated_at", "")[:19], "%Y-%m-%dT%H:%M:%S")
-            elapsed_s = (datetime.utcnow() - activated_dt).total_seconds()
+            elapsed_s = (datetime.now(timezone.utc) - activated_dt).total_seconds()
             remaining_s = AUTO_UNLOCK_HOURS * 3600 - elapsed_s
             if remaining_s > 0:
                 rh, rm = divmod(int(remaining_s), 3600)

@@ -1081,7 +1081,7 @@ def _analyze_symbol(sym: str, ticker: dict, screener, btc_4h: float = 0.0,
 
         # ── Объём: последняя закрытая свеча vs avg 10 предыдущих ─────────────
         vol_avg10 = sum(volumes[-12:-2]) / 10 if len(volumes) >= 12 else 1.0
-        vol_surge = min(volumes[-2] / vol_avg10, 20.0) if vol_avg10 > 1e-8 else 1.0
+        vol_surge = min(volumes[-2] / vol_avg10, 20.0) if vol_avg10 > 1e-8 else 0.0
 
         # ── Фандинг-история (тренд) ───────────────────────────────────────────
         fund_hist = screener.fetch_funding_history(sym, limit=3)

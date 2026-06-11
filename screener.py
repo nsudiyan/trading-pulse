@@ -3244,6 +3244,8 @@ def score_symbol(symbol, ticker, oi_hist,
     else:
         sweep_dir_3 = "short"
     # range_sweep отключён в скринере: WR=25%, n=12; реал-тайм — sweep_watcher.py
+    # NOTE: s3_long/s3_short вычисляются выше (~200 строк) но результат обнуляется.
+    # Код оставлен для potential re-enable; sweep_watcher.py использует sweep_watcher.py отдельно.
     scores["range_sweep"] = 0
     notes["range_sweep"]  = "—"
 
@@ -3725,6 +3727,11 @@ def score_symbol(symbol, ticker, oi_hist,
     else:  # bos_fvg
         setup_dir = ("long" if trend_bull_aligned else
                      "short" if trend_bear_aligned else "none")
+
+    # FIX: setup_dir="none" (bos_fvg при миксованном HTF) — дефолтим в "long"
+    # для фильтров, иначе BTC velocity/EMA фильтры обходятся
+    if setup_dir == "none":
+        setup_dir = "long"
 
     # ═══════════════════════════════════════════════════════════════════════════
     # HARD-SKIP ФИЛЬТРЫ (откалиброваны на 24ч данных: breakout WR 12%, squeeze 18.5%)
@@ -4859,7 +4866,11 @@ def format_price(price):
     return f"{price:.8f}".rstrip("0").rstrip(".")
 
 
-def score_grade(score):
+def score_grade(score, r=None):
+    """DEPRECATED: используй calc_mtf_grade(r, setup_dir). Обёртка для обратной совместимости."""
+    if r is not None:
+        _sdir = r.get("setup_dir") or ("short" if r.get("setup") == "short_dist" else "long")
+        return calc_mtf_grade(r, setup_dir=_sdir)
     if score >= 100:
         return "A+"
     if score >= 80:
@@ -4872,36 +4883,9 @@ def score_grade(score):
 
 
 def composite_grade(r):
-    """
-    Composite Grade A+/A/B+/B/C/D — качество сетапа с учётом MTF, структуры и CVD.
-
-    A+: score ≥ 90 + MTF_ext ≥ 2 + trend согласован + CVD подтверждает
-    A:  score ≥ 80 + MTF ≥ 2  ИЛИ  score ≥ 90
-    B+: score ≥ 70 + MTF ≥ 1
-    B:  score ≥ 55
-    C:  score ≥ 35
-    D:  < 35
-    """
-    score   = r["score"]
-    mtf     = max(r.get("bull_mtf_ext", r.get("mtf_b", 0)),
-                  r.get("bear_mtf_ext", r.get("mtf_s", 0)))
-    aligned = (r["d_htf"] != "range" and r["h4_htf"] != "range"
-               and r["d_htf"] == r["h4_htf"])
-    cvd_ok  = abs(r.get("cvd_k%", 0)) > 15
-
-    if score >= 90 and mtf >= 2 and aligned and cvd_ok:
-        return "A+"
-    if score >= 80 and mtf >= 2:
-        return "A"
-    if score >= 90:
-        return "A"
-    if score >= 70 and mtf >= 1:
-        return "B+"
-    if score >= 55:
-        return "B"
-    if score >= 35:
-        return "C"
-    return "D"
+    """DEPRECATED: используй calc_mtf_grade(r, setup_dir). Обёртка для обратной совместимости."""
+    _sdir = r.get("setup_dir") or ("short" if r.get("setup") == "short_dist" else "long")
+    return calc_mtf_grade(r, setup_dir=_sdir)
 
 
 def compute_weekly_context(op1w, hi1w, lo1w, cl1w, price):
@@ -5094,17 +5078,7 @@ def get_session_info():
     }
 
 
-SECTOR_MAP = {
-    "L1":     ["SOLUSDT","AVAXUSDT","SUIUSDT","APTUSDT","NEARUSDT","ATOMUSDT","DOTUSDT","TONUSDT"],
-    "DeFi":   ["AAVEUSDT","UNIUSDT","CRVUSDT","LDOUSDT","MKRUSDT","SNXUSDT","JUPUSDT","COMPUSDT"],
-    "AI":     ["FETUSDT","RENDERUSDT","TAOUSDT","AGIXUSDT","OCEANUSDT","WLDUSDT","AIUSDT"],
-    "Meme":   ["DOGEUSDT","SHIBUSDT","PEPEUSDT","FLOKIUSDT","BONKUSDT","WIFUSDT","MEWUSDT"],
-    "L2":     ["ARBUSDT","OPUSDT","MATICUSDT","STRKUSDT","METISUSDT","ZKUSDT"],
-    "RWA":    ["ONDOUSDT","POLUSDT","CFGUSDT"],
-    "GameFi": ["AXSUSDT","SANDUSDT","MANAUSDT","IMXUSDT","GALAUSDT"],
-    "ETH":    ["ETHUSDT","STETHUSDT"],
-    "BTC":    ["BTCUSDT"],
-}
+from config_sectors import SECTOR_MAP
 
 
 def classify_sector(symbol):
@@ -6069,7 +6043,7 @@ def export_results(rows, json_path=None, csv_path=None):
             "setup": r["setup"],
             "setup_label": SETUP_LABELS.get(r["setup"], r["setup"]),
             "score": r["score"],
-            "grade": score_grade(r["score"]),
+            "grade": score_grade(r["score"], r=r),
             "verdict": plan["verdict"],
             "side": plan["side"],
             "conviction": plan["conviction"],
@@ -6166,8 +6140,8 @@ def _fetch_symbol_data_parallel(sym: str) -> dict:
             name = fmap[fut]
             try:
                 out[name] = fut.result()
-            except Exception:
-                pass  # defaults already set
+            except Exception as e:
+                logging.getLogger("screener").debug("fetch %s/%s failed: %s", sym, name, e)
     return out
 
 
@@ -7003,6 +6977,10 @@ def run_screener(top_n=50, min_score=35,
         print(f"[TimeGate] UTC {_utc_hour:02d}:xx — хороший час ✓")
 
     # ── Fix 2: Grade-фильтр — только C/D/X блокируем; B+ передаём Claude ────
+    # Сначала ставим grade (calc_mtf_grade), потом фильтруем
+    for _r in _tg_candidates:
+        _sdir = _r.get("setup_dir") or ("short" if _r.get("setup") == "short_dist" else "long")
+        _r["grade"] = calc_mtf_grade(_r, setup_dir=_sdir)
     _before_grade_list = _tg_candidates[:]
     _tg_candidates = [r for r in _tg_candidates
                       if r.get("grade", "B") not in ("C", "D", "X")]
