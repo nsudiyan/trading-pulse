@@ -31,7 +31,8 @@ SESSION.headers.update({
                   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121 Safari/537.36",
 })
 
-# In-memory cache:避免 repeated disk reads from concurrent threads
+# In-memory cache: избегаем повторных чтений с диска из параллельных тредов.
+# ВАЖНО: _cache_load возвращает общий dict — читателям НЕ мутировать результат.
 _MEM_CACHE: dict = {}
 _MEM_CACHE_TS: float = 0.0
 _MEM_CACHE_TTL: float = 2.0  # reload from disk at most every 2 seconds

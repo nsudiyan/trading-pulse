@@ -68,7 +68,9 @@ def _now_ts() -> str:
 
 
 def _parse_ts(ts_str: str) -> datetime:
-    return datetime.strptime(ts_str, "%Y-%m-%dT%H:%M:%S")
+    # ts хранится как UTC wall-clock (_now_ts). Парсим aware: иначе вычитание с
+    # aware-now кидает TypeError, а .timestamp() на MSK-хосте сдвигает окно на −3ч.
+    return datetime.strptime(ts_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
 
 
 def _load_rejects() -> list:

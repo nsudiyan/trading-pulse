@@ -110,7 +110,7 @@ SUPPLY_RATIO_MAX  = 30.0   # % circulating — если меньше, красн
 PUMP_7D_MIN       = 150.0  # % памп за 7 дней без основания
 LISTINGS_30D_MIN  = 3      # кол-во крупных CEX за 30 дней
 DEX_LIQ_MIN_USD   = 200_000
-WHALE_TRANSFER_PCT= 30.0    # % от circ supply — крупный перевод (30% = настоящий кит)
+WHALE_TRANSFER_PCT= 0.30   # % от circ supply (0.3%) — формула делит на 100; 30.0 отключало бы детекцию
 
 # Крупные CEX для подсчёта листингов
 MAJOR_CEX = {"binance","bybit","okex","okx","kucoin","gate","mexc","huobi","htx",
@@ -219,13 +219,14 @@ def _token_age_days(data: dict) -> Optional[int]:
         try:
             ath_str = data.get("market_data", {}).get("ath_date", {}).get("usd", "")
             if ath_str:
-                ath = datetime.fromisoformat(ath_str[:10])
+                # aware-parse: aware−naive кидает TypeError, except глотал → age всегда None
+                ath = datetime.fromisoformat(ath_str[:10]).replace(tzinfo=timezone.utc)
                 return (datetime.now(timezone.utc) - ath).days
         except Exception:
             pass
         return None
     try:
-        genesis = datetime.strptime(gd, "%Y-%m-%d")
+        genesis = datetime.strptime(gd, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         return (datetime.now(timezone.utc) - genesis).days
     except Exception:
         return None
@@ -396,7 +397,8 @@ def check_news(symbol: str, hours: int = 48) -> list[dict]:
     base    = symbol.replace("USDT", "").replace("PERP", "").upper()
     # Match whole word, case-insensitive (e.g. SOL but not Soldier/Solar)
     pattern = re.compile(r'\b' + re.escape(base) + r'\b', re.IGNORECASE)
-    cutoff  = datetime.now() - timedelta(hours=hours)
+    # pub теперь aware-UTC → cutoff тоже aware-UTC (naive-local давал бы TypeError + сдвиг MSK)
+    cutoff  = datetime.now(timezone.utc) - timedelta(hours=hours)
     results = []
 
     for feed_url in NEWS_FEEDS:

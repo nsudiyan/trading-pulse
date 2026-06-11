@@ -88,7 +88,9 @@ def _is_expired(state: dict) -> bool:
     if not activated_at:
         return False
     try:
-        activated_dt = datetime.strptime(activated_at[:19], "%Y-%m-%dT%H:%M:%S")
+        # activated_at — UTC wall-clock; aware-parse, иначе aware−naive → TypeError,
+        # который except глотает → _is_expired всегда False → авто-разблок не срабатывает
+        activated_dt = datetime.strptime(activated_at[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
         return (datetime.now(timezone.utc) - activated_dt).total_seconds() >= AUTO_UNLOCK_HOURS * 3600
     except Exception:
         return False
@@ -566,7 +568,7 @@ def _print_status():
         print(f"  ⛔ AUDIT MODE АКТИВЕН")
         print(f"  Активирован : {state.get('activated_at', '')[:19]} UTC")
         try:
-            activated_dt = datetime.strptime(state.get("activated_at", "")[:19], "%Y-%m-%dT%H:%M:%S")
+            activated_dt = datetime.strptime(state.get("activated_at", "")[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
             elapsed_s = (datetime.now(timezone.utc) - activated_dt).total_seconds()
             remaining_s = AUTO_UNLOCK_HOURS * 3600 - elapsed_s
             if remaining_s > 0:

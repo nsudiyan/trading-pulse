@@ -35,6 +35,7 @@ Crypto Futures Screener — Bybit V5 Linear Perpetuals
 import argparse
 import csv
 import json
+import logging
 import os
 import socket
 import sqlite3
