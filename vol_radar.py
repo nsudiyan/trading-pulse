@@ -19,6 +19,7 @@ from volume_profile import fetch_klines
 
 BYBIT = "https://api.bybit.com/v5/market"
 COOLDOWN_PATH = Path(__file__).parent / "outcomes" / "radar_cooldown.json"
+HITS_PATH = Path(__file__).parent / "outcomes" / "radar_hits.csv"   # история алертов для просмотра графиков
 COOLDOWN_H = 4.0          # один символ не чаще раза в 4ч
 VOL_MULT = 2.5            # объём последнего бара >= 2.5× среднего
 PRICE_STILL_MAX = 1.0     # |изменение цены| <= 1% — цена ещё НЕ отреагировала (опережение)
@@ -53,6 +54,20 @@ def fetch_perp_symbols(top: int | None = None) -> list[str]:
     except Exception as e:
         print(f"[radar] tickers fetch failed: {e}")
         return []
+
+
+def _log_hit(symbol: str, sp: dict, price: float, sent: bool):
+    """Append-only история алертов: ts, монета, сила спайка, цена, движение, доставлен ли."""
+    import csv
+    from datetime import datetime, timezone
+    HITS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    new = not HITS_PATH.exists() or HITS_PATH.stat().st_size == 0
+    with HITS_PATH.open("a", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        if new:
+            w.writerow(["ts_utc", "symbol", "vol_ratio", "price", "price_chg_30m", "sent"])
+        w.writerow([datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+                    symbol, sp["vol_ratio"], price, sp["price_chg_pct"], int(sent)])
 
 
 def _load_cooldown() -> dict:
@@ -95,6 +110,7 @@ def run(dry_run: bool = False, top: int | None = 150, scan_interval: str = "30")
                 cd[sym] = now
             except Exception as e:
                 print(f"[radar] send failed {sym}: {e}")
+        _log_hit(sym, sp, kl[-1][4], sent=not dry_run)   # история для просмотра графиков
         time.sleep(0.05)
     if not dry_run:
         _save_cooldown(cd)
