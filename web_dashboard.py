@@ -56,11 +56,18 @@ def load_resolved(limit=2000):
     except Exception: return []
 
 def compute_stats(rows):
+    # audit 2026-06-17: считаем ТОЛЬКО на честном окне (≥HONEST_WINDOW_START). До него в
+    # outcome-метках both-hit look-ahead → "ALL-TIME WR" был завышен (41.1% vs честных ~35.5%).
+    try:
+        from outcome_tracker import HONEST_WINDOW_START as _HON
+    except Exception:
+        _HON = "2026-06-02"
     total=wins=stops=losses=flat=0
     by_setup=defaultdict(lambda:{"t":0,"w":0,"s":0,"l":0})
     by_dir=defaultdict(lambda:{"t":0,"w":0,"s":0,"l":0})
     by_hour=defaultdict(lambda:{"t":0,"w":0,"s":0})
     for r in rows:
+        if (r.get("run_ts") or "")[:10] < _HON: continue
         oc=r.get("outcome_24h","")
         if oc not in ("TP1","WIN","STOP","LOSS","FLAT"): continue
         setup=r.get("setup","?"); direction=r.get("direction","?")
@@ -657,7 +664,7 @@ table.lt tbody tr:hover td{background:rgba(0,180,255,.025)}
     <div class="hm"><span class="hm-l">BTC EMA 4H</span><span class="hm-v" id="h-ema">—</span></div>
     <div class="hm"><span class="hm-l">ACTIVE</span><span class="hm-v" id="h-act" style="color:var(--cyan)">—</span></div>
     <div class="hm"><span class="hm-l">24H WIN RATE</span><span class="hm-v" id="h-wr24">—</span></div>
-    <div class="hm"><span class="hm-l">ALL-TIME WR</span><span class="hm-v" id="h-wrat">—</span></div>
+    <div class="hm"><span class="hm-l">WR ЧЕСТНОЕ ОКНО ≥06-02</span><span class="hm-v" id="h-wrat">—</span></div>
     <div class="hm"><span class="hm-l">LAST SCAN</span><span class="hm-v" id="h-scan" style="font-size:10px">—</span></div>
   </div>
   <div class="hdr-r"><div id="clk">00:00:00 UTC</div><div class="ldot"></div></div>

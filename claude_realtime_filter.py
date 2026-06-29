@@ -520,7 +520,7 @@ def _fmt_channel_mentions(symbol: str) -> str:
 
 def _fmt_historical_wr(setup: str, hour_utc: int, weekday: str = "") -> str:
     """
-    Честная статистика setup за последние 30 дней: доля сигналов, реально ДОСТИГШИХ TP1
+    Честная статистика setup за честное окно (≥HONEST_WINDOW_START, ≤30д): доля сигналов, реально ДОСТИГШИХ TP1
     (hit_tp1 без hit_stop; both-hit = не-win, порядок касания недоказуем без минутных klines),
     FLAT в знаменателе. Показываем 4h и 24h.
 
@@ -535,6 +535,12 @@ def _fmt_historical_wr(setup: str, hour_utc: int, weekday: str = "") -> str:
         return "История: resolved.csv отсутствует"
     try:
         import csv as _csv
+        # audit 2026-06-17: до HONEST_WINDOW_START в hit_*/r_multiple зашит both-hit look-ahead —
+        # нельзя кормить им live-Claude перед GO/SKIP. Honest-старт обрезает раннюю историю.
+        try:
+            from outcome_tracker import HONEST_WINDOW_START as _HONEST
+        except Exception:
+            _HONEST = "2026-06-02"
         cutoff_ts = datetime.now(timezone.utc).timestamp() - 30 * 86400
 
         def _is1(v):
@@ -548,6 +554,8 @@ def _fmt_historical_wr(setup: str, hour_utc: int, weekday: str = "") -> str:
         with open(csv_path, encoding="utf-8") as f:
             for row in _csv.DictReader(f):
                 if row.get("setup") != setup:
+                    continue
+                if (row.get("run_ts") or "")[:10] < _HONEST:
                     continue
                 try:
                     if datetime.fromisoformat(row.get("run_ts", "")).timestamp() < cutoff_ts:
@@ -567,11 +575,11 @@ def _fmt_historical_wr(setup: str, hour_utc: int, weekday: str = "") -> str:
                     if _is1(h24) and not _is1(s24):
                         cw24 += 1
         if r4 < 20:
-            return f"История 30d {setup}: n={r4} мало (ignore)"
+            return f"История честн.окно {setup}: n={r4} мало (ignore)"
         wr4 = cw4 / r4 * 100
         wr24 = cw24 / r24 * 100 if r24 else 0
         flpct = fl4 / r4 * 100
-        return (f"История 30d {setup} (n={r4}): достиг TP1 4h={wr4:.0f}% | 24h={wr24:.0f}% "
+        return (f"История честн.окно {setup} (n={r4}): достиг TP1 4h={wr4:.0f}% | 24h={wr24:.0f}% "
                 f"(FLAT-чоп 4h {flpct:.0f}%; честно — FLAT в знаменателе, both-hit=не-win)")
     except Exception as e:
         return f"История: ошибка ({e})"
@@ -814,6 +822,11 @@ def _maybe_chart_b64(symbol: str, candidate: dict) -> Optional[str]:
 def _call_claude(context: str, symbol: str = "?", setup: str = "?",
                  chart_b64: Optional[str] = None) -> Optional[dict]:
     """Возвращает распарсенный dict или None при ошибке."""
+    # SHADOW-OFF (2026-06-17): CLAUDE_RT_OFF=1 → Claude НЕ вызывается (кошелёк не тратится),
+    # вызывающие fail-closed (не шлют). Резолвер/детект работают как обычно. Обратимо: убрать флаг.
+    if os.environ.get("CLAUDE_RT_OFF", "").strip().lower() in ("1", "true", "yes", "on"):
+        log.info(f"{symbol}: CLAUDE_RT_OFF=shadow — Claude не вызывается, торговых алертов нет")
+        return None
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         log.warning("ANTHROPIC_API_KEY отсутствует — fail-open")

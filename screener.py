@@ -7285,6 +7285,12 @@ def run_screener(top_n=50, min_score=35,
         resolved = _ot.check_and_resolve(silent=True)
         if resolved:
             print(f"[Tracker] Закрыто исходов: {resolved} → outcome_tracker.py stats")
+            # Вирт. депозит «в каждый сигнал»: P&L закрытых сделок + новый баланс в TG
+            try:
+                from calibration.virtual_account import notify_resolutions
+                notify_resolutions()
+            except Exception:
+                pass
             # After resolving trades, check for losing streak / drawdown (AVEVA-50)
             if _STREAK_AVAILABLE:
                 newly_activated = _streak.check_and_activate(silent=False)

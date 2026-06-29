@@ -55,11 +55,7 @@ STALE_GRACE_MIN = 30        # грейс активной разработки (
 # Карта первого-второго уровня импортов, кураторская (транзитив не раскручиваем —
 # хрупко). При добавлении нового локального импорта в демон — дописать сюда вручную.
 DAEMON_CODE_MAP = {
-    "com.trading.pumpdetector": ("pump_detector.py watch", [
-        "pump_detector.py", "file_lock.py", "outcome_model.py", "telegram_alerts.py",
-        "claude_realtime_filter.py", "screener.py", "rug_detector.py", "vol_core.py",
-        "spot_perp_basis.py", "top_trader_positions.py", "orderbook_imbalance.py",
-        "chart_analyzer.py", "tv_pump_plan.py", "streak_monitor.py", "reject_tracker.py"]),
+    # pumpdetector/boostwatcher отключены 2026-06-17 (старые памп/раг алерты убраны) — не мониторим.
     "com.trading.bot": ("telegram_bot.py daemon", [
         "telegram_bot.py", "telegram_alerts.py", "trade_logger.py", "claude_realtime_filter.py",
         "screener.py", "liquidation_tracker.py", "channel_reader.py", "file_lock.py"]),
@@ -67,8 +63,6 @@ DAEMON_CODE_MAP = {
         "liquidation_tracker.py", "telegram_alerts.py"]),
     "com.trading.tradewatcher": ("trade_watcher.py", [
         "trade_watcher.py", "telegram_alerts.py", "file_lock.py"]),
-    "com.trading.boostwatcher": ("boost_watcher.py", [
-        "boost_watcher.py", "rug_detector.py", "telegram_alerts.py"]),
     "com.trading.dashboard": ("web_dashboard.py", ["web_dashboard.py"]),
 }
 

@@ -75,3 +75,16 @@ archive/outcomes_backups/
 .cursor/
 .agents/
 .claude/
+
+# чужой проект, случайно в папке
+aura-landing/
+
+# скачанные рыночные данные TSMOM (re-fetchable, архивируем в перестройке)
+research/daily/
+research/daily_cache/
+research/klines/
+research/survivorship/
+research/*.csv
+carry/*.csv
+calibration/.va_last_rowcount
+backups/

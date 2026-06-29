@@ -1883,6 +1883,15 @@ def send_pump_alert(c: dict, cfg: dict = None) -> bool:
 
         lines += ["", action]
 
+        # Живой счётчик вирт. депозита «в каждый сигнал» (1x и 5x). Не роняет алерт.
+        try:
+            from calibration.virtual_account import deposit_line as _vdl
+            _dl = _vdl()
+            if _dl:
+                lines += ["", _dl]
+        except Exception:
+            pass
+
         # P0-2 (петля): кнопки [Вошёл/Пропустил] + регистрация в alerts_index
         _kb = None
         try:

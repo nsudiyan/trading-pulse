@@ -125,6 +125,7 @@ def _apply_claude_filter(r: dict, plan: dict, source: str = "screener") -> tuple
                     plan["tp1"]  = entry * (1 - v["tp_pct"] / 100)
                     plan["stop"] = entry * (1 + v["sl_pct"] / 100)
                 plan["rr"] = v["tp_pct"] / v["sl_pct"] if v["sl_pct"] else plan.get("rr", 0)
+                plan["levels_source"] = "claude"   # уровни реально переписаны Claude (иначе остаются ATR)
             plan["claude_reasoning"]  = v.get("reasoning", "")
             plan["claude_confidence"] = v.get("confidence", 0)
             plan["claude_risks"]      = v.get("risks", []) or []
@@ -354,6 +355,13 @@ def _register_alert(short_id: str, payload: dict):
         print(f"[TG] alerts_index error (алерт уйдёт без индекса): {e}")
 
 
+try:
+    from calibration.virtual_account import deposit_line as _virtual_deposit_line
+except Exception:
+    def _virtual_deposit_line():  # фича недоступна → алерты работают без неё
+        return ""
+
+
 def send_signal_alert(r: dict, plan: dict, cfg: Optional[dict] = None,
                       verdict: Optional[dict] = None) -> bool:
     """Немедленный одиночный алерт о новом сигнале (без батча) с кнопками [Вошёл/Пропустил].
@@ -453,6 +461,14 @@ def send_signal_alert(r: dict, plan: dict, cfg: Optional[dict] = None,
         for risk in (plan.get("claude_risks") or [])[:3]:
             lines.append(f"  ⚠ {_esc(str(risk))[:120]}")
 
+    # Живой счётчик виртуального депозита «в каждый сигнал» (1x и 5x). Никогда не роняет алерт.
+    try:
+        _dl = _virtual_deposit_line()
+        if _dl:
+            lines += ["", _dl]
+    except Exception:
+        pass
+
     text = "\n".join(lines)
 
     # P0-2 (петля): регистрируем алерт ДО отправки (защита от мгновенного нажатия)
@@ -488,6 +504,96 @@ def send_signal_alert(r: dict, plan: dict, cfg: Optional[dict] = None,
         time.sleep(0.3)
     if first_msg_id:
         _register_alert(sid, {"msg_id": first_msg_id})
+
+    # Ground truth: immutable снимок ДОСТАВЛЕННОГО алерта с ФАКТИЧЕСКИМИ уровнями.
+    # Пишется только при реальной доставке. Никогда не роняет алерт (как virtual_deposit).
+    if ok:
+        try:
+            from delivered_ledger import record_delivered
+            record_delivered(
+                alert_id=sid, symbol=sym, side=side, setup=str(setup),
+                entry=entry, stop=stop, tp1=tp1, tp2=tp2,
+                levels_source=plan.get("levels_source", "atr"),
+                score=score, grade=grade,
+                claude_verdict=("WAIT" if plan.get("macro_veto_note") else "GO"),
+                claude_confidence=plan.get("claude_confidence"),
+                macro_veto=bool(plan.get("macro_veto_note")),
+                tg_message_id=first_msg_id,
+                screener_run_ts=(r.get("run_ts") or alert_ts),
+                raw_trigger=f"{setup}|score={score}",
+            )
+        except Exception as e:
+            print(f"[TG] delivered_ledger FAILED (алерт доставлен, но НЕ зафиксирован в ground truth!): {e}", flush=True)
+    return ok
+
+
+def send_trend_alert(sig: dict, cfg: Optional[dict] = None) -> bool:
+    """Трендовый (Donchian) алерт о входе с кнопками [Вошёл/Пропустил].
+    sig: {symbol, dir('L'/'S'), entry, stop}. Переиспользует кнопки/индекс/коллбэк old-инфры."""
+    if cfg is None:
+        cfg = load_config()
+    token = cfg.get("bot_token", ""); chat_id = str(cfg.get("chat_id", ""))
+    if not token or not chat_id:
+        return False
+    sym = sig["symbol"]; d = sig["dir"]; side = "long" if d == "L" else "short"
+    entry = sig["entry"]; stop = sig["stop"]
+    dir_txt = "ЛОНГ ▲" if d == "L" else "ШОРТ ▼"
+    risk_pct = abs(entry - stop) / entry * 100 if entry else 0
+    now = datetime.now().strftime("%H:%M")
+    text = "\n".join([
+        f"📈 <b>ТРЕНД-ПРОБОЙ</b>  |  {now}", "",
+        f"<b>{_esc(sym)}</b>  {dir_txt}", "",
+        f"  Entry  <code>{_fmt_price(entry)}</code>",
+        f"  Stop   <code>{_fmt_price(stop)}</code>  ({risk_pct:.1f}%)",
+        "  Выход: трейл по 10-дн обратному каналу",
+        "", "  риск 0.5% депо · плечо ≤1x · paper",
+    ])
+    alert_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M")
+    sid = _alert_short_id(sym, alert_ts, "trend_breakout")
+    _register_alert(sid, {"run_ts": alert_ts, "symbol": sym, "setup": "trend_breakout",
+                          "direction": side, "entry": entry, "sl": stop, "tp": None,
+                          "score": "—", "grade": "—", "verdict": "GO", "macro_veto": False,
+                          "msg_id": None, "ts": alert_ts, "status": "sent"})
+    kb = _trade_buttons(sid)
+    targets = [chat_id] + [str(c) for c in cfg.get("extra_chat_ids", []) if str(c) != chat_id]
+    ok = True; first = None
+    for cid in targets:
+        res = _send(token, cid, text, reply_markup=kb)
+        if res and res is not True and first is None: first = res
+        ok = bool(res) and ok; time.sleep(0.3)
+    if first: _register_alert(sid, {"msg_id": first})
+    return ok
+
+
+def send_trend_exit(sig: dict, cfg: Optional[dict] = None) -> bool:
+    """Уведомление о ВЫХОДЕ трендовой позиции (без кнопок). sig: {symbol,dir,reason,netR}."""
+    if cfg is None:
+        cfg = load_config()
+    token = cfg.get("bot_token", ""); chat_id = str(cfg.get("chat_id", ""))
+    if not token or not chat_id:
+        return False
+    sym = sig["symbol"]; d = "ЛОНГ" if sig.get("dir") == "L" else "ШОРТ"
+    nr = sig.get("netR", 0)
+    emoji = "🟢" if nr > 0 else "🔴"
+    text = f"{emoji} <b>ВЫХОД</b>  {_esc(sym)} {d}  |  {_esc(str(sig.get('reason','')))}  |  netR=<b>{nr:+.2f}</b>"
+    targets = [chat_id] + [str(c) for c in cfg.get("extra_chat_ids", []) if str(c) != chat_id]
+    ok = True
+    for cid in targets:
+        ok = bool(_send(token, cid, text)) and ok; time.sleep(0.3)
+    return ok
+
+
+def send_trend_summary(text: str, cfg: Optional[dict] = None) -> bool:
+    """Ежедневная сводка статуса трендовых позиций (готовый text, без кнопок)."""
+    if cfg is None:
+        cfg = load_config()
+    token = cfg.get("bot_token", ""); chat_id = str(cfg.get("chat_id", ""))
+    if not token or not chat_id:
+        return False
+    targets = [chat_id] + [str(c) for c in cfg.get("extra_chat_ids", []) if str(c) != chat_id]
+    ok = True
+    for cid in targets:
+        ok = bool(_send(token, cid, text)) and ok; time.sleep(0.3)
     return ok
 
 

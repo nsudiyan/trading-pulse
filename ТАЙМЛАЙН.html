@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Генплан — таймлайн с датами</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --border:#30363d;
+    --green:#3fb950; --orange:#d29922; --red:#f85149; --blue:#58a6ff; --purple:#bc8cff;
+    --text:#c9d1d9; --muted:#8b949e;
+    --mach:#58a6ff; --data:#3fb950; --edge:#bc8cff; --trade:#e3a008;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.4;padding:24px 16px 44px}
+  .wrap{max-width:1180px;margin:0 auto}
+  h1{font-size:22px;margin:0 0 3px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:20px}
+  .mono{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace}
+
+  /* grid */
+  .grid{display:grid;grid-template-columns:96px repeat(4,1fr);gap:8px;margin-bottom:8px}
+  .ph{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;text-align:center}
+  .ph .n{font-size:12px;font-weight:700;letter-spacing:.3px}
+  .ph .d{font-size:11px;color:var(--muted);margin-top:2px}
+  .ph.now{border-color:var(--red);box-shadow:0 0 0 1px var(--red) inset}
+  .ph.now .d{color:#ffb4ad}
+  .corner{background:transparent}
+
+  .trk{display:flex;align-items:center;justify-content:flex-end;padding-right:8px;font-size:12px;font-weight:600;text-align:right;border-right:2px solid var(--border)}
+  .trk small{display:block;color:var(--muted);font-weight:400;font-size:10px}
+  .cell{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:7px;min-height:64px;display:flex;flex-direction:column;gap:5px}
+
+  .chip{font-size:11.5px;padding:4px 7px;border-radius:6px;border-left:3px solid var(--muted);background:var(--panel2);line-height:1.25}
+  .chip b{font-family:"SF Mono",ui-monospace,monospace;font-weight:700}
+  .u{border-left-color:var(--red);background:rgba(248,81,73,.10)}      /* срочно */
+  .w{border-left-color:var(--orange)}                                   /* в работе/копится */
+  .p{border-left-color:var(--blue)}                                     /* плановое */
+  .l{border-left-color:var(--muted);opacity:.8}                         /* позже */
+
+  /* track accent on label */
+  .trk.m{color:var(--mach)} .trk.d{color:var(--data)} .trk.e{color:var(--edge)} .trk.t{color:var(--trade)}
+
+  .gates{margin-top:18px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
+  .gates h3{margin:0 0 10px;font-size:13px;letter-spacing:.4px;text-transform:uppercase;color:var(--purple)}
+  .gline{display:flex;gap:10px;flex-wrap:wrap}
+  .gate{flex:1 1 200px;background:var(--panel2);border:1px solid var(--border);border-left:3px solid var(--purple);border-radius:7px;padding:8px 10px;font-size:12px}
+  .gate .gd{font-family:"SF Mono",ui-monospace,monospace;color:var(--purple);font-size:11px;font-weight:700}
+  .gate b{color:var(--text)}
+
+  .legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:16px;font-size:12px;color:var(--muted)}
+  .legend span{display:flex;align-items:center;gap:6px}
+  .sw{width:18px;height:10px;border-radius:3px;display:inline-block;border-left:3px solid}
+  .foot{margin-top:18px;font-size:11.5px;color:var(--muted);border-top:1px solid var(--border);padding-top:11px}
+  @media(max-width:760px){.grid{grid-template-columns:70px repeat(4,1fr)} .chip{font-size:10.5px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🧭 Генплан — таймлайн с датами</h1>
+  <div class="sub">трейдинг-бот · переаудит 2026-06-07 · 4 трека × 4 фазы · подробности в <span class="mono">ГЕНПЛАН.md</span></div>
+
+  <!-- phase headers -->
+  <div class="grid">
+    <div class="corner"></div>
+    <div class="ph now"><div class="n">ФАЗА 1 · Замкнуть петлю</div><div class="d">08–14 июн · СЕЙЧАС</div></div>
+    <div class="ph"><div class="n">ФАЗА 2 · Скоринг и факторы</div><div class="d">15–30 июн</div></div>
+    <div class="ph"><div class="n">ФАЗА 3 · Решения по эджу</div><div class="d">июль</div></div>
+    <div class="ph"><div class="n">ФАЗА 4 · Масштаб / разворот</div><div class="d">август+</div></div>
+  </div>
+
+  <!-- ТРЕК A -->
+  <div class="grid">
+    <div class="trk m">Машина<small>опсы</small></div>
+    <div class="cell">
+      <div class="chip u"><b>A1</b> кнопки → скринерный путь 🔴</div>
+      <div class="chip u"><b>A2</b> персист контрфактов реджектов</div>
+      <div class="chip w"><b>A3</b> перегенерить knowledge_base</div>
+      <div class="chip p"><b>A4</b> разгрузка диска (82%)</div>
+    </div>
+    <div class="cell">
+      <div class="chip p"><b>A5</b> swing: убрать мёртвую ветку</div>
+      <div class="chip p"><b>A6</b> channel-alerts: достроить/удалить</div>
+    </div>
+    <div class="cell">
+      <div class="chip l"><b>A7</b> распил screener.py (когда стабильно)</div>
+      <div class="chip p">этап 11 — сквозная проверка</div>
+    </div>
+    <div class="cell"><div class="chip l"><b>A7</b> модули + авто-тесты</div></div>
+  </div>
+
+  <!-- ТРЕК B -->
+  <div class="grid">
+    <div class="trk d">Данные<small>измерение</small></div>
+    <div class="cell">
+      <div class="chip u"><b>B1</b> форензика №2 по гейтам</div>
+      <div class="chip w"><b>B3</b> net-R стандартом везде</div>
+      <div class="chip w"><b>B4</b> копить реальные сделки (после A1)</div>
+    </div>
+    <div class="cell">
+      <div class="chip w"><b>B2</b> копить resolved до n≥30/сетап</div>
+      <div class="chip w"><b>B4</b> real-WR набирается</div>
+    </div>
+    <div class="cell">
+      <div class="chip w"><b>B2</b> n≥30: squeeze, bos_fvg ШОРТ</div>
+      <div class="chip p"><b>B5</b> довести форварды до решений</div>
+    </div>
+    <div class="cell"><div class="chip l">достаточная выборка по всем сетапам</div></div>
+  </div>
+
+  <!-- ТРЕК C -->
+  <div class="grid">
+    <div class="trk e">Эдж<small>факторы</small></div>
+    <div class="cell">
+      <div class="chip u"><b>C1</b> разобрать shortdist +0.288 vs «≈0» 🔴</div>
+      <div class="chip p"><b>C7</b> редизайн bos_fvg-харнеса</div>
+    </div>
+    <div class="cell">
+      <div class="chip w"><b>C2</b> shadow A/B валидированных факторов</div>
+      <div class="chip p"><b>C3</b> снять опровергнутое (FNG/whale/SMC/CVD)</div>
+      <div class="chip p"><b>C4</b> перестроить score (порог, не сумма)</div>
+      <div class="chip p"><b>C5</b> дизайн breakout-эксперимента</div>
+      <div class="chip p"><b>C8</b> pump_fade: жив ли смысл</div>
+    </div>
+    <div class="cell">
+      <div class="chip p"><b>C2</b> решение USE_VALIDATED_V1</div>
+      <div class="chip p"><b>C5</b> результат breakout</div>
+      <div class="chip w"><b>C6</b> rug_short n≥50 (~28.07)</div>
+    </div>
+    <div class="cell"><div class="chip l">эдж подтверждён → в прод / нет → смена сетапов</div></div>
+  </div>
+
+  <!-- ТРЕК D -->
+  <div class="grid">
+    <div class="trk t">Торговля<small>винрейт, риск</small></div>
+    <div class="cell">
+      <div class="chip u"><b>D1</b> первые реальные сделки МИНИ-размером</div>
+      <div class="chip w"><b>D2</b> чек-лист входа (vol_ratio, стоп 6–8%, трейл)</div>
+    </div>
+    <div class="cell">
+      <div class="chip p"><b>D3</b> дашборд real-WR vs paper-WR</div>
+      <div class="chip w"><b>D4</b> дисциплина: вошёл/пропустил + причина</div>
+      <div class="chip w"><b>D5</b> режим: в страх лонги > шорты</div>
+    </div>
+    <div class="cell">
+      <div class="chip p"><b>D6</b> резать убыточные сетапы по net-R</div>
+    </div>
+    <div class="cell"><div class="chip l">размер по доказанному эджу</div></div>
+  </div>
+
+  <!-- decision gates -->
+  <div class="gates">
+    <h3>🚦 Гейты решений — где решаем по данным</h3>
+    <div class="gline">
+      <div class="gate"><div class="gd">~10 июн</div><b>Г1 · Гейты воронки.</b> По форензике №2 ослабить DistGate-B/C. Цель 3–5 кандидатов/день.</div>
+      <div class="gate"><div class="gd">~12 июн</div><b>Г2 · shortdist.</b> Противоречие закрыто → эдж реален? (с учётом регим-зависимости).</div>
+      <div class="gate"><div class="gd">~30 июн</div><b>Г3 · USE_VALIDATED_V1.</b> Shadow A/B дал lift на честных данных → включаем.</div>
+      <div class="gate"><div class="gd">~28 июл</div><b>Г4 · rug_short.</b> n≥50 net-of-costs → в прод или в архив.</div>
+      <div class="gate"><div class="gd">август</div><b>Г5 · ГЛАВНЫЙ.</b> Есть ли торгуемый эдж вообще? Масштаб vs разворот.</div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><span class="sw" style="border-left-color:var(--red);background:rgba(248,81,73,.10)"></span> срочно (эта неделя)</span>
+    <span><span class="sw" style="border-left-color:var(--orange)"></span> копится / в работе</span>
+    <span><span class="sw" style="border-left-color:var(--blue)"></span> плановое</span>
+    <span><span class="sw" style="border-left-color:var(--muted)"></span> позже / по готовности</span>
+    <span><span class="sw" style="border-left-color:var(--purple)"></span> гейт решения</span>
+  </div>
+
+  <div class="foot">
+    🔴 Самое срочное: <b>A1</b> — без подключения кнопок к скринеру реальный учёт по главному потоку = 0 (петля замкнута только для памп/раг).
+    Даты Фаз 2–4 — оценки по текущей скорости накопления данных, сдвигаются. Все решения по эджу — на net-R (после костов), не на сыром.
+  </div>
+</div>
+</body>
+</html>
