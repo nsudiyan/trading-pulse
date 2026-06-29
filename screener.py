@@ -7281,6 +7281,15 @@ def run_screener(top_n=50, min_score=35,
 
     # ── Outcome tracker ────────────────────────────────────────────────────────
     if _OT_AVAILABLE:
+        # Ground truth: резолвим ДОСТАВЛЕННЫЕ алерты по фактическим уровням (шаг 2).
+        # Отдельно от resolved.csv (фантомная популяция) — не роняет цикл.
+        try:
+            from delivered_resolver import resolve_pending
+            _dn = resolve_pending(silent=True)
+            if _dn:
+                print(f"[Ledger] резолвнуто доставленных алертов: {_dn} → delivered_resolved.csv")
+        except Exception as _de:
+            print(f"[Ledger] resolve_pending FAILED — замер эджа мог не обновиться: {_de}", flush=True)
         # Сначала проверяем старые сигналы (прошло ≥4h или ≥24h)
         resolved = _ot.check_and_resolve(silent=True)
         if resolved:

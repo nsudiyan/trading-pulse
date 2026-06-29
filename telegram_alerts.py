@@ -513,7 +513,9 @@ def send_signal_alert(r: dict, plan: dict, cfg: Optional[dict] = None,
             record_delivered(
                 alert_id=sid, symbol=sym, side=side, setup=str(setup),
                 entry=entry, stop=stop, tp1=tp1, tp2=tp2,
-                levels_source=plan.get("levels_source", "atr"),
+                # честно: явная метка из плана; иначе claude если Claude переписывал уровни, не молча atr
+                levels_source=(plan.get("levels_source")
+                               or ("claude" if plan.get("claude_reasoning") else "atr")),
                 score=score, grade=grade,
                 claude_verdict=("WAIT" if plan.get("macro_veto_note") else "GO"),
                 claude_confidence=plan.get("claude_confidence"),
@@ -1412,6 +1414,9 @@ def _build_top_setup_plan(r: dict, v: dict) -> Optional[dict]:
 
     plan = {
         "side": side, "entry": entry, "stop": stop, "tp1": tp1, "tp2": tp2, "rr": rr,
+        # tp/sl получены из Claude (tp_pct/sl_pct>0, см. выше) → уровни Claude.
+        # (stop мог быть заклэмплен GUARD ATR×0.65, но база — Claude-план.)
+        "levels_source":     "claude",
         "claude_reasoning":  v.get("reasoning", ""),
         "claude_confidence": v.get("confidence", 0),
         "claude_risks":      v.get("risks", []) or [],

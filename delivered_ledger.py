@@ -48,6 +48,9 @@ def record_delivered(*, alert_id, symbol, side, setup,
 
     if levels_source not in ("atr", "claude"):
         raise ValueError(f"levels_source must be 'atr'|'claude', got {levels_source!r}")
+    if side not in ("long", "short"):
+        # граница торгового направления: не-long молча трактовался бы резолвером как ШОРТ (инверсия PnL)
+        raise ValueError(f"side must be 'long'|'short', got {side!r}")
 
     rec = {
         "alert_id": alert_id,
