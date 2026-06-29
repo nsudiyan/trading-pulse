@@ -459,6 +459,31 @@ def handle_callback(cb: dict, token: str, owner_chat_id: str):
     cb_chat = str(((msg.get("chat") or {}).get("id", "")))
     msg_id  = msg.get("message_id")
 
+    # Радар (план A): ручной трек решений [Лонг]/[Шорт]/[Пропустил]. Формат "radar_<act>|<symbol>".
+    if data.startswith("radar_"):
+        if str(owner_chat_id) and from_id != str(owner_chat_id):
+            tg_answer_callback(token, cb_id, "Не авторизован"); return
+        act, _, sym = data.partition("|")
+        if act in ("radar_long", "radar_short") and sym:
+            side = "long" if act == "radar_long" else "short"
+            try:
+                from manual_trades import record_manual_trade
+                _ok, info = record_manual_trade(sym, side)
+                icon = "📈" if side == "long" else "📉"
+                tg_answer_callback(token, cb_id, f"{icon} {sym} {side} записан {info}")
+                if msg_id:
+                    tg_edit_markup(token, cb_chat, msg_id,
+                                   {"inline_keyboard": [[{"text": f"{icon} {side} записан",
+                                                          "callback_data": "tr:noop:radar"}]]})
+            except Exception as e:
+                tg_answer_callback(token, cb_id, f"🔴 Ошибка записи: {e}")
+        else:  # radar_skip
+            tg_answer_callback(token, cb_id, "⏭ Пропущено")
+            if msg_id:
+                tg_edit_markup(token, cb_chat, msg_id,
+                               {"inline_keyboard": [[{"text": "⏭ пропущен", "callback_data": "tr:noop:radar"}]]})
+        return
+
     parts = data.split(":")
     if len(parts) != 3 or parts[0] != "tr":
         tg_answer_callback(token, cb_id)
