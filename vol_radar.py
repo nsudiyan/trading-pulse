@@ -21,7 +21,7 @@ BYBIT = "https://api.bybit.com/v5/market"
 COOLDOWN_PATH = Path(__file__).parent / "outcomes" / "radar_cooldown.json"
 HITS_PATH = Path(__file__).parent / "outcomes" / "radar_hits.csv"   # история алертов для просмотра графиков
 COOLDOWN_H = 4.0          # один символ не чаще раза в 4ч
-VOL_MULT = 2.5            # объём последнего бара >= 2.5× среднего
+VOL_MULT = 2.7            # объём последнего бара >= 2.7× среднего
 PRICE_STILL_MAX = 1.0     # |изменение цены| <= 1% — цена ещё НЕ отреагировала (опережение)
 
 
@@ -42,12 +42,27 @@ def detect_spike(klines: list, vol_mult: float = VOL_MULT,
     return None
 
 
+# Стейблкоины — НЕ сканируем (по построению не пампят, дают ложные/мусорные спайки).
+# Исключаем по базовому активу (часть до USDT).
+STABLE_BASES = {
+    "USDC", "USDE", "FDUSD", "TUSD", "DAI", "USDD", "USTC", "PYUSD", "GUSD",
+    "EUR", "EURC", "EURT", "EURI", "AEUR", "USD1", "USDR", "USDX", "USDY",
+    "BUSD", "LUSD", "FRAX", "USDP", "SUSD", "CRVUSD", "GHO", "USDB", "USDF",
+}
+
+
+def is_stablecoin(symbol: str) -> bool:
+    """True если базовый актив перпа — стейблкоин (SYMBOL = BASE + 'USDT')."""
+    base = symbol[:-4] if symbol.endswith("USDT") else symbol
+    return base in STABLE_BASES
+
+
 def fetch_perp_symbols(top: int | None = None) -> list[str]:
-    """USDT-перпы Bybit, опц. топ-N по обороту (turnover24h)."""
+    """USDT-перпы Bybit БЕЗ стейблкоинов, опц. топ-N по обороту (turnover24h)."""
     try:
         with urllib.request.urlopen(f"{BYBIT}/tickers?category=linear", timeout=10) as r:
             lst = json.loads(r.read())["result"]["list"]
-        usdt = [t for t in lst if t["symbol"].endswith("USDT")]
+        usdt = [t for t in lst if t["symbol"].endswith("USDT") and not is_stablecoin(t["symbol"])]
         usdt.sort(key=lambda t: float(t.get("turnover24h", 0) or 0), reverse=True)
         syms = [t["symbol"] for t in usdt]
         return syms[:top] if top else syms
