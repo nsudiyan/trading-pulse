@@ -21,7 +21,7 @@ BYBIT = "https://api.bybit.com/v5/market"
 COOLDOWN_PATH = Path(__file__).parent / "outcomes" / "radar_cooldown.json"
 HITS_PATH = Path(__file__).parent / "outcomes" / "radar_hits.csv"   # история алертов для просмотра графиков
 COOLDOWN_H = 4.0          # один символ не чаще раза в 4ч
-VOL_MULT = 3.0            # объём последнего бара >= 3.0× среднего
+VOL_MULT = 4.0            # объём последнего бара >= 4.0× среднего
 PRICE_STILL_MAX = 1.0     # |изменение цены| <= 1% — цена ещё НЕ отреагировала (опережение)
 
 
