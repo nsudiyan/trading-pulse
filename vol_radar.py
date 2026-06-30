@@ -21,7 +21,7 @@ BYBIT = "https://api.bybit.com/v5/market"
 COOLDOWN_PATH = Path(__file__).parent / "outcomes" / "radar_cooldown.json"
 HITS_PATH = Path(__file__).parent / "outcomes" / "radar_hits.csv"   # история алертов для просмотра графиков
 COOLDOWN_H = 4.0          # один символ не чаще раза в 4ч
-VOL_MULT = 4.0            # объём последнего бара >= 4.0× среднего
+VOL_MULT = 3.0            # объём последнего бара >= 3.0× среднего
 PRICE_STILL_MAX = 1.0     # |изменение цены| <= 1% — цена ещё НЕ отреагировала (опережение)
 
 
@@ -57,12 +57,26 @@ def is_stablecoin(symbol: str) -> bool:
     return base in STABLE_BASES
 
 
-def fetch_perp_symbols(top: int | None = None) -> list[str]:
-    """USDT-перпы Bybit БЕЗ стейблкоинов, опц. топ-N по обороту (turnover24h)."""
+def _stock_symbols() -> set:
+    """Тикеры токенизированных АКЦИЙ Bybit (symbolType=='stock') — MSTR/KLAC/NVDA и т.п.
+    Это не крипта, исключаем. Признак из instruments-info, не хардкод-список."""
     try:
+        with urllib.request.urlopen(f"{BYBIT}/instruments-info?category=linear&limit=1000", timeout=10) as r:
+            lst = json.loads(r.read())["result"]["list"]
+        return {x["symbol"] for x in lst if x.get("symbolType") == "stock"}
+    except Exception as e:
+        print(f"[radar] instruments-info fetch failed (акции не отфильтрованы): {e}")
+        return set()
+
+
+def fetch_perp_symbols(top: int | None = None) -> list[str]:
+    """USDT-перпы Bybit БЕЗ стейблкоинов и БЕЗ токенизированных акций, опц. топ-N по обороту."""
+    try:
+        stocks = _stock_symbols()
         with urllib.request.urlopen(f"{BYBIT}/tickers?category=linear", timeout=10) as r:
             lst = json.loads(r.read())["result"]["list"]
-        usdt = [t for t in lst if t["symbol"].endswith("USDT") and not is_stablecoin(t["symbol"])]
+        usdt = [t for t in lst if t["symbol"].endswith("USDT")
+                and not is_stablecoin(t["symbol"]) and t["symbol"] not in stocks]
         usdt.sort(key=lambda t: float(t.get("turnover24h", 0) or 0), reverse=True)
         syms = [t["symbol"] for t in usdt]
         return syms[:top] if top else syms
