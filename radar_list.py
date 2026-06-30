@@ -13,7 +13,7 @@ HITS = Path(__file__).parent / "outcomes" / "radar_hits.csv"
 
 def main(limit=None):
     if not HITS.exists() or HITS.stat().st_size == 0:
-        print("Пока нет алертов. Радар сканит каждые 10 мин и пишет сюда при спайке ≥2.7×.")
+        print("Пока нет алертов. Радар сканит каждые 10 мин и пишет сюда при спайке ≥4.0×.")
         return
     rows = list(csv.DictReader(HITS.open(encoding="utf-8")))
     rows.sort(key=lambda r: r["ts_utc"], reverse=True)
