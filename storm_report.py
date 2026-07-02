@@ -2,17 +2,16 @@
 """storm_report.py — отчёты по IGNITE-сигналам storm_radar в Telegram.
 
 Запускается launchd ежедневно (20:00 МСК), внутри ДВА независимых каденса:
-  1) ШТОРМ-ОТЧЁТ раз в 2 дня (guard 44ч) — резолвер WIN/LOSS; сигналы без
-     развязки переносятся из отчёта в отчёт, пока не возьмут цель (WIN),
-     стоп (LOSS) или не истекут за 7 дней (⌛).
+  1) ШТОРМ-ОТЧЁТ раз в 2 дня (guard 44ч) — проценты отработки по каждой
+     монете (без цели/стопа и WIN/LOSS — решение брата 2026-07-02): сейчас,
+     пик, просадка в сторону пробоя. Сигнал переносится из отчёта в отчёт,
+     через 7 дней снимается с финальным итогом (🏁).
   2) СВОДКА ЗА 4 ДНЯ (guard 92ч) — ретроспектива поведения каждого поджига:
      пик за 24ч после сигнала, характер движения, вердикт «можно ли было
      заходить» от реалистичного входа через 1–2 мин после алерта.
 
-Правила резолва — по 1м свечам Bybit от минуты сигнала:
-  цель = +5% в сторону пробоя (оценка брата: средняя отработка шторма);
-  стоп = clamp(ширина коробки, 1.5%, 3.0%) против (возврат сквозь коробку = фальш);
-  цель и стоп в одной свече → LOSS (worst case: порядок внутри бара неизвестен).
+Замер — по 1м свечам Bybit от минуты сигнала, окно ≤7 дней; все проценты
+в сторону пробоя (плюс = монета пошла за сигналом).
 Стейт обновляется ТОЛЬКО после успешной доставки в TG — иначе следующий
 ежедневный прогон повторит попытку с теми же данными.
 """
@@ -36,11 +35,7 @@ STAGES_PATH = OUT / "storm_stages.csv"
 HITS_PATH = OUT / "radar_hits.csv"
 STATE_PATH = OUT / "storm_report_state.json"
 
-TARGET_PCT = 5.0       # цель = средняя отработка шторма (доменная оценка брата,
-                       # 2026-07-02; пересмотреть по forward-статистике при n>=20)
-MIN_STOP_PCT = 1.5     # пол стопа: ниже — шум и комиссии
-MAX_STOP_PCT = 3.0     # потолок стопа: шире 3% против — пробой давно фальшивый
-EXPIRE_H = 168.0       # 7 дней без развязки → снимаем с учёта (⌛)
+EXPIRE_H = 168.0       # окно отслеживания 7 дней → снимаем с финальным итогом (🏁)
 REPORT_EVERY_H = 44.0  # каденс ~2 суток; 44ч — запас на дрейф минуты запуска
 
 SUMMARY_EVERY_H = 92.0    # сводка ~раз в 4 суток (92ч — тот же запас на дрейф)
@@ -94,13 +89,8 @@ def load_ignites(after_iso: str) -> list[dict]:
                 entry = float(row["price"])
             except (json.JSONDecodeError, ValueError):
                 continue
-            bw = None
-            if d.get("box_high") and d.get("box_low") and entry > 0:
-                bw = (float(d["box_high"]) - float(d["box_low"])) / entry * 100
-            stop = min(max(bw or MIN_STOP_PCT, MIN_STOP_PCT), MAX_STOP_PCT)
             sigs.append({"ts_utc": row["ts_utc"], "symbol": row["symbol"],
-                         "side": d.get("side") or "up", "price": entry,
-                         "target_pct": TARGET_PCT, "stop_pct": round(stop, 2)})
+                         "side": d.get("side") or "up", "price": entry})
     return sigs
 
 
@@ -120,39 +110,21 @@ def _ts(sig: dict) -> datetime:
 
 
 def resolve(sig: dict, kl: list[tuple], now: datetime) -> dict:
-    """Статус сигнала + метрики. Все проценты — В СТОРОНУ сигнала (плюс = прав)."""
-    entry, target, stop = sig["price"], sig["target_pct"], sig["stop_pct"]
+    """Проценты отработки. Все — В СТОРОНУ пробоя (плюс = монета пошла за
+    сигналом). kl должен быть обрезан вызывающим по окну EXPIRE_H."""
+    entry = sig["price"]
     sgn = 1 if sig["side"] == "up" else -1
-    status, hit_min, mfe, mae = "pending", None, 0.0, 0.0
+    mfe, mae, t_mfe = 0.0, 0.0, 0
     for i, (_, _o, h, l, _c) in enumerate(kl):
-        if sgn > 0:
-            fav, adv = (h / entry - 1) * 100, (l / entry - 1) * 100
-        else:
-            fav, adv = -(l / entry - 1) * 100, -(h / entry - 1) * 100
-        mfe, mae = max(mfe, fav), min(mae, adv)
-        if adv <= -stop:          # стоп проверяем первым: тай в одной свече → LOSS
-            status, hit_min = "loss", i
-            break
-        if fav >= target:
-            status, hit_min = "win", i
-            break
-    if status == "pending" and (now - _ts(sig)).total_seconds() > EXPIRE_H * 3600:
-        status = "expired"
-    last_i = hit_min if hit_min is not None else len(kl) - 1
-    cur = sgn * (kl[last_i][4] / entry - 1) * 100 if kl else 0.0
-    return {"status": status, "hit_min": hit_min, "mfe": mfe, "mae": mae, "cur_pct": cur}
-
-
-def r_mult(sig: dict, r: dict) -> float | None:
-    """R-multiple развязки: риск = 1 стоп. WIN = цель/стоп, LOSS = −1,
-    EXPIRED = фактический итог в стопах. Pending → None (не развязан)."""
-    if r["status"] == "win":
-        return sig["target_pct"] / sig["stop_pct"]
-    if r["status"] == "loss":
-        return -1.0
-    if r["status"] == "expired":
-        return r["cur_pct"] / sig["stop_pct"]
-    return None
+        fav = (h / entry - 1) * 100 if sgn > 0 else -(l / entry - 1) * 100
+        adv = (l / entry - 1) * 100 if sgn > 0 else -(h / entry - 1) * 100
+        if fav > mfe:
+            mfe, t_mfe = fav, i
+        mae = min(mae, adv)
+    done = (now - _ts(sig)).total_seconds() > EXPIRE_H * 3600
+    cur = sgn * (kl[-1][4] / entry - 1) * 100 if kl else 0.0
+    return {"status": "done" if done else "pending",
+            "mfe": mfe, "mae": mae, "t_mfe": t_mfe, "cur_pct": cur}
 
 
 def btc_pct(btc: list[tuple], start_ms: int, end_ms: int) -> float | None:
@@ -293,25 +265,18 @@ def _age(minutes: float) -> str:
 
 
 def _fmt_sig(sig: dict, r: dict, btc: float | None, now: datetime) -> str:
-    icon = {"win": "✅", "loss": "❌", "pending": "⏳", "expired": "⌛"}[r["status"]]
     arrow = "⬆️" if sig["side"] == "up" else "⬇️"
     t_msk = _ts(sig).astimezone(MSK).strftime("%d.%m %H:%M")
     age = (now - _ts(sig)).total_seconds() / 60
     btc_txt = f" · BTC {btc:+.1f}%" if btc is not None else ""
-    head = f"{icon} <b>{sig['symbol']}</b> {arrow} {t_msk}"
-    if r["status"] == "win":
-        body = (f"цель +{sig['target_pct']:.1f}% за {_age(r['hit_min'])} · "
-                f"MAE {r['mae']:+.1f}%{btc_txt}")
-    elif r["status"] == "loss":
-        body = (f"стоп −{sig['stop_pct']:.1f}% за {_age(r['hit_min'])} · "
-                f"MFE {r['mfe']:+.1f}%{btc_txt}")
-    elif r["status"] == "expired":
-        body = f"7 дней без развязки, снят · итог {r['cur_pct']:+.1f}%{btc_txt}"
+    if r["status"] == "done":
+        head = f"🏁 <b>{sig['symbol']}</b> {arrow} {t_msk} · 7д отслежено, снят"
+        lead = f"итог <b>{r['cur_pct']:+.1f}%</b>"
     else:
-        head += f" · ждём {_age(age)}"
-        body = (f"сейчас {r['cur_pct']:+.1f}% · MFE {r['mfe']:+.1f}% / "
-                f"MAE {r['mae']:+.1f}% · цель +{sig['target_pct']:.1f}% / "
-                f"стоп −{sig['stop_pct']:.1f}%{btc_txt}")
+        head = f"⏳ <b>{sig['symbol']}</b> {arrow} {t_msk} · в работе {_age(age)}"
+        lead = f"сейчас <b>{r['cur_pct']:+.1f}%</b>"
+    body = (f"{lead} · пик {r['mfe']:+.1f}% за {_age(r['t_mfe'])} · "
+            f"просадка {r['mae']:+.1f}%{btc_txt}")
     return f"{head}\n      {body}"
 
 
@@ -323,26 +288,24 @@ def build_message(rows: list[tuple[dict, dict, float | None]], n_fresh: int,
              f"Поджигов новых: {n_fresh} · ждали с прошлого отчёта: {n_carried}", ""]
     if not rows:
         lines.append("Поджигов не было — радар жив, пружины не стреляли.")
-    order = {"win": 0, "loss": 1, "expired": 2, "pending": 3}
+    order = {"done": 0, "pending": 1}
     for sig, r, b in sorted(rows, key=lambda x: (order[x[1]["status"]], x[0]["ts_utc"])):
         lines.append(_fmt_sig(sig, r, b, now))
-    n = {"win": 0, "loss": 0, "expired": 0, "pending": 0}
-    for _, r, _b in rows:
-        n[r["status"]] += 1
-    rms = [rm for sig, r, _b in rows if (rm := r_mult(sig, r)) is not None]
+    n_done = sum(1 for _, r, _b in rows if r["status"] == "done")
     mfes = sorted(r["mfe"] for _, r, _b in rows)
-    sum_r_txt = f"{sum(rms):+.1f}R ({len(rms)} развязок)" if rms else "0R (развязок нет)"
-    med_txt = (f" · медиана хода (MFE): {mfes[len(mfes) // 2]:+.1f}%" if mfes else "")
-    lines += ["",
-              f"🏁 За период: {n['win']} WIN · {n['loss']} LOSS · "
-              f"{n['expired']}⌛ · {n['pending']} ждут (перенос в следующий отчёт)",
-              f"💰 Σ {sum_r_txt}{med_txt}",
-              f"📈 С запуска: {totals['win']}W / {totals['loss']}L / {totals['expired']}⌛",
+    curs = sorted(r["cur_pct"] for _, r, _b in rows)
+    if rows:
+        lines += ["",
+                  f"🏁 За период: {n_done} завершили 7д · {len(rows) - n_done} "
+                  f"в работе (перенос в следующий отчёт)",
+                  f"📐 Медиана пика: {mfes[len(mfes) // 2]:+.1f}% · "
+                  f"медиана сейчас/итога: {curs[len(curs) // 2]:+.1f}%"]
+    lines += [f"📈 С запуска отслежено до конца: {totals.get('done', 0)}",
               f"⚡ Взведений (WATCH): {n_watch} · 🔊 vol_radar хитов: {n_hits}",
-              "<i>Цель +5% (средняя отработка шторма), стоп = ширина коробки "
-              "[1.5–3%] против; 1м Bybit, тай в одной свече = LOSS. "
-              "BTC — за окно сигнала. R = один стоп риска: WIN = цель/стоп R "
-              "(1.7–3.3R), LOSS = −1R — прибыльность видна и при низком WR.</i>"]
+              "<i>Все проценты — в сторону пробоя (плюс = монета пошла за "
+              "сигналом): пик = лучший ход, просадка = худший против. "
+              "1м Bybit, окно 7 дней от сигнала, потом снимается с итогом. "
+              "BTC — за то же окно.</i>"]
     return "\n".join(lines)
 
 
@@ -387,7 +350,10 @@ def run_report(a, now: datetime) -> int:
     fresh = load_ignites(scanned)
     carried = st.get("pending", [])
     signals = carried + fresh
-    totals = st.get("totals", {"win": 0, "loss": 0, "expired": 0})
+    totals = st.get("totals", {})
+    if "done" not in totals:  # миграция со схемы win/loss/expired (до 2026-07-02)
+        totals = {"done": totals.get("win", 0) + totals.get("loss", 0)
+                  + totals.get("expired", 0)}
     since_iso = last or (min(s["ts_utc"] for s in signals) if signals else now.isoformat())
     since = datetime.fromisoformat(since_iso)
     if since.tzinfo is None:
@@ -405,19 +371,19 @@ def run_report(a, now: datetime) -> int:
     rows, still_pending = [], []
     for sig in signals:
         start_ms = int(_ts(sig).timestamp() * 1000)
+        end_ms = min(now_ms, start_ms + int(EXPIRE_H * 3600 * 1000))
         try:
-            kl = fetch_1m(sig["symbol"], start_ms, now_ms)
+            kl = fetch_1m(sig["symbol"], start_ms, end_ms)
         except Exception as e:
             print(f"[report] {sig['symbol']}: свечи не получены ({e}), остаётся в списке")
             still_pending.append(sig)
             continue
         r = resolve(sig, kl, now)
-        end_ms = (start_ms + r["hit_min"] * 60_000) if r["hit_min"] is not None else now_ms
         rows.append((sig, r, btc_pct(btc, start_ms, end_ms)))
         if r["status"] == "pending":
             still_pending.append(sig)
         else:
-            totals[r["status"]] = totals.get(r["status"], 0) + 1
+            totals["done"] = totals.get("done", 0) + 1
 
     # naive-UTC срез для сравнения с ts_utc в CSV
     since_naive = since.astimezone(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")
@@ -507,33 +473,25 @@ def main() -> int:
 def selfcheck() -> int:
     """Проверка резолв-логики на синтетических свечах (без сети)."""
     base = {"ts_utc": "2026-07-01T00:00:00", "symbol": "T", "side": "up",
-            "price": 100.0, "target_pct": 5.0, "stop_pct": 2.0}
+            "price": 100.0}
     now = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
     mk = lambda o, h, l, c: (0, o, h, l, c)
+    # лонг: пик по хаю (свеча 1), просадка по лоу, «сейчас» = последний close
     r = resolve(base, [mk(100, 104, 99.5, 103), mk(103, 105.5, 102, 105)], now)
-    assert r["status"] == "win" and r["hit_min"] == 1, r
-    r = resolve(base, [mk(100, 100.5, 97.9, 98)], now)
-    assert r["status"] == "loss", r
-    r = resolve(base, [mk(100, 105.5, 97.5, 100)], now)          # тай → LOSS
-    assert r["status"] == "loss", r
-    r = resolve(base, [mk(100, 104.9, 98.1, 100.2)], now)        # ни цель, ни стоп
-    assert r["status"] == "pending" and abs(r["cur_pct"] - 0.2) < 1e-9, r
+    assert r["status"] == "pending" and abs(r["mfe"] - 5.5) < 1e-9 and r["t_mfe"] == 1, r
+    assert abs(r["mae"] - (-0.5)) < 1e-9 and abs(r["cur_pct"] - 5.0) < 1e-9, r
+    # шорт: пик по лоу, просадка по хаю, знаки зеркальны
     dn = dict(base, side="down")
-    r = resolve(dn, [mk(100, 100.5, 94.9, 95)], now)             # лой −5.1% = цель шорта
-    assert r["status"] == "win" and r["mfe"] > 5.0, r
-    r = resolve(dn, [mk(100, 102.1, 99, 102)], now)              # хай +2.1% = стоп шорта
-    assert r["status"] == "loss", r
+    r = resolve(dn, [mk(100, 102.1, 94.9, 96)], now)
+    assert abs(r["mfe"] - 5.1) < 1e-9 and abs(r["mae"] - (-2.1)) < 1e-9, r
+    assert abs(r["cur_pct"] - 4.0) < 1e-9, r
+    # старше 7 дней → done (снимается с финальным итогом)
     old = dict(base, ts_utc="2026-06-20T00:00:00")
     r = resolve(old, [mk(100, 100.5, 99.5, 100.2)], now)
-    assert r["status"] == "expired", r
-    # clamp стопа: узкая коробка → пол 1.5, широкая → потолок 3.0
-    assert min(max(0.45, MIN_STOP_PCT), MAX_STOP_PCT) == 1.5
-    assert min(max(5.69, MIN_STOP_PCT), MAX_STOP_PCT) == 3.0
-    # R-multiple: WIN = цель/стоп, LOSS = −1, EXPIRED = итог/стоп, pending = None
-    assert r_mult(base, {"status": "win"}) == 2.5
-    assert r_mult(base, {"status": "loss"}) == -1.0
-    assert abs(r_mult(base, {"status": "expired", "cur_pct": -1.0}) - (-0.5)) < 1e-9
-    assert r_mult(base, {"status": "pending"}) is None
+    assert r["status"] == "done" and abs(r["cur_pct"] - 0.2) < 1e-9, r
+    # без свечей — нули, не падаем
+    r = resolve(base, [], now)
+    assert r["status"] == "pending" and r["cur_pct"] == 0.0 and r["mfe"] == 0.0, r
     # peak_stats: сигнал 00:00:30 → бар 0 = сигнальная минута, вход = close бара 1
     ms = lambda i: int(datetime(2026, 7, 1, 0, 0, tzinfo=timezone.utc).timestamp() * 1000) + i * 60_000
     sig = dict(base, ts_utc="2026-07-01T00:00:30")
@@ -561,7 +519,7 @@ def selfcheck() -> int:
                            "final": 0.1}) == "пила во флэте"
     assert behavior_label({"mfe": 2.5, "mae": -1.4, "t_mfe": 50, "t_mae": 10,
                            "final": 2.0}).startswith("сначала тряхнуло")
-    print("selfcheck OK: 16/16")
+    print("selfcheck OK")
     return 0
 
 

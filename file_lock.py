@@ -103,3 +103,8 @@ def atomic_json_read(path: Path, default: Any = None) -> Any:
             return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
         except (json.JSONDecodeError, OSError):
             return default
+
+
+# Публичный алиас (контракт для внешних потребителей: storm_radar и др.) —
+# внутренности можно рефакторить, алиас остаётся.
+file_lock = _file_lock

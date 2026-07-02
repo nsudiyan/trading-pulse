@@ -48,6 +48,11 @@ AUTO_UNLOCK_HOURS          = 4     # hours before Audit Mode auto-expires
 
 LOSS_OUTCOMES = {"STOP", "LOSS"}
 
+# 2026-07-02: kill-switch снят братом. Фаза = форвард-замер (никто не торгует
+# сигналы деньгами): блокировка после серии лоссов цензурирует поток ровно
+# после просадок и глушит сбор данных. Вернуть True при живой торговле.
+ENABLED = False
+
 # ─── state I/O ────────────────────────────────────────────────────────────────
 
 def _empty_state() -> dict:
@@ -100,6 +105,8 @@ def _is_expired(state: dict) -> bool:
 
 def is_audit_mode() -> bool:
     """Used by screener.py at startup. Auto-deactivates silently if AUTO_UNLOCK_HOURS elapsed."""
+    if not ENABLED:
+        return False
     try:
         state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
         if not state.get("active"):
@@ -465,6 +472,8 @@ def check_and_activate(silent: bool = False) -> bool:
     Returns True if Audit Mode was newly activated, False otherwise.
     Already-active state is left unchanged.
     """
+    if not ENABLED:
+        return False
     state = load_state()
     if state.get("active"):
         if _is_expired(state):
