@@ -132,6 +132,18 @@ def resolve(sig: dict, kl: list[tuple], now: datetime) -> dict:
     return {"status": status, "hit_min": hit_min, "mfe": mfe, "mae": mae, "cur_pct": cur}
 
 
+def r_mult(sig: dict, r: dict) -> float | None:
+    """R-multiple развязки: риск = 1 стоп. WIN = цель/стоп, LOSS = −1,
+    EXPIRED = фактический итог в стопах. Pending → None (не развязан)."""
+    if r["status"] == "win":
+        return sig["target_pct"] / sig["stop_pct"]
+    if r["status"] == "loss":
+        return -1.0
+    if r["status"] == "expired":
+        return r["cur_pct"] / sig["stop_pct"]
+    return None
+
+
 def btc_pct(btc: list[tuple], start_ms: int, end_ms: int) -> float | None:
     """Изменение BTC за окно [start_ms, end_ms] по закрытиям 1м свечей."""
     if not btc:
@@ -192,14 +204,20 @@ def build_message(rows: list[tuple[dict, dict, float | None]], n_fresh: int,
     n = {"win": 0, "loss": 0, "expired": 0, "pending": 0}
     for _, r, _b in rows:
         n[r["status"]] += 1
+    rms = [rm for sig, r, _b in rows if (rm := r_mult(sig, r)) is not None]
+    mfes = sorted(r["mfe"] for _, r, _b in rows)
+    sum_r_txt = f"{sum(rms):+.1f}R ({len(rms)} развязок)" if rms else "0R (развязок нет)"
+    med_txt = (f" · медиана хода (MFE): {mfes[len(mfes) // 2]:+.1f}%" if mfes else "")
     lines += ["",
               f"🏁 За период: {n['win']} WIN · {n['loss']} LOSS · "
               f"{n['expired']}⌛ · {n['pending']} ждут (перенос в следующий отчёт)",
+              f"💰 Σ {sum_r_txt}{med_txt}",
               f"📈 С запуска: {totals['win']}W / {totals['loss']}L / {totals['expired']}⌛",
               f"⚡ Взведений (WATCH): {n_watch} · 🔊 vol_radar хитов: {n_hits}",
               "<i>Цель +5% (средняя отработка шторма), стоп = ширина коробки "
               "[1.5–3%] против; 1м Bybit, тай в одной свече = LOSS. "
-              "BTC — за окно сигнала.</i>"]
+              "BTC — за окно сигнала. R = один стоп риска: WIN = цель/стоп R "
+              "(1.7–3.3R), LOSS = −1R — прибыльность видна и при низком WR.</i>"]
     return "\n".join(lines)
 
 
@@ -325,7 +343,12 @@ def selfcheck() -> int:
     # clamp стопа: узкая коробка → пол 1.5, широкая → потолок 3.0
     assert min(max(0.45, MIN_STOP_PCT), MAX_STOP_PCT) == 1.5
     assert min(max(5.69, MIN_STOP_PCT), MAX_STOP_PCT) == 3.0
-    print("selfcheck OK: 9/9")
+    # R-multiple: WIN = цель/стоп, LOSS = −1, EXPIRED = итог/стоп, pending = None
+    assert r_mult(base, {"status": "win"}) == 2.5
+    assert r_mult(base, {"status": "loss"}) == -1.0
+    assert abs(r_mult(base, {"status": "expired", "cur_pct": -1.0}) - (-0.5)) < 1e-9
+    assert r_mult(base, {"status": "pending"}) is None
+    print("selfcheck OK: 10/10")
     return 0
 
 
