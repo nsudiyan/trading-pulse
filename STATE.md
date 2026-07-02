@@ -5,6 +5,13 @@
 
 ## 1. РАБОТАЕТ
 
+- **storm_report — авто-отчёт отработки IGNITE-сигналов** (2026-07-02): `storm_report.py`,
+  launchd `com.trading.stormreport` ежедневно 20:00 МСК, сам держит каденс «раз в 2 дня»
+  (guard 44ч). Резолв по 1м свечам Bybit: цель/стоп = clamp(ширина коробки, 1.5%, 3%),
+  тай в одной свече = LOSS, 7 дней без развязки = ⌛. Неразрешённые сигналы переносятся
+  из отчёта в отчёт (`outcomes/storm_report_state.json`), альфа считается против BTC за
+  окно сигнала. Стейт обновляется только после успешной доставки в TG (фейл → ретрай
+  завтра). Селфчек: `python3 storm_report.py --selfcheck`; превью: `--dry-run --force`.
 - **Скринер** каждые 4ч (00/04/08/12/16/20 UTC) + строка `funnel: candidates= passed= rejected= top_reason=` в каждом прогоне (`6c18d87`)
 - **Алерты с кнопками** [✅ Вошёл / ⏭ Пропустил] → `outcomes/alerts_index.json` → callback → `outcomes/trades.json` (trade_logger, status=open) → `/close SYM ±R|цена`, `/open` (`1ab24f7`…`7a0887f`)
 - **A1 — петля замкнута для СКРИНЕРНОГО потока** (2026-06-08): топ-сетапы скринера уходят
