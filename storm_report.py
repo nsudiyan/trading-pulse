@@ -390,6 +390,13 @@ def run_report(a, now: datetime) -> int:
     msg = build_message(rows, len(fresh), len(carried),
                         count_rows(STAGES_PATH, since_naive, "watch_add"),
                         count_rows(HITS_PATH, since_naive), since, now, totals)
+    try:  # качество радар-карточек за период (6ч-критерий брата, radar_resolver)
+        from radar_resolver import quality_lines
+        ql = quality_lines(since_naive)
+        if ql:
+            msg += "\n" + "\n".join(ql)
+    except Exception as e:
+        print(f"[report] радар-секция не собралась (отчёт не блокируем): {e}")
     if a.dry_run:
         print(msg)
         return 0
@@ -460,6 +467,11 @@ def main() -> int:
     if a.selfcheck:
         return selfcheck()
     now = datetime.now(timezone.utc)
+    try:  # дорезолвить радар-алерты с закрытым 6ч-окном (каждый тик, не по каденсу)
+        from radar_resolver import resolve_new
+        resolve_new(dry_run=a.dry_run)
+    except Exception as e:
+        print(f"[report] radar_resolver упал (отчёты не блокируем): {e}")
     rc = 0
     if a.only != "summary":
         rc = max(rc, run_report(a, now))

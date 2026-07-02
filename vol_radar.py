@@ -34,6 +34,18 @@ CASCADE_COOLDOWN_H = 2.0  # каскад-дайджест не чаще раза
 SCAN_TOP = 1              # одиночных карточек за скан: только сильнейший спайк
 SINGLES_PER_DAY = 5       # дневной кап одиночных карточек (UTC-день); всё прочее -> CSV, sent=0
 
+# Мажоры НЕ идут одиночными карточками (2026-07-02, резолв 246 хитов 29.06-02.07 по
+# 6ч-критерию брата MFE>=5% при MAE<=1.5%: мажоры 3/96 хороших vs альты-одиночки 19/63).
+# Они спайкуют объёмом на каждом рыночном чихе, но чистый ход >=5%/6ч почти не дают.
+# В каскад-дайджест мажоры ВХОДЯТ (каскад = рыночное событие), в CSV пишутся всегда.
+# Список = снапшот ретро-разреза; менять только по следующему отчёту резолвера.
+MAJOR_SYMBOLS = frozenset({
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "LTCUSDT", "ADAUSDT",
+    "DOGEUSDT", "LINKUSDT", "AVAXUSDT", "DOTUSDT", "ATOMUSDT", "NEARUSDT", "SUIUSDT",
+    "TRXUSDT", "BCHUSDT", "ETCUSDT", "XLMUSDT", "HBARUSDT", "APTUSDT", "ARBUSDT",
+    "OPUSDT", "SHIB1000USDT", "CRVUSDT", "LDOUSDT", "SEIUSDT", "AXSUSDT", "HYPEUSDT",
+})
+
 
 def detect_spike(klines: list, vol_mult: float = VOL_MULT,
                  price_still_max: float = PRICE_STILL_MAX) -> dict | None:
@@ -150,13 +162,16 @@ def _save_budget(b: dict):
 
 
 def select_hits(hits: list[dict], cascade_n: int = CASCADE_N,
-                top_n: int = SCAN_TOP) -> tuple[str, list[dict]]:
+                top_n: int = SCAN_TOP,
+                majors: frozenset = MAJOR_SYMBOLS) -> tuple[str, list[dict]]:
     """Чистое решение по скану (тестируемо): >=cascade_n спайков — рыночный
-    каскад, один дайджест; иначе только top_n сильнейших одиночными карточками."""
+    каскад, один дайджест; иначе одиночные карточки — top_n сильнейших АЛЬТОВ
+    (мажоры одиночными не доставляются: 3/96 хороших в ретро, см. MAJOR_SYMBOLS)."""
     ranked = sorted(hits, key=lambda h: -h["vol_ratio"])
     if len(hits) >= cascade_n:
         return "cascade", ranked
-    return "singles", ranked[:top_n]
+    alts = [h for h in ranked if h["symbol"] not in majors]
+    return "singles", alts[:top_n]
 
 
 def build_cascade_message(hits: list[dict]) -> str:
@@ -278,6 +293,15 @@ if __name__ == "__main__":
         mode, ch = select_hits([h("A", 5.1), h("B", 7.2), h("C", 6.0)])
         assert mode == "cascade" and [x["symbol"] for x in ch] == ["B", "C", "A"], (mode, ch)
         assert "КАСКАД" in build_cascade_message(ch)
+        # мажор-одиночка НЕ доставляется (2026-07-02: 3/96 хороших у мажоров)
+        mode, ch = select_hits([h("BTCUSDT", 9.0)])
+        assert mode == "singles" and ch == [], (mode, ch)
+        # мажор + альт (<3, не каскад): карточка АЛЬТА, даже если мажор сильнее
+        mode, ch = select_hits([h("BTCUSDT", 9.0), h("EVAAUSDT", 5.5)])
+        assert mode == "singles" and [x["symbol"] for x in ch] == ["EVAAUSDT"], (mode, ch)
+        # в каскаде мажоры ОСТАЮТСЯ (рыночное событие)
+        mode, ch = select_hits([h("BTCUSDT", 9.0), h("ETHUSDT", 6.0), h("EVAAUSDT", 5.5)])
+        assert mode == "cascade" and len(ch) == 3, (mode, ch)
         # металлы фильтруются, стейблы как раньше
         assert is_commodity("XAUTUSDT") and is_commodity("PAXGUSDT")
         assert not is_commodity("BTCUSDT") and is_stablecoin("USDCUSDT")
