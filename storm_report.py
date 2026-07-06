@@ -50,14 +50,19 @@ MSK = ZoneInfo("Europe/Moscow")
 # ============================== ДАННЫЕ ==============================
 
 def fetch_1m(symbol: str, start_ms: int, end_ms: int) -> list[tuple]:
-    """1м свечи (ts, o, h, l, c) по возрастанию; пагинация лимита Bybit 1000."""
+    """1м свечи (ts, o, h, l, c) по возрастанию; пагинация лимита Bybit 1000.
+    retCode != 0 (rate-limit/50x/битый символ) — RAISE, а не пустой список:
+    пустота = «данных честно нет», ошибка = «отложи и повтори» (ревью 2026-07-06 #6)."""
     out: list[tuple] = []
     cursor = start_ms
     while cursor < end_ms:
         url = (f"{BYBIT}?category=linear&symbol={symbol}&interval=1"
                f"&start={cursor}&end={end_ms}&limit=1000")
         with urllib.request.urlopen(url, timeout=15) as r:
-            rows = json.load(r).get("result", {}).get("list") or []
+            data = json.load(r)
+        if data.get("retCode") != 0:
+            raise RuntimeError(f"Bybit retCode={data.get('retCode')}: {data.get('retMsg')}")
+        rows = data.get("result", {}).get("list") or []
         if not rows:
             break
         rows.reverse()  # Bybit отдаёт новые первыми
@@ -113,6 +118,12 @@ def resolve(sig: dict, kl: list[tuple], now: datetime) -> dict:
     """Проценты отработки. Все — В СТОРОНУ пробоя (плюс = монета пошла за
     сигналом). kl должен быть обрезан вызывающим по окну EXPIRE_H."""
     entry = sig["price"]
+    done = (now - _ts(sig)).total_seconds() > EXPIRE_H * 3600
+    if not kl:
+        # свечей нет при retCode=0 (делист/пустое окно): НЕ выдумывать 0.0%
+        # («🏁 итог +0.0%» в отчёте — фабрикация, ревью 2026-07-06 #6)
+        return {"status": "done_no_data" if done else "no_data",
+                "mfe": None, "mae": None, "t_mfe": None, "cur_pct": None}
     sgn = 1 if sig["side"] == "up" else -1
     mfe, mae, t_mfe = 0.0, 0.0, 0
     for i, (_, _o, h, l, _c) in enumerate(kl):
@@ -121,8 +132,7 @@ def resolve(sig: dict, kl: list[tuple], now: datetime) -> dict:
         if fav > mfe:
             mfe, t_mfe = fav, i
         mae = min(mae, adv)
-    done = (now - _ts(sig)).total_seconds() > EXPIRE_H * 3600
-    cur = sgn * (kl[-1][4] / entry - 1) * 100 if kl else 0.0
+    cur = sgn * (kl[-1][4] / entry - 1) * 100
     return {"status": "done" if done else "pending",
             "mfe": mfe, "mae": mae, "t_mfe": t_mfe, "cur_pct": cur}
 
@@ -269,6 +279,12 @@ def _fmt_sig(sig: dict, r: dict, btc: float | None, now: datetime) -> str:
     t_msk = _ts(sig).astimezone(MSK).strftime("%d.%m %H:%M")
     age = (now - _ts(sig)).total_seconds() / 60
     btc_txt = f" · BTC {btc:+.1f}%" if btc is not None else ""
+    if r["status"] == "done_no_data":
+        return (f"🏁 <b>{sig['symbol']}</b> {arrow} {t_msk} · 7д, снят: "
+                f"<i>свечей нет (делист?) — без итога</i>")
+    if r["status"] == "no_data":
+        return (f"⚠️ <b>{sig['symbol']}</b> {arrow} {t_msk} · в работе {_age(age)} · "
+                f"<i>свечей нет — жду данных</i>")
     if r["status"] == "done":
         head = f"🏁 <b>{sig['symbol']}</b> {arrow} {t_msk} · 7д отслежено, снят"
         lead = f"итог <b>{r['cur_pct']:+.1f}%</b>"
@@ -288,18 +304,22 @@ def build_message(rows: list[tuple[dict, dict, float | None]], n_fresh: int,
              f"Поджигов новых: {n_fresh} · ждали с прошлого отчёта: {n_carried}", ""]
     if not rows:
         lines.append("Поджигов не было — радар жив, пружины не стреляли.")
-    order = {"done": 0, "pending": 1}
+    order = {"done": 0, "done_no_data": 1, "pending": 2, "no_data": 3}
     for sig, r, b in sorted(rows, key=lambda x: (order[x[1]["status"]], x[0]["ts_utc"])):
         lines.append(_fmt_sig(sig, r, b, now))
     n_done = sum(1 for _, r, _b in rows if r["status"] == "done")
-    mfes = sorted(r["mfe"] for _, r, _b in rows)
-    curs = sorted(r["cur_pct"] for _, r, _b in rows)
+    n_nd = sum(1 for _, r, _b in rows if r["status"].endswith("no_data"))
+    # медианы — ТОЛЬКО по строкам с реальными числами (no_data не выдумываем)
+    mfes = sorted(r["mfe"] for _, r, _b in rows if r["mfe"] is not None)
+    curs = sorted(r["cur_pct"] for _, r, _b in rows if r["cur_pct"] is not None)
     if rows:
         lines += ["",
-                  f"🏁 За период: {n_done} завершили 7д · {len(rows) - n_done} "
-                  f"в работе (перенос в следующий отчёт)",
-                  f"📐 Медиана пика: {mfes[len(mfes) // 2]:+.1f}% · "
-                  f"медиана сейчас/итога: {curs[len(curs) // 2]:+.1f}%"]
+                  f"🏁 За период: {n_done} завершили 7д · "
+                  f"{len(rows) - n_done - n_nd} в работе (перенос в следующий отчёт)"
+                  + (f" · {n_nd} без данных" if n_nd else "")]
+        if mfes and curs:
+            lines += [f"📐 Медиана пика: {mfes[len(mfes) // 2]:+.1f}% · "
+                      f"медиана сейчас/итога: {curs[len(curs) // 2]:+.1f}%"]
     lines += [f"📈 С запуска отслежено до конца: {totals.get('done', 0)}",
               f"⚡ Взведений (WATCH): {n_watch} · 🔊 vol_radar хитов: {n_hits}",
               "<i>Все проценты — в сторону пробоя (плюс = монета пошла за "
@@ -380,10 +400,12 @@ def run_report(a, now: datetime) -> int:
             continue
         r = resolve(sig, kl, now)
         rows.append((sig, r, btc_pct(btc, start_ms, end_ms)))
-        if r["status"] == "pending":
+        if r["status"] in ("pending", "no_data"):   # no_data до 7д — ждём данных
             still_pending.append(sig)
-        else:
+        elif r["status"] == "done":
             totals["done"] = totals.get("done", 0) + 1
+        else:                                        # done_no_data: снят без итога
+            totals["no_data"] = totals.get("no_data", 0) + 1
 
     # naive-UTC срез для сравнения с ts_utc в CSV
     since_naive = since.astimezone(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")
@@ -422,7 +444,13 @@ def run_summary(a, now: datetime) -> int:
             print("[summary] каденс: с прошлой сводки < 92ч, выходим")
             return 0
 
+    # Окно — С КОНЦА ПОСЛЕДНЕЙ УСПЕШНОЙ сводки, не «4 дня от now»: при фейле
+    # отправки ретрай завтра раньше терял старшие ~сутки упавшего окна навсегда
+    # (ревью 2026-07-06 #10). Кап +3 дня — чтобы серия фейлов не раздувала окно.
     since = now - timedelta(days=SUMMARY_LOOKBACK_D)
+    if last:
+        since = max(datetime.fromisoformat(last),
+                    now - timedelta(days=SUMMARY_LOOKBACK_D + 3))
     since_naive = since.astimezone(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")
     sigs = load_ignites(since_naive)
     now_ms = int(now.timestamp() * 1000)
@@ -450,7 +478,8 @@ def run_summary(a, now: datetime) -> int:
         print(msg)
         return 0
     if not send_report(msg):
-        print("[summary] отправка не удалась — стейт НЕ обновлён, ретрай завтра")
+        print("[summary] отправка не удалась — стейт НЕ обновлён; ретрай завтра "
+              "покроет окно с last_summary_utc, ничего не выпадет")
         return 1
     _merge_state({"last_summary_utc": now.isoformat()})
     print(f"[summary] отправлена: {len(items)} поджигов")
@@ -501,9 +530,17 @@ def selfcheck() -> int:
     old = dict(base, ts_utc="2026-06-20T00:00:00")
     r = resolve(old, [mk(100, 100.5, 99.5, 100.2)], now)
     assert r["status"] == "done" and abs(r["cur_pct"] - 0.2) < 1e-9, r
-    # без свечей — нули, не падаем
+    # без свечей — ЧЕСТНЫЙ no_data (не выдуманные 0.0%, ревью 2026-07-06 #6)
     r = resolve(base, [], now)
-    assert r["status"] == "pending" and r["cur_pct"] == 0.0 and r["mfe"] == 0.0, r
+    assert r["status"] == "no_data" and r["cur_pct"] is None and r["mfe"] is None, r
+    # без свечей и старше 7д → снят без итога (делист)
+    r = resolve(dict(base, ts_utc="2026-06-20T00:00:00"), [], now)
+    assert r["status"] == "done_no_data" and r["cur_pct"] is None, r
+    # сообщение и сводка с no_data не падают и не печатают +0.0%
+    nd_row = [(base, {"status": "done_no_data", "mfe": None, "mae": None,
+                      "t_mfe": None, "cur_pct": None}, None)]
+    m = build_message(nd_row, 1, 0, 0, 0, now, now, {})
+    assert "без итога" in m and "+0.0%" not in m, m
     # peak_stats: сигнал 00:00:30 → бар 0 = сигнальная минута, вход = close бара 1
     ms = lambda i: int(datetime(2026, 7, 1, 0, 0, tzinfo=timezone.utc).timestamp() * 1000) + i * 60_000
     sig = dict(base, ts_utc="2026-07-01T00:00:30")

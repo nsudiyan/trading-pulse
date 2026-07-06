@@ -34,6 +34,10 @@ MAINT_MARGIN = 0.005        # поддерживающая маржа (isolated)
 FUNDING_INTERVAL_H = 8.0    # фандинг каждые 8ч
 
 # --- Живой счётчик депозита в TG-алертах (правится тут) ---
+# 2026-07-03, решение брата: бот сторону НЕ берёт и в сделки НЕ входит (даже виртуально) —
+# отработка штормов = storm_report.py (%-хода, без стопов/WIN-LOSS). Все TG-сообщения
+# вирт. депозита выключены; CLI-анализ (main) продолжает работать руками.
+LIVE_ENABLED = False
 LIVE_SINCE = "2026-06-02"   # с какой даты считаем (честное окно без look-ahead)
 LIVE_DEPOSIT = 1000.0       # виртуальный депозит, $
 LIVE_RISK_FRAC = 0.10       # маржа на сделку = доля депозита
@@ -142,6 +146,8 @@ def deposit_line() -> str:
     НИКОГДА не бросает (return '' при любой ошибке) — не должна ронять алерт.
     Кэш 2 мин, т.к. алертов может быть много."""
     try:
+        if not LIVE_ENABLED:
+            return ""
         now = time.time()
         if _CACHE["line"] and (now - _CACHE["ts"] < _CACHE_TTL):
             return _CACHE["line"]
@@ -216,6 +222,9 @@ def notify_resolutions():
     try:
         all_rows = list(csv.DictReader(open(RESOLVED_CSV)))
         cur = len(all_rows)
+        if not LIVE_ENABLED:  # выключено: двигаем счётчик строк, чтобы ре-включение не спамило историей
+            _LAST_ROW_FILE.write_text(str(cur))
+            return
         prev = 0
         if _LAST_ROW_FILE.exists():
             try:

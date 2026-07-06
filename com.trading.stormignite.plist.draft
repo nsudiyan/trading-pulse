@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- ЧЕРНОВИК (не подключён). Резидентный IGNITE-надзор. Установка по приёмке:
+     cp com.trading.stormignite.plist.draft ~/Library/LaunchAgents/com.trading.stormignite.plist
+     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.trading.stormignite.plist
+     -u: резидентный демон печатает редко — без него блочный буфер stdout
+     задерживает строки в storm_ignite.log на часы и теряет их при kill (аудит 2026-07-01). -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.trading.stormignite</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/python3</string>
+    <string>-u</string>
+    <string>/Users/nikitasudian/trading/storm_radar.py</string>
+    <string>--ignite-loop</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/nikitasudian/trading</string>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/Users/nikitasudian/trading/storm_ignite.log</string>
+  <key>StandardErrorPath</key><string>/Users/nikitasudian/trading/storm_ignite_error.log</string>
+  <key>RunAtLoad</key><true/>
+</dict></plist>

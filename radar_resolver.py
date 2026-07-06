@@ -51,11 +51,16 @@ FIELDS = ["ts_utc", "symbol", "vol_ratio", "sent", "major", "cascade",
 
 
 def fetch_1m(symbol: str, start_ms: int, end_ms: int) -> list[tuple]:
-    """1м свечи (ts, high, low) по возрастанию; окно 6.5ч < лимита 1000 — без пагинации."""
+    """1м свечи (ts, high, low) по возрастанию; окно 6.5ч < лимита 1000 — без пагинации.
+    retCode != 0 — RAISE (транзиентная ошибка → «отложен», НЕ необратимый skip
+    через 48ч); пустой list при retCode=0 = данных честно нет (ревью 2026-07-06 #6)."""
     url = (f"{BYBIT}?category=linear&symbol={symbol}&interval=1"
            f"&start={start_ms}&end={end_ms}&limit=1000")
     with urllib.request.urlopen(url, timeout=15) as r:
-        rows = json.load(r).get("result", {}).get("list") or []
+        data = json.load(r)
+    if data.get("retCode") != 0:
+        raise RuntimeError(f"Bybit retCode={data.get('retCode')}: {data.get('retMsg')}")
+    rows = data.get("result", {}).get("list") or []
     return sorted((int(x[0]), float(x[2]), float(x[3])) for x in rows)
 
 

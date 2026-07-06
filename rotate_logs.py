@@ -44,6 +44,10 @@ LAUNCHD_RESIDENT_LOGS = {
     "bot.log":                 "com.trading.bot",
     "bot_error.log":           "com.trading.bot",
     "dashboard_server.log":    "com.trading.dashboard",
+    "storm_ignite.log":        "com.trading.stormignite",
+    "storm_ignite_error.log":  "com.trading.stormignite",
+    "rose_watch.log":          "com.trading.rosewatch",
+    "rose_watch_error.log":    "com.trading.rosewatch",
 }
 
 

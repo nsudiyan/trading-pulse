@@ -48,6 +48,17 @@ data/
 charts/
 tv_charts/
 
+# ── Дашборд «Пульс»: стейты/данные — НЕ код (rose_history = посты платного
+#    канала, в публичный снапшот нельзя; фид/леджер/кэши — runtime) ──
+dashboard/rose_history.json
+dashboard/signals_ledger.json
+dashboard/channel_outcomes.json
+dashboard/feed_push_state.json
+dashboard/side_study_rows*.json
+dashboard/site/feed.json
+dashboard/logs/
+dashboard/.vercel/
+
 # ── Сгенерированные данные анализа (код .py и доки .md остаются в git) ──
 dump_analysis/*.csv
 dump_analysis/*.json

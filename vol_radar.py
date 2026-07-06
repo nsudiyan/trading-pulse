@@ -23,7 +23,12 @@ BYBIT = "https://api.bybit.com/v5/market"
 COOLDOWN_PATH = Path(__file__).parent / "outcomes" / "radar_cooldown.json"
 HITS_PATH = Path(__file__).parent / "outcomes" / "radar_hits.csv"   # история алертов для просмотра графиков
 BUDGET_PATH = Path(__file__).parent / "outcomes" / "radar_budget.json"
-COOLDOWN_H = 4.0          # один символ не чаще раза в 4ч
+COOLDOWN_H = 4.0          # ДОСТАВЛЕННЫЙ символ — тишина 4ч
+UNSENT_COOLDOWN_MIN = 30  # НЕдоставленный детект — только CSV-дедуп эпизода (30м):
+                          # раньше недоставленный глушился на все 4ч и гига-спайк
+                          # VANRY-класса через полчаса пропадал (ревью 2026-07-06 #5).
+                          # cooldown-стейт хранит EXPIRY (не ts постановки);
+                          # старый формат мигрируется на лету (ts → ts+4ч).
 VOL_MULT = 5.0            # объём последнего бара >= 5.0× среднего (2026-07-02: 4→5, отбор лучших)
 PRICE_STILL_MAX = 1.0     # |изменение цены| <= 1% — цена ещё НЕ отреагировала (опережение)
 
@@ -33,6 +38,14 @@ CASCADE_N = 3             # >=3 спайков за один скан = каск
 CASCADE_COOLDOWN_H = 2.0  # каскад-дайджест не чаще раза в 2ч (шухер рынка — одно событие)
 SCAN_TOP = 1              # одиночных карточек за скан: только сильнейший спайк
 SINGLES_PER_DAY = 5       # дневной кап одиночных карточек (UTC-день); всё прочее -> CSV, sent=0
+
+# «Пробуждение» (2026-07-05, решение брата по разбору VANRY ×23.6 sent=0):
+# гига-спайк на альте — редкий класс (6 шт ≥15× за неделю), живёт ВНЕ капа
+# SINGLES_PER_DAY и вне топ-1: доставляется всегда, со своей пометкой.
+# Ретро: 6ч-критерий такие НЕ ловит (0/6 good — ход приходит через 12-35ч,
+# VANRY +52%/35ч) — это маяк «на карандаш», не скальп-сигнал.
+AWAKENING_MULT = 15.0     # порог гига-спайка
+AWAKENING_PER_DAY = 3     # защитный мини-кап (аномальный день); лог при срезе
 
 # Мажоры НЕ идут одиночными карточками (2026-07-02, резолв 246 хитов 29.06-02.07 по
 # 6ч-критерию брата MFE>=5% при MAE<=1.5%: мажоры 3/96 хороших vs альты-одиночки 19/63).
@@ -50,11 +63,13 @@ MAJOR_SYMBOLS = frozenset({
 def detect_spike(klines: list, vol_mult: float = VOL_MULT,
                  price_still_max: float = PRICE_STILL_MAX) -> dict | None:
     """Чистое ядро (тестируемо). klines: [[ts,o,h,l,c,v],...] возр. времени, нужно >= 12 баров.
-    klines[-1] — текущий НЕЗАКРЫТЫЙ бар (Bybit отдаёт его последним), ИСКЛЮЧАЕТСЯ из расчёта —
-    та же конвенция, что в vol_core.py (pos=n-2), иначе partial-bar объём/цена сравниваются
-    с full-bar средним/close и дают нестабильный, несравнимый между сканами результат (аудит
-    2026-07-01: LA3/LA4-класс дефект). "Текущий" для расчёта — последний ЗАКРЫТЫЙ бар (pos).
-    Возвращает {vol_ratio, price_chg_pct} если спайк на последнем закрытом баре, иначе None."""
+    klines[-1] — текущий НЕЗАКРЫТЫЙ бар (Bybit отдаёт его последним). Его ОБЪЁМ исключается
+    из расчёта — partial-bar объём несравним с full-bar средним, ratio плавает между сканами
+    (аудит 2026-07-01: LA3/LA4-класс дефект); "текущий" для объёма — последний ЗАКРЫТЫЙ (pos).
+    А вот ЦЕНА незакрытого бара (close = текущая цена) УЧАСТВУЕТ в guard «цена ещё стоит»:
+    без неё монета, уже улетевшая на live-баре, шла как «не отреагировавшая» и алерт
+    опаздывал ещё до отправки (ревью 2026-07-06 #8).
+    Возвращает {vol_ratio, price_chg_pct, live_chg_pct} при спайке, иначе None."""
     if len(klines) < 12:
         return None
     vols = [b[5] for b in klines]
@@ -64,8 +79,15 @@ def detect_spike(klines: list, vol_mult: float = VOL_MULT,
         return None
     vol_ratio = vols[pos] / avg
     price_chg = (klines[pos][4] - klines[pos - 1][4]) / klines[pos - 1][4] * 100.0
-    if vol_ratio >= vol_mult and abs(price_chg) <= price_still_max:
-        return {"vol_ratio": round(vol_ratio, 2), "price_chg_pct": round(price_chg, 2)}
+    # «цена ещё НЕ отреагировала» — проверяем и НА МОМЕНТ СКАНА: объём live-бара
+    # в ratio не участвует (нестабилен, LA3/LA4), но ЦЕНА live-бара обязана —
+    # иначе монета, уже улетевшая +5% на текущем баре, идёт как «стоячая»
+    # и алерт опоздал ещё до отправки (ревью 2026-07-06 #8)
+    live_chg = (klines[-1][4] - klines[pos][4]) / klines[pos][4] * 100.0
+    if (vol_ratio >= vol_mult and abs(price_chg) <= price_still_max
+            and abs(live_chg) <= price_still_max):
+        return {"vol_ratio": round(vol_ratio, 2), "price_chg_pct": round(price_chg, 2),
+                "live_chg_pct": round(live_chg, 2)}
     return None
 
 
@@ -174,6 +196,28 @@ def select_hits(hits: list[dict], cascade_n: int = CASCADE_N,
     return "singles", alts[:top_n]
 
 
+def select_awakenings(hits: list[dict], majors: frozenset = MAJOR_SYMBOLS,
+                      mult: float = AWAKENING_MULT) -> list[dict]:
+    """Чистый отбор «пробуждений»: гига-спайк ≥mult на АЛЬТЕ (мажоры — рыночный
+    чих, не пробуждение неликвида). Сортировка по силе."""
+    return sorted((h for h in hits
+                   if h["vol_ratio"] >= mult and h["symbol"] not in majors),
+                  key=lambda h: -h["vol_ratio"])
+
+
+def build_awakening_message(h: dict) -> str:
+    return "\n".join([
+        f"🌅 <b>ПРОБУЖДЕНИЕ · {h['symbol']}</b>",
+        "",
+        f"Гига-объём <b>{h['vol_ratio']:.1f}×</b> нормы при цене "
+        f"{h['price_chg_pct']:+.1f}%/30м — кто-то зашевелил мёртвую монету.",
+        "",
+        "📚 <i>Справка: класс VANRY (×23.6 → +52% через 35ч). Быстрый 6ч-ход "
+        "такие дают редко (0/6 в ретро) — это маяк НА КАРАНДАШ на 1-2 суток, "
+        "не сигнал входа. Дальше монету поведут storm/pump-надзор.</i>",
+    ])
+
+
 def build_cascade_message(hits: list[dict]) -> str:
     top, rest = hits[:5], max(0, len(hits) - 5)
     lines = [f"🌊 <b>РЫНОЧНЫЙ КАСКАД ОБЪЁМОВ</b> — {len(hits)} монет ≥{VOL_MULT:g}× разом",
@@ -191,7 +235,10 @@ def run(dry_run: bool = False, top: int | None = 150, scan_interval: str = "30")
         print("[radar] нет символов"); return
     cd = _load_cooldown()
     now = time.time()
-    cd = {k: v for k, v in cd.items() if now - v < COOLDOWN_H * 3600}  # чистим протухшие
+    # миграция старого формата (значение = ts постановки, всегда в прошлом) →
+    # expiry по старому правилу 4ч; новый формат (expiry) всегда в будущем
+    cd = {k: (v if v > now else v + COOLDOWN_H * 3600) for k, v in cd.items()}
+    cd = {k: v for k, v in cd.items() if v > now}  # чистим истёкшие
 
     hits = []                                  # проход 1: собрать ВСЕ спайки скана
     for sym in syms:
@@ -213,6 +260,39 @@ def run(dry_run: bool = False, top: int | None = 150, scan_interval: str = "30")
         budget = {"date": today, "singles": 0, "cascade_ts": budget.get("cascade_ts", 0.0)}
 
     sent_syms: set[str] = set()
+
+    # «Пробуждения» ≥15×: вне капа и вне топ-1, даже при каскаде (2026-07-05).
+    awakenings = select_awakenings(hits)
+    if awakenings:
+        aw_room = max(0, AWAKENING_PER_DAY - int(budget.get("awakenings", 0)))
+        if len(awakenings) > aw_room:
+            print(f"[radar] пробуждений {len(awakenings)}, мини-кап {AWAKENING_PER_DAY}/день — "
+                  f"сверх капа пойдут обычным одиночным путём: "
+                  f"{[h['symbol'] for h in awakenings[aw_room:]]}")
+        delivered_awk: set[str] = set()
+        for h in awakenings[:aw_room]:
+            if dry_run:
+                import re as _re
+                print(f"\n{'='*50}\n[RADAR AWAKENING]\n"
+                      f"{_re.sub(r'<[^>]+>', '', build_awakening_message(h))}")
+                delivered_awk.add(h["symbol"])
+                continue
+            try:
+                from telegram_alerts import _send, load_config
+                cfg = load_config()
+                if _send(cfg["bot_token"], str(cfg["chat_id"]),
+                         build_awakening_message(h), reply_markup=radar_buttons(h["symbol"])):
+                    budget["awakenings"] = int(budget.get("awakenings", 0)) + 1
+                    sent_syms.add(h["symbol"])
+                    delivered_awk.add(h["symbol"])
+            except Exception as e:
+                print(f"[radar] awakening send failed: {e}")
+        # дублировать одиночной карточкой не надо ТОЛЬКО доставленное как
+        # пробуждение; недоставленное (сверх мини-капа / фейл TG) остаётся
+        # кандидатом обычного пути — иначе гига-спайк пропадает совсем,
+        # хотя дневной бюджет одиночных свободен (ревью 2026-07-06 #4)
+        chosen = [h for h in chosen if h["symbol"] not in delivered_awk]
+
     if dry_run:
         import re
         for h in chosen:
@@ -249,7 +329,10 @@ def run(dry_run: bool = False, top: int | None = 150, scan_interval: str = "30")
             print(f"[radar] send failed: {e}")
 
     for h in hits:                             # история пишется ВСЯ; sent = факт доставки
-        cd[h["symbol"]] = now                  # кулдаун всем детектам — CSV без дублей раз в 5 мин
+        # expiry: доставленный молчит 4ч; недоставленный — 30м CSV-дедупа,
+        # потом снова кандидат (шанс на доставку/пробуждение не сгорает)
+        cd[h["symbol"]] = now + (COOLDOWN_H * 3600 if h["symbol"] in sent_syms
+                                 else UNSENT_COOLDOWN_MIN * 60)
         _log_hit(h["symbol"], {"vol_ratio": h["vol_ratio"], "price_chg_pct": h["price_chg_pct"]},
                  h["price"], sent=h["symbol"] in sent_syms)
     if not dry_run:
@@ -270,15 +353,19 @@ if __name__ == "__main__":
         flat = [[i, 100, 101, 99, 100, 50] for i in range(12)]
         assert detect_spike(flat) is None
         # последний ЗАКРЫТЫЙ бар (индекс -2) 6× объём, цена стоит → спайк.
-        # Последний элемент (-1, незакрытый) — мусорные значения, не должны влиять.
+        # Незакрытый хвост: ОБЪЁМ дикий (игнорируется), цена рядом (участвует и тиха).
         spike = ([[i, 100, 101, 99, 100, 50] for i in range(10)]
-                 + [[10, 100, 100.5, 99.5, 100.3, 300], [11, -1, -1, -1, -1, -1]])
+                 + [[10, 100, 100.5, 99.5, 100.3, 300], [11, 100.3, 100.6, 100.1, 100.4, 999999]])
         d = detect_spike(spike)
         assert d and d["vol_ratio"] >= 2.5 and abs(d["price_chg_pct"]) <= 1.0, d
         # спайк объёма НО цена уже улетела (+3%) в закрытом баре → НЕ опережающий, отбраковка
         moved = ([[i, 100, 101, 99, 100, 50] for i in range(10)]
-                 + [[10, 100, 104, 100, 103, 300], [11, -1, -1, -1, -1, -1]])
+                 + [[10, 100, 104, 100, 103, 300], [11, 103, 103.5, 102.5, 103.1, 10]])
         assert detect_spike(moved) is None, "цена двинулась >1% — не опережающий спайк"
+        # закрытый бар тихий, но LIVE-цена уже улетела +5% → отбраковка (ревью #8)
+        live_ran = ([[i, 100, 101, 99, 100, 50] for i in range(10)]
+                    + [[10, 100, 100.5, 99.5, 100.3, 300], [11, 100.3, 105.5, 100.2, 105.3, 10]])
+        assert detect_spike(live_ran) is None, "live-цена улетела — алерт уже опоздал"
         # незакрытый (последний) бар с диким объёмом/ценой ДОЛЖЕН игнорироваться целиком
         ignore_unclosed = ([[i, 100, 101, 99, 100, 50] for i in range(11)]
                             + [[11, 100, 500, 10, 490, 999999]])

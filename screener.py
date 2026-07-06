@@ -6304,6 +6304,26 @@ def _passes_setup_tg_filter(r: dict) -> bool:
     setup = r.get("setup", "")
     score = r["score"]
 
+    # ── PumpWatchGate (2026-07-03, решение брата; кейс TAIKO 02.07: «squeeze
+    #    ЛОНГ» пришёл после слома плато, на трупе после −75%). Монета под живым
+    #    pump-эпизодом (storm_radar/pump_watch: вертикаль→распределение→слом) —
+    #    ЛОНГИ мьютим, шорты не трогаем. Fail-open: pump_watch недоступен/стейт
+    #    не читается → гейт пропускает. Направление — идиома проекта
+    #    (setup_dir; fallback как в 4873/6983).
+    _pw_dir = r.get("setup_dir") or ("short" if setup == "short_dist" else "long")
+    if _pw_dir == "long":
+        try:
+            from pump_watch import long_mute_reason as _pw_reason
+            _pw_why = _pw_reason(r.get("symbol", "?"))
+        except Exception:
+            _pw_why = None
+        if _pw_why:
+            print(f"[PumpWatchGate] {r.get('symbol', '?')} BLOCK: лонг под "
+                  f"pump-надзором ({_pw_why})")
+            if _RT_AVAILABLE:
+                _rt.log_reject(r, "PumpWatchGate", _pw_why)
+            return False
+
     if setup == "range_sweep":
         # Disabled: WR=25%, avg loss −21.89%, and sweep events expire before batch cron fires.
         # sweep_watcher.py handles real-time detection.
@@ -6326,6 +6346,16 @@ def _passes_setup_tg_filter(r: dict) -> bool:
     #   Gate B: HTF bull trend intact + no structural break = hard block
     #   Gate C: require ≥1 explicit distribution/exhaustion confirm
     if setup == "short_dist":
+        # ShortDistMute (2026-07-05, решение брата по месяцу честного окна):
+        # n=509, WR24 34%, avgR −0.15 — половина потока алертов при стабильном
+        # минусе. В TG НЕ шлём; детекция, pending/resolved (save_pending берёт
+        # filtered ДО этого фильтра) и контрфакты живут как раньше.
+        # Вернуть: удалить этот блок; DistGate-цепочка ниже сохранена нетронутой.
+        if _RT_AVAILABLE:
+            _rt.log_reject(r, "ShortDistMute",
+                           f"muted_by_owner_2026-07-05,score={score}")
+        return False
+
         _sd_oi   = r.get("oi_regime",  "stable")
         _sd_fund = r.get("fund_regime", "neutral")
         _sd_chch = r.get("choch_1h",   "—")

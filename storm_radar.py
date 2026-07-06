@@ -232,7 +232,8 @@ def fetch_tickers() -> dict:
                 return 0.0
 
         out[sym] = {"last": f("lastPrice"), "oi": f("openInterest"),
-                    "funding": f("fundingRate"), "turnover": f("turnover24h")}
+                    "funding": f("fundingRate"), "turnover": f("turnover24h"),
+                    "chg24h": f("price24hPcnt") * 100.0}
     return out
 
 
@@ -354,6 +355,12 @@ def build_ignite_message(symbol: str, side: str, entry: dict, pace: float,
                   f"   POC  <code>{fmt_price(vp['poc'])}</code>",
                   f"   VAH  <code>{fmt_price(vp['vah'])}</code>",
                   f"   VAL  <code>{fmt_price(vp['val'])}</code>"]
+    if side == "down":
+        # форвард-справка по просьбе брата «урезать слитые» (2026-07-06):
+        # цифры обновлять при следующем большом разрезе, не выдумывать
+        lines += ["", "⚠️ <i>Справка (форвард 04–06.07, n=33): пробой ВНИЗ доигрывается "
+                      "в −2%+ лишь у 6% монет, а 30% выкупаются против на +2%+ — "
+                      "самая сливная категория наших сигналов.</i>"]
     lines += ["", f'📈 <a href="{mexc_tv_link(symbol)}">График MEXC-перп (TradingView)</a>',
               "", "<i>Сторона пробоя — факт, не прогноз. Направление и вход решаешь ты.</i>"]
     return "\n".join(lines)
@@ -478,6 +485,14 @@ def scan(dry_run: bool = False, top: int = 150):
     print(f"[watch] скан: {len(uni)} монет, взведено {len(new_wl)} (+{len(added)} новых, "
           f"-{len(dropped)} дропов), klines-фейлов {fails}"
           + (" [dry-run: стейт не записан]" if dry_run else ""))
+
+    # pump_watch: надзор «после вертикали» (сквиз → распределение → слом плато).
+    # Fail-open: надстройка не имеет права ронять боевой WATCH (как Obsidian, P0-2).
+    try:
+        from pump_watch import pump_watch_pass
+        pump_watch_pass(tickers, hist, now, dry_run=dry_run)
+    except Exception as e:
+        print(f"[watch] pump_watch pass failed (WATCH не затронут): {e}")
 
 
 # ============================== СТУПЕНЬ IGNITE ==============================

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- ЧЕРНОВИК (не подключён). Установка по приёмке:
+     cp com.trading.stormwatch.plist.draft ~/Library/LaunchAgents/com.trading.stormwatch.plist
+     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.trading.stormwatch.plist -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.trading.stormwatch</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/python3</string>
+    <string>-u</string>
+    <string>/Users/nikitasudian/trading/storm_radar.py</string>
+    <string>--scan</string>
+    <string>--top</string><string>150</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/nikitasudian/trading</string>
+  <key>StartInterval</key><integer>600</integer>
+  <key>StandardOutPath</key><string>/Users/nikitasudian/trading/storm_watch.log</string>
+  <key>StandardErrorPath</key><string>/Users/nikitasudian/trading/storm_watch_error.log</string>
+  <key>RunAtLoad</key><true/>
+</dict></plist>
