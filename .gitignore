@@ -100,3 +100,6 @@ carry/*.csv
 calibration/.va_last_rowcount
 backups/
 archive/dead_2026-06-29/
+dashboard/push_subs.json
+dashboard/push_vapid.json
+dashboard/combo_push_seen.json

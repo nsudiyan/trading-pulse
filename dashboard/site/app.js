@@ -47,6 +47,52 @@ const state = {
   comboPeak: new Map(),   // symbol → максимальный живой % от базиса поста за сессию
 };
 
+/* ── Web Push: уведомления о новых кандидатах в зонах входа ──
+   Пуши шлёт локальный демон с мака (pywebpush не нужен — npx web-push);
+   тут только подписка. iOS: работает ТОЛЬКО из PWA с экрана «Домой». */
+const VAPID_PUB = "BGld5u9OcP_jL-TN8SvD4_krPxk1X16ZwHcOHwMoWZMxDSGcZnDf_lOMdIvD32pk6lWwCAdLIb-eRsDWo4VKnYw";
+function b64ToU8(s) {
+  const pad = "=".repeat((4 - (s.length % 4)) % 4);
+  const raw = atob((s + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+async function initPush() {
+  if (!("serviceWorker" in navigator)) return;
+  const reg = await navigator.serviceWorker.register("sw.js").catch(() => null);
+  if (!reg || !("PushManager" in window)) return;
+  const btn = $("push-btn");
+  if (!btn) return;
+  btn.hidden = false;
+  const sub = await reg.pushManager.getSubscription();
+  if (sub && Notification.permission === "granted") btn.textContent = "🔔✓";
+  btn.onclick = async () => {
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") { btn.textContent = "🔕"; return; }
+      const s = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: b64ToU8(VAPID_PUB),
+      });
+      const code = JSON.stringify(s.toJSON());
+      btn.textContent = "🔔✓";
+      try { await navigator.clipboard.writeText(code); } catch (_) {}
+      // одноразовый шаг: код подписки надо передать демону на маке
+      let box = $("push-code");
+      if (!box) {
+        box = document.createElement("div");
+        box.id = "push-code";
+        box.innerHTML = `<b>Код подписки скопирован в буфер</b> — пришли его Клоду одним сообщением, он включит доставку. <textarea readonly rows="3"></textarea>`;
+        document.querySelector("header").after(box);
+      }
+      box.querySelector("textarea").value = code;
+    } catch (e) {
+      btn.textContent = "🔕";
+      alert("Не вышло подписаться: " + e.message + (/(iPhone|iPad)/.test(navigator.userAgent) ? "\n\nНа iOS: сайт должен быть добавлен на экран «Домой» и открыт оттуда." : ""));
+    }
+  };
+}
+initPush();
+
 /* ── звёздочки: пометка «просмотрел/просмотрю» на МОНЕТЕ, живёт в браузере ── */
 function starHtml(sym) {
   const on = state.starred.has(sym);

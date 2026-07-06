@@ -5,7 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Пульс — трейдинг-дашборд</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
-<link rel="stylesheet" href="style.css?v=25">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="style.css?v=26">
 </head>
 <body>
 <div class="wrap">
@@ -17,6 +21,7 @@
     <span id="ws-status"><span class="dot"></span>live-цены…</span>
     <span class="hdr-tick" id="btc-tick"></span>
     <span class="hdr-tick" id="eth-tick"></span>
+    <button id="push-btn" class="pushbtn" hidden title="уведомления о новых кандидатах в зонах входа">🔔</button>
     <span class="hdr-tick" id="bias-score" title="наклон стороны: угадано / всего экзаменованных движений (форвард, все версии)"></span>
   </div>
 </header>
@@ -156,6 +161,6 @@
 
 </div>
 <div class="tooltip" id="tooltip"></div>
-<script src="app.js?v=25"></script>
+<script src="app.js?v=26"></script>
 </body>
 </html>

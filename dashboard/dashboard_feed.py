@@ -544,6 +544,20 @@ def log_entry_candidates(live: list[dict]) -> None:
             ENTRY_SEEN_PATH.write_text(json.dumps(sorted(seen)[-3000:]))
             print(f"[feed] entry-кандидатов залогировано: {len(new_rows)}: "
                   f"{[r['symbol'] for r in new_rows]}")
+            # 🔔 пуш на устройства (волну ≥5 монет одним сканом не шлём — шум)
+            try:
+                from push_send import send_push
+                real = [r for r in new_rows if r["kind"] == "awakening"] \
+                    if len(new_rows) >= 5 else new_rows
+                for r in real[:3]:
+                    awk = r["kind"] == "awakening"
+                    send_push(
+                        f"🎯 {r['symbol']}" + (" 🌅" if awk else "") + " — вход имеет смысл",
+                        f"{'пробуждение ×' + str(r['vol_ratio']) if awk else 'радар-альт ⬆'} · "
+                        f"live {r['last_pct']:+.1f}% · просадка {r['dd_pct']:+.1f}% · ЛОНГ, план на карточке",
+                        tag=f"entry-{r['symbol']}")
+            except Exception as e:
+                print(f"[push] entry пропущен: {e}")
     except Exception as e:
         print(f"[feed] entry-лог пропущен: {e}")
 
@@ -692,15 +706,38 @@ def sweep_block(live: list[dict]) -> list[dict]:
         return []
 
 
+def _push_new_combos(combos: list[dict]) -> None:
+    """🔔 пуш при появлении НОВОЙ связки (дедуп combo_push_seen.json)."""
+    try:
+        from push_send import send_push
+        seen_p = DIR / "combo_push_seen.json"
+        seen = set(jload(seen_p, []))
+        for c in combos:
+            key = f"{c['symbol']}|{c['post_ts'][:16]}"
+            if key in seen:
+                continue
+            seen.add(key)
+            send_push(
+                f"⚡ СВЯЗКА {c['symbol']} — пробуждение × Rose",
+                f"🌅 ×{c['awake_ratio']} было ДО поста · {c.get('channel') or 'rose'} "
+                f"{c.get('direction') or ''} · такие посты ×2 лучше — окно входа открыто",
+                tag=f"combo-{c['symbol']}")
+        seen_p.write_text(json.dumps(sorted(seen)[-500:]))
+    except Exception as e:
+        print(f"[push] combos пропущен: {e}")
+
+
 def build_feed() -> dict:
     live = collect_live_signals()
     _enrich_bias(live)
     log_entry_candidates(live)   # форензика шорт-листа «вход сейчас»
+    combos = combos_block()
+    _push_new_combos(combos)     # 🔔 новые связки — пушем на устройства
     ledger = update_ledger(live)
     return {
         "pump_watch": pump_watch_block(),
         "pump_muted": pump_muted_block(),
-        "combos": combos_block(),
+        "combos": combos,
         "sweeps": sweep_block(live),
         "bias_accuracy": bias_accuracy(ledger),
         "generated_at": utcnow().isoformat(),

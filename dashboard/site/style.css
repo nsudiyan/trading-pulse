@@ -191,6 +191,23 @@ td .star { font-size: 14px; }
 .biastag.up.strong { background: rgba(12, 163, 12, 0.16); font-weight: 700; }
 .biastag.down.strong { background: rgba(208, 59, 59, 0.16); font-weight: 700; }
 
+/* 🔔 подписка на пуши зон входа */
+.pushbtn {
+  background: var(--surface-2); color: var(--ink-2);
+  border: 1px solid var(--border); border-radius: 8px;
+  font-size: 13px; padding: 3px 9px; cursor: pointer;
+}
+.pushbtn:hover { border-color: var(--up); }
+#push-code {
+  margin-top: 12px; padding: 12px; border: 1px dashed var(--warn);
+  border-radius: 10px; font-size: 12px;
+}
+#push-code textarea {
+  width: 100%; margin-top: 8px; background: var(--surface-2);
+  color: var(--ink-2); border: 1px solid var(--border); border-radius: 6px;
+  font: 11px var(--mono); padding: 6px;
+}
+
 /* ═══ ЗОНЫ ВХОДА — единственные два места, откуда берутся сделки ═══ */
 #sec-entry {
   position: relative;
