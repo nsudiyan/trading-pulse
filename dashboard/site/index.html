@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Пульс — трейдинг-дашборд</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
-<link rel="stylesheet" href="style.css?v=24">
+<link rel="stylesheet" href="style.css?v=25">
 </head>
 <body>
 <div class="wrap">
@@ -21,16 +21,6 @@
   </div>
 </header>
 
-<section id="sec-live">
-  <div class="sec-head">
-    <h2>Живые сигналы</h2>
-    <span class="sub">отработка тикает в реальном времени с Bybit · % в сторону сигнала от цены на момент алерта · ⬆⬇ = наклон структуры (OI/funding/pump-стадия), не торговый прогноз</span>
-    <span class="sub" id="bias-acc" style="font-family:var(--mono)"></span>
-  </div>
-  <div class="filters" id="live-filters"></div>
-  <div class="cards" id="live-cards"><div class="empty">Загрузка…</div></div>
-</section>
-
 <section id="sec-entry">
   <div class="sec-head">
     <h2>🎯 Вход имеет смысл сейчас</h2>
@@ -42,6 +32,16 @@
     <span class="sub">радар-хит ≥5× за ≤72ч ДО поста Rose (такие посты отрабатывают ×2 лучше, n=5: VANRY +146%) · висит, только пока вход ещё осмыслен — снимается САМА, как только ход случился (пик от поста ≥8%), пост провален (ниже −3%), раздача или 48ч · лид, не гарантия</span>
   </div>
   <div class="cards" id="combo-cards"><div class="empty">Живых связок нет.</div></div>
+</section>
+
+<section id="sec-live">
+  <div class="sec-head">
+    <h2>Живые сигналы</h2>
+    <span class="sub">отработка тикает в реальном времени с Bybit · % в сторону сигнала от цены на момент алерта · ⬆⬇ = наклон структуры (OI/funding/pump-стадия), не торговый прогноз</span>
+    <span class="sub" id="bias-acc" style="font-family:var(--mono)"></span>
+  </div>
+  <div class="filters" id="live-filters"></div>
+  <div class="cards" id="live-cards"><div class="empty">Загрузка…</div></div>
 </section>
 
 <section id="sec-pump">
@@ -156,6 +156,6 @@
 
 </div>
 <div class="tooltip" id="tooltip"></div>
-<script src="app.js?v=24"></script>
+<script src="app.js?v=25"></script>
 </body>
 </html>

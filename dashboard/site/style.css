@@ -191,8 +191,37 @@ td .star { font-size: 14px; }
 .biastag.up.strong { background: rgba(12, 163, 12, 0.16); font-weight: 700; }
 .biastag.down.strong { background: rgba(208, 59, 59, 0.16); font-weight: 700; }
 
+/* ═══ ЗОНЫ ВХОДА — единственные два места, откуда берутся сделки ═══ */
+#sec-entry {
+  position: relative;
+  margin-top: 26px;
+  padding: 20px 18px 18px;
+  border-radius: 16px;
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--surface), var(--surface)) padding-box,
+    linear-gradient(120deg, rgba(12, 163, 12, 0.85), rgba(12, 163, 12, 0.25) 45%,
+                    rgba(250, 178, 25, 0.25) 60%, rgba(250, 178, 25, 0.85)) border-box;
+  box-shadow: 0 0 42px rgba(12, 163, 12, 0.09), inset 0 0 60px rgba(12, 163, 12, 0.03);
+}
+#sec-entry::before {
+  content: "⚡ ЗОНЫ ВХОДА — сделки берутся ТОЛЬКО отсюда";
+  position: absolute; top: -9px; left: 16px;
+  padding: 1px 10px; border-radius: 6px;
+  background: var(--page);
+  border: 1px solid rgba(12, 163, 12, 0.5);
+  color: var(--up);
+  font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+}
+#sec-entry .sec-head h2 { color: var(--ink); }
+#sec-entry .combo-head h2 { color: var(--warn); }
+#sec-entry .empty {
+  border: 1px dashed var(--grid); border-radius: 10px;
+  padding: 14px; text-align: center;
+}
+
 /* «Вход имеет смысл сейчас» — компактные карточки-кандидаты */
-.card.entry { min-height: 92px; border-color: rgba(12, 163, 12, 0.35); }
+.card.entry { min-height: 92px; border-color: rgba(12, 163, 12, 0.35); background: var(--surface-2); }
 .card.entry .big { font-size: 21px; }
 .card.entry.awk { border-color: rgba(250, 178, 25, 0.55); }
 
