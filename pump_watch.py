@@ -234,6 +234,67 @@ def build_break_msg(sym: str, st: dict, last: float, funding: float) -> str:
     ])
 
 
+# ============================== БЫСТРЫЙ СЛОМ (ignite-цикл, ~12с) ==============================
+
+IGNITE_BREAKS_PATH = OUT / "pump_ignite_breaks.json"
+
+
+def live_break_pass(tickers: dict, dry_run: bool = False,
+                    mem_seen: set | None = None) -> None:
+    """Вызывается из ignite_loop (12с): слом плато ловим за секунды, не за
+    10-минутный WATCH-скан (на TAIKO лаг стоил пары %% хода; просьба брата
+    2026-07-06). ВАЖНО про гонку: стейт эпизодов пишет ТОЛЬКО WATCH-скан;
+    мы здесь read-only + своя очередь IGNITE_BREAKS_PATH — pump_watch_pass
+    подхватит её и выставит break_sent без повторной отправки. Микроокно
+    двойного алерта (скан и ignite в одну секунду) — теоретическое, дубль
+    сообщения не страшен. Fail-open снаружи (ignite_loop оборачивает)."""
+    if not STATE_PATH.exists():
+        return
+    from storm_radar import log_stage, send_tg
+    from radar import radar_buttons
+    state = atomic_json_read(STATE_PATH, default={}) or {}
+    if not state:
+        return
+    queue = {} if dry_run else (atomic_json_read(IGNITE_BREAKS_PATH, default={}) or {})
+    now = time.time()
+    for sym, st in state.items():
+        if st.get("break_sent") or not st.get("plateau_low"):
+            continue
+        if (now - st.get("peak_ts", now)) < PLATEAU_MIN_AGE_MIN * 60:
+            continue  # плато не вызрело — те же правила, что у медленного пути
+        if dry_run and mem_seen is not None and sym in mem_seen:
+            continue
+        q = queue.get(sym)
+        if q and q.get("ts", 0) > st.get("detected_ts", 0):
+            continue  # уже слали для этого эпизода
+        t = tickers.get(sym)
+        last = (t or {}).get("last") or 0.0
+        if last <= 0 or last >= st["plateau_low"] * (1.0 - BREAK_TOL):
+            continue
+        msg = build_break_msg(sym, st, last, (t or {}).get("funding", 0.0))
+        if dry_run:
+            print(f"[pump][ignite-dry] BREAK {sym}: last {last} < plateau "
+                  f"{st['plateau_low']}")
+            if mem_seen is not None:
+                mem_seen.add(sym)
+            continue
+        sent = send_tg(msg, radar_buttons(sym))
+        # очередь ПЕРЕД log_stage (как кулдаун ignite): kill в окне не даёт дублей
+        atomic_json_update(
+            IGNITE_BREAKS_PATH,
+            lambda d, s=sym: {**{k: v for k, v in (d or {}).items()
+                                 if now - v.get("ts", 0) < WATCH_TTL_H * 3600},
+                              s: {"ts": now, "price": last,
+                                  "plateau": st["plateau_low"]}},
+            default={})
+        log_stage(sym, "pump_break", last,
+                  {"plateau_low": st["plateau_low"], "peak": st.get("peak"),
+                   "off_peak_pct": round((st["peak"] - last) / st["peak"] * 100, 1)
+                   if st.get("peak") else None,
+                   "src": "ignite"}, sent=sent)
+        print(f"[pump] ignite-BREAK {sym}: {last} < {st['plateau_low']} (sent={sent})")
+
+
 # ============================== ПРОХОД ==============================
 
 def pump_watch_pass(tickers: dict, oi_hist: dict, now: float,
@@ -247,6 +308,16 @@ def pump_watch_pass(tickers: dict, oi_hist: dict, now: float,
 
     state = atomic_json_read(STATE_PATH, default={}) or {}
     changed = False
+
+    # ── подхват очереди ignite-сломов: break уже ДОСТАВЛЕН быстрым циклом —
+    #    выставляем флаг без повторной отправки и без повторного log_stage ──
+    iq = atomic_json_read(IGNITE_BREAKS_PATH, default={}) or {}
+    for sym, q in iq.items():
+        st = state.get(sym)
+        if st and not st.get("break_sent") and q.get("ts", 0) > st.get("detected_ts", 0):
+            st["break_sent"] = True
+            changed = True
+            print(f"[pump] break {sym} подхвачен из ignite-очереди")
 
     # ── экспирия эпизодов ──
     for sym in [s for s, st in state.items()

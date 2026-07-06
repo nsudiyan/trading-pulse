@@ -516,7 +516,22 @@ def ignite_loop(dry_run: bool = False):
                 print(f"[ignite] watchlist обновлён: {len(wl)} монет: "
                       f"{', '.join(sorted(wl)) or '—'}")
             if not wl:
-                time.sleep(60)
+                # watchlist пуст, но живой pump-эпизод требует 12с-надзора слома
+                from pump_watch import STATE_PATH as _PW_STATE
+                _pump_alive = _PW_STATE.exists() and (
+                    atomic_json_read(_PW_STATE, default={}) or {})
+                if not _pump_alive:
+                    time.sleep(60)
+                    continue
+                try:
+                    from pump_watch import live_break_pass
+                    if not hasattr(ignite_loop, "_pump_seen"):
+                        ignite_loop._pump_seen = set()
+                    live_break_pass(fetch_tickers(), dry_run=dry_run,
+                                    mem_seen=ignite_loop._pump_seen)
+                except Exception as e:
+                    print(f"[ignite] pump live_break pass failed: {e}")
+                time.sleep(LOOP_SEC)
                 continue
 
             now = time.time()
@@ -573,6 +588,18 @@ def ignite_loop(dry_run: bool = False):
                 mem_cd = cd
             else:                                         # финальная чистка протухших
                 atomic_json_update(IGNITE_CD_PATH, lambda _: cd, default={})
+
+            # pump-надзор: слом плато на 12с-цикле (тикеры уже в руках).
+            # Fail-open: надстройка не роняет боевой ignite (просьба брата 2026-07-06).
+            try:
+                from pump_watch import live_break_pass
+                if not hasattr(ignite_loop, "_pump_seen"):
+                    ignite_loop._pump_seen = set()        # дедуп dry-run в памяти
+                live_break_pass(tickers, dry_run=dry_run,
+                                mem_seen=ignite_loop._pump_seen)
+            except Exception as e:
+                print(f"[ignite] pump live_break pass failed (ignite не затронут): {e}")
+
             time.sleep(LOOP_SEC)
         except KeyboardInterrupt:
             print("[ignite] остановлен")
