@@ -585,6 +585,52 @@ def bias_accuracy(ledger: dict) -> dict:
     return out
 
 
+def combos_block() -> list[dict]:
+    """⚡ Связки «пробуждение × Rose-пост × структура жива» (лид 2026-07-06,
+    n=5: посты с радар-хитом ≤72ч до отрабатывают ×2 лучше — VANRY +146%).
+    Показ, пока Rose-пост свежее 48ч. НЕ торговое правило — визуальная сводка."""
+    try:
+        from bias import RADAR_MAJORS
+        hits = []
+        with open(TRADING / "outcomes" / "radar_hits.csv", encoding="utf-8") as f:
+            for row in csv.reader(f):
+                try:
+                    ts = datetime.fromisoformat(row[0]).replace(tzinfo=timezone.utc)
+                    hits.append((row[1], ts, float(row[2])))
+                except Exception:
+                    continue
+        now = utcnow()
+        pumps = {p["symbol"]: p for p in pump_watch_block()}
+        out = []
+        for t in jload(DIR / "rose_history.json", {"tracks": []})["tracks"]:
+            post_ts = datetime.fromisoformat(t["anchor_ts"])
+            if (now - post_ts).total_seconds() > 48 * 3600:
+                continue
+            sym = t["symbol"]
+            if sym in RADAR_MAJORS:
+                continue
+            awake = [(ts, r) for s, ts, r in hits
+                     if s == sym and 0 <= (post_ts - ts).total_seconds() <= 72 * 3600 and r >= 5]
+            if not awake:
+                continue
+            p = pumps.get(sym)
+            stage_ok = not (p and (p.get("dist") or p.get("broke")))
+            aw_ts, aw_r = max(awake, key=lambda x: x[1])
+            o = t.get("outcome") or {}
+            out.append({
+                "symbol": sym, "direction": t.get("direction"),
+                "awake_ts": aw_ts.isoformat(), "awake_ratio": aw_r,
+                "post_ts": t["anchor_ts"], "channel": (t.get("alerts") or [{}])[-1].get("channel"),
+                "stage_ok": stage_ok,
+                "peak24_pct": o.get("peak24_pct"), "ret24_pct": o.get("ret24_pct"),
+            })
+        out.sort(key=lambda x: x["post_ts"], reverse=True)
+        return out
+    except Exception as e:
+        print(f"[feed] combos пропущен: {e}")
+        return []
+
+
 def build_feed() -> dict:
     live = collect_live_signals()
     _enrich_bias(live)
@@ -593,6 +639,7 @@ def build_feed() -> dict:
     return {
         "pump_watch": pump_watch_block(),
         "pump_muted": pump_muted_block(),
+        "combos": combos_block(),
         "bias_accuracy": bias_accuracy(ledger),
         "generated_at": utcnow().isoformat(),
         "honest_window_note": f"аналитика бота: только сигналы с {HONEST_WINDOW_START} (правило честного окна)",

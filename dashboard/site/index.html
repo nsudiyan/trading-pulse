@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Пульс — трейдинг-дашборд</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
-<link rel="stylesheet" href="style.css?v=16">
+<link rel="stylesheet" href="style.css?v=18">
 </head>
 <body>
 <div class="wrap">
@@ -29,6 +29,19 @@
   </div>
   <div class="filters" id="live-filters"></div>
   <div class="cards" id="live-cards"><div class="empty">Загрузка…</div></div>
+</section>
+
+<section id="sec-entry">
+  <div class="sec-head">
+    <h2>🎯 Вход имеет смысл сейчас</h2>
+    <span class="sub">механический отбор по правилам форварда (радар-альт ⬆ 86% ходунов вверх · свежесть ≤3ч · цена не убежала · без пилы · не в раздаче) — НЕ гарантия: ход случается у ~45% сигналов, стоп твой</span>
+  </div>
+  <div class="cards" id="entry-cards"><div class="empty">Кандидатов сейчас нет — правила строгие.</div></div>
+  <div class="sec-head" style="margin-top:14px">
+    <h2 style="font-size:12px">⚡ Связки: пробуждение → Rose-пост → структура жива</h2>
+    <span class="sub">радар-хит ≥5× за ≤72ч ДО поста Rose (такие посты отрабатывают ×2 лучше, n=5: VANRY +146%) · показ 48ч от поста · лид, не гарантия — TAIKO с пробуждением дал пик и −72%</span>
+  </div>
+  <div class="cards" id="combo-cards"><div class="empty">Живых связок нет.</div></div>
 </section>
 
 <section id="sec-pump">
@@ -143,6 +156,6 @@
 
 </div>
 <div class="tooltip" id="tooltip"></div>
-<script src="app.js?v=16"></script>
+<script src="app.js?v=18"></script>
 </body>
 </html>

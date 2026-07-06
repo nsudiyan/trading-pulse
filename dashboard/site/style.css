@@ -191,6 +191,16 @@ td .star { font-size: 14px; }
 .biastag.up.strong { background: rgba(12, 163, 12, 0.16); font-weight: 700; }
 .biastag.down.strong { background: rgba(208, 59, 59, 0.16); font-weight: 700; }
 
+/* «Вход имеет смысл сейчас» — компактные карточки-кандидаты */
+.card.entry { min-height: 92px; border-color: rgba(12, 163, 12, 0.35); }
+.card.entry .big { font-size: 21px; }
+.card.entry.awk { border-color: rgba(250, 178, 25, 0.55); }
+
+/* ⚡ связки пробуждение×Rose */
+.badge.combo { color: #f5d90a; border-color: rgba(245, 217, 10, 0.45); }
+.card.entry.combo { border-color: rgba(245, 217, 10, 0.5); }
+.card.entry.combo.stale { opacity: 0.65; }
+
 /* риск-маркер (статистически сливная категория) */
 .risktag {
   font-size: 10px; padding: 1px 7px; border-radius: 4px; white-space: nowrap;

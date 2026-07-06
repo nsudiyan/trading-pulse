@@ -222,6 +222,34 @@ function riskTag(sig) {
   return "";
 }
 
+function comboTag(sym) {
+  const c = (state.feed?.combos || []).find((x) => x.symbol === sym);
+  if (!c) return "";
+  return `<span class="badge combo" title="связка: пробуждение ×${c.awake_ratio} → Rose-пост (${agoStr(c.post_ts)})">⚡</span>`;
+}
+
+/* ⚡ Связки «пробуждение → Rose-пост → структура жива» — рендер подблока entry */
+function renderCombos() {
+  const box = $("combo-cards");
+  if (!box || !state.feed) return;
+  const combos = state.feed.combos || [];
+  if (!combos.length) {
+    box.innerHTML = '<div class="empty">Живых связок нет.</div>';
+    return;
+  }
+  box.innerHTML = combos.map((c) => `
+    <div class="card entry combo${c.stage_ok ? "" : " stale"}">
+      <div class="row1">
+        ${starHtml(c.symbol)}
+        <span class="sym">${esc(c.symbol)}</span>
+        <span class="badge combo">⚡</span>
+        <span class="when">пост ${agoStr(c.post_ts)}</span>
+      </div>
+      <div class="big ${cls(c.peak24_pct)}">${fmtPct(c.peak24_pct, 1)} <span style="font-size:11px;color:var(--muted)">пик 24ч</span></div>
+      <div class="meta">🌅 ×${c.awake_ratio} за ${Math.round((new Date(c.post_ts) - new Date(c.awake_ts)) / 3600_000)}ч до поста · ${esc(c.channel || "rose")} ${esc(c.direction || "")}${c.stage_ok ? "" : " · ⚠ раздача по pump-надзору"}</div>
+    </div>`).join("");
+}
+
 function pumpTag(sym) {
   const pw = (state.feed?.pump_watch || []).find((p) => p.symbol === sym);
   if (!pw) return "";
@@ -248,6 +276,7 @@ function cardHtml(sig, isFresh = false) {
       ${biasTag(sig)}
       ${riskTag(sig)}
       ${pumpTag(sig.symbol)}
+      ${comboTag(sig.symbol)}
       ${extra ? `<span class="src-note" title="${esc(extra)}">${esc(extra)}</span>` : ""}
     </div>
     <div class="big" data-role="pct">…</div>
@@ -674,6 +703,7 @@ async function refresh() {
   state.feed = feed;
   if (isNew) {
     renderPump(feed);
+    renderCombos();
     renderRose(feed);
     renderHistory(feed);
     renderBot(feed);
