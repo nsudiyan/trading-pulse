@@ -614,15 +614,20 @@ def combos_block() -> list[dict]:
             if not awake:
                 continue
             p = pumps.get(sym)
-            stage_ok = not (p and (p.get("dist") or p.get("broke")))
-            aw_ts, aw_r = max(awake, key=lambda x: x[1])
+            if p and (p.get("dist") or p.get("broke")):
+                continue          # раздача/слом = связка мертва (просьба брата: удалять)
             o = t.get("outcome") or {}
+            peak, ret = o.get("peak24_pct"), o.get("ret24_pct")
+            # финальный трек, отдавший ≥80% пика при пике ≥8% — поезд ушёл
+            if o.get("final") and peak and peak >= 8 and ret is not None and (peak - ret) / peak >= 0.8:
+                continue
+            aw_ts, aw_r = max(awake, key=lambda x: x[1])
             out.append({
                 "symbol": sym, "direction": t.get("direction"),
                 "awake_ts": aw_ts.isoformat(), "awake_ratio": aw_r,
                 "post_ts": t["anchor_ts"], "channel": (t.get("alerts") or [{}])[-1].get("channel"),
-                "stage_ok": stage_ok,
-                "peak24_pct": o.get("peak24_pct"), "ret24_pct": o.get("ret24_pct"),
+                "basis": o.get("basis"),
+                "peak24_pct": peak, "ret24_pct": ret,
             })
         out.sort(key=lambda x: x["post_ts"], reverse=True)
         return out

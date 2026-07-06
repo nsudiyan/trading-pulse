@@ -43,6 +43,8 @@ const state = {
   histFilter: "all", histShown: 40, roseShown: 40, roseStarOnly: false,
   liveFilter: "ours",     // по умолчанию — наши сигналы
   starred: new Set(JSON.parse(localStorage.getItem("pulse_starred") || "[]")),
+  lastPx: new Map(),      // symbol → живая цена с WS (для связок и не только)
+  comboPeak: new Map(),   // symbol → максимальный живой % от базиса поста за сессию
 };
 
 /* ── звёздочки: пометка «просмотрел/просмотрю» на МОНЕТЕ, живёт в браузере ── */
@@ -228,26 +230,54 @@ function comboTag(sym) {
   return `<span class="badge combo" title="связка: пробуждение ×${c.awake_ratio} → Rose-пост (${agoStr(c.post_ts)})">⚡</span>`;
 }
 
-/* ⚡ Связки «пробуждение → Rose-пост → структура жива» — рендер подблока entry */
+/* ⚡ Связки «пробуждение → Rose-пост → структура жива» — рендер подблока entry.
+   Живая смерть на каждом WS-тике (просьба брата 06.07 «следи каждую секунду»):
+   провал ниже базиса поста >3% (для short зеркально) ИЛИ живой ретрейс ≥80%
+   пика при пике ≥8% → карточка исчезает немедленно. Сервер дополнительно
+   выкидывает раздачу и финально-отдавшие треки. */
+function comboAlive(c) {
+  const px = state.lastPx.get(c.symbol);
+  if (px == null || !c.basis) return { alive: true, live: null };  // цены ещё нет — не судим
+  let live = (px - c.basis) / c.basis * 100;
+  if (c.direction === "short") live = -live;
+  const peakRef = Math.max(c.peak24_pct || 0, state.comboPeak.get(c.symbol) || 0, live);
+  state.comboPeak.set(c.symbol, peakRef);
+  if (live < -3) return { alive: false, live };
+  if (peakRef >= 8 && (peakRef - live) / peakRef >= 0.8) return { alive: false, live };
+  return { alive: true, live };
+}
+
 function renderCombos() {
   const box = $("combo-cards");
   if (!box || !state.feed) return;
-  const combos = state.feed.combos || [];
-  if (!combos.length) {
-    box.innerHTML = '<div class="empty">Живых связок нет.</div>';
+  const rows = [];
+  for (const c of state.feed.combos || []) {
+    const { alive, live } = comboAlive(c);
+    if (!alive) continue;
+    rows.push({ c, live });
+  }
+  if (!rows.length) {
+    box.innerHTML = '<div class="empty">Живых связок нет — отработавшие и провалившиеся сняты.</div>';
     return;
   }
-  box.innerHTML = combos.map((c) => `
-    <div class="card entry combo${c.stage_ok ? "" : " stale"}">
+  box.innerHTML = rows.map(({ c, live }) => `
+    <div class="card entry combo">
       <div class="row1">
         ${starHtml(c.symbol)}
         <span class="sym">${esc(c.symbol)}</span>
         <span class="badge combo">⚡</span>
         <span class="when">пост ${agoStr(c.post_ts)}</span>
       </div>
-      <div class="big ${cls(c.peak24_pct)}">${fmtPct(c.peak24_pct, 1)} <span style="font-size:11px;color:var(--muted)">пик 24ч</span></div>
-      <div class="meta">🌅 ×${c.awake_ratio} за ${Math.round((new Date(c.post_ts) - new Date(c.awake_ts)) / 3600_000)}ч до поста · ${esc(c.channel || "rose")} ${esc(c.direction || "")}${c.stage_ok ? "" : " · ⚠ раздача по pump-надзору"}</div>
+      <div class="big ${cls(live ?? c.peak24_pct)}">${fmtPct(live ?? c.peak24_pct, 1)} <span style="font-size:11px;color:var(--muted)">${live != null ? "live от поста" : "пик 24ч"}</span></div>
+      <div class="meta">🌅 ×${c.awake_ratio} за ${Math.round((new Date(c.post_ts) - new Date(c.awake_ts)) / 3600_000)}ч до поста · ${esc(c.channel || "rose")} ${esc(c.direction || "")} · пик 24ч ${fmtPct(c.peak24_pct, 1)}</div>
     </div>`).join("");
+}
+let _comboLast = 0;
+function comboTickRender() {           // по WS-тику, не чаще раза в секунду
+  const now = Date.now();
+  if (now - _comboLast < 1000) return;
+  _comboLast = now;
+  renderCombos();
 }
 
 function pumpTag(sym) {
@@ -341,6 +371,7 @@ function drawSpark(card, livePct) {
 function wsEnsure() {
   const wanted = new Set(["BTCUSDT", "ETHUSDT"]);
   for (const { sig } of state.liveCards.values()) wanted.add(sig.symbol);
+  for (const c of state.feed?.combos || []) wanted.add(c.symbol);
   const changed = wanted.size !== state.wsSymbols.size || [...wanted].some((s) => !state.wsSymbols.has(s));
   if (state.ws && state.ws.readyState === 1 && !changed) return;
   state.wsSymbols = wanted;
@@ -361,6 +392,8 @@ function wsEnsure() {
     const sym = m.topic.slice(8);
     const last = parseFloat(m.data.lastPrice);
     if (!isFinite(last)) return; // дельта без lastPrice
+    state.lastPx.set(sym, last);
+    if ((state.feed?.combos || []).some((c) => c.symbol === sym)) comboTickRender();
     if (sym === "BTCUSDT") headerTick("btc-tick", "BTC", last, m.data.price24hPcnt);
     if (sym === "ETHUSDT") headerTick("eth-tick", "ETH", last, m.data.price24hPcnt);
     for (const card of state.liveCards.values())
