@@ -563,14 +563,22 @@ def log_entry_candidates(live: list[dict]) -> None:
 
 
 def bias_accuracy(ledger: dict) -> dict:
-    """Форвард-экзамен наклона: bias_at_birth vs ret24 финальных треков."""
+    """Форвард-экзамен наклона: bias_at_birth vs ret24 финальных треков.
+
+    ДЕДУП ВОЛН (добро брата 2026-07-06 «лечи»): треки одного источника из
+    одного 5-мин скана коррелированы (рыночная волна = одна ставка на BTC-движ,
+    а не N независимых) — считаем кластер ОДНИМ кейсом, hit кластера = доля
+    hit-треков внутри. Иначе одна волна на 19 монет накачивает экзамен бетой
+    и вердикт при n=25 меряет не наклон, а пару разворотов BTC.
+    Сырые счётчики сохраняются рядом (raw_*) для прозрачности."""
     try:
         import sys
         sys.path.insert(0, str(TRADING))
         from bias import grade_bias
     except Exception:
         return {}
-    per_v: dict[str, dict] = {}
+    # (версия, source, 5-мин бакет anchor_ts) → голоса кластера
+    clusters: dict[tuple, dict] = {}
     for t in ledger.get("tracks", []):
         bb = t.get("bias_at_birth")
         o = t.get("outcome") or {}
@@ -583,17 +591,32 @@ def bias_accuracy(ledger: dict) -> dict:
         if ret_world is not None and t.get("direction") == "short":
             ret_world = -ret_world
         g = grade_bias(bb.get("side", ""), ret_world)
-        c = per_v.setdefault(bb.get("v", "?"), {"hits": 0, "misses": 0, "flat_zone": 0})
-        if g == "hit":
-            c["hits"] += 1
-        elif g == "miss":
-            c["misses"] += 1
-        elif g == "flat_zone":
-            c["flat_zone"] += 1
+        try:
+            bucket = int(datetime.fromisoformat(t["anchor_ts"]).timestamp()) // 300
+        except Exception:
+            bucket = t.get("anchor_ts")
+        key = (bb.get("v", "?"), t.get("source"), bucket)
+        c = clusters.setdefault(key, {"hit": 0, "miss": 0, "flat_zone": 0})
+        if g in c:
+            c[g] += 1
+    per_v: dict[str, dict] = {}
+    for (v, _src, _b), c in clusters.items():
+        agg = per_v.setdefault(v, {"hits": 0.0, "misses": 0.0, "flat_zone": 0,
+                                   "raw_hits": 0, "raw_misses": 0, "clusters": 0})
+        agg["flat_zone"] += c["flat_zone"]
+        agg["raw_hits"] += c["hit"]
+        agg["raw_misses"] += c["miss"]
+        voted = c["hit"] + c["miss"]
+        if voted:
+            agg["clusters"] += 1
+            agg["hits"] += c["hit"] / voted     # кластер = 1 кейс, hit = доля
+            agg["misses"] += c["miss"] / voted
     out = {}
     for v, c in per_v.items():
-        graded = c["hits"] + c["misses"]
-        out[v] = {**c, "n_graded": graded,
+        graded = c["clusters"]
+        out[v] = {"hits": round(c["hits"], 1), "misses": round(c["misses"], 1),
+                  "flat_zone": c["flat_zone"], "n_graded": graded,
+                  "raw_hits": c["raw_hits"], "raw_misses": c["raw_misses"],
                   "accuracy_pct": round(c["hits"] / graded * 100, 1) if graded else None,
                   "low_n": graded < MIN_N}
     return out

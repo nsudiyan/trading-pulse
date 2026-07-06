@@ -205,14 +205,19 @@ function renderBiasAcc(feed) {
       ? `наклон, форвард-точность — ${parts.join(" · ")}`
       : "наклон v2 (radar→⬆, Rose→контрарно): форвард копится…";
   }
-  // счётчик в шапке: угадано/всего по всем версиям (просьба брата 2026-07-05)
+  // счётчик в шапке: угадано/всего по всем версиям (просьба брата 2026-07-05).
+  // Числа — ЭФФЕКТИВНЫЕ кейсы: волна одного скана схлопнута в 1 кейс (дедуп
+  // 06.07 «лечи»), сырые треки — в подсказке.
   const hits = Object.values(acc).reduce((s, a) => s + (a.hits || 0), 0);
   const graded = Object.values(acc).reduce((s, a) => s + (a.n_graded || 0), 0);
+  const rawH = Object.values(acc).reduce((s, a) => s + (a.raw_hits ?? a.hits ?? 0), 0);
+  const rawG = Object.values(acc).reduce((s, a) => s + ((a.raw_hits ?? 0) + (a.raw_misses ?? 0) || a.n_graded || 0), 0);
   const hs = $("bias-score");
   if (hs) {
     const pct = graded ? Math.round(hits / graded * 100) : null;
-    hs.innerHTML = `⬆⬇ <b>${hits}/${graded}</b>` + (pct != null ? ` <span style="color:var(--${pct >= 60 ? "up" : pct >= 45 ? "warn" : "down"})">${pct}%</span>` : "");
-    hs.title = `наклон стороны: угадано ${hits} из ${graded} экзаменованных движений (форвард, все версии; ±2% флэт-зона не считается)`;
+    const fmtH = Number.isInteger(hits) ? hits : hits.toFixed(1);
+    hs.innerHTML = `⬆⬇ <b>${fmtH}/${graded}</b>` + (pct != null ? ` <span style="color:var(--${pct >= 60 ? "up" : pct >= 45 ? "warn" : "down"})">${pct}%</span>` : "");
+    hs.title = `наклон стороны, эффективные кейсы (рыночная волна одного скана = 1 кейс): ${fmtH} из ${graded}. Сырых треков: ${rawH}/${rawG}. ±2% флэт-зона не считается.`;
   }
 }
 
