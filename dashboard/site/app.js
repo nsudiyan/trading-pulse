@@ -224,6 +224,27 @@ function riskTag(sig) {
   return "";
 }
 
+/* Погодная плашка BTC на скринер-карточках (разрез 06.07, n=907, честное окно).
+   Метрика = ровно та, что в исследовании: % BTC за 24ч (терцильные пороги
+   −1.9% / +0.3%). Live-значение из WS-тикера. Визуал-форвард, гейтов нет. */
+function weatherTag(sig) {
+  if (sig.source !== "screener" || state.btcRet24 == null) return "";
+  const b = state.btcRet24;
+  const d = (sig.direction || "").toLowerCase();
+  const isShort = d === "short" || d === "шорт";
+  const isLong = d === "long" || d === "лонг";
+  const btc = `BTC ${fmtPct(b, 1)}/24ч`;
+  if (isShort && b > 0.3)
+    return `<span class="risktag" title="разрез n=907: шорты при растущем BTC — win 18%, средний R −0.58">⚠ против ветра · ${btc}</span>`;
+  if (isLong && b < -1.9)
+    return `<span class="risktag" title="разрез n=907: лонги при падающем BTC — win 31%, средний R −0.26">⚠ против ветра · ${btc}</span>`;
+  if (isShort && b < -1.9)
+    return `<span class="windtag" title="разрез n=907: шорты при падающем BTC — win 45%, средний R +0.10">по ветру · ${btc}</span>`;
+  if (isLong && b > 0.3)
+    return `<span class="windtag" title="разрез n=907: лонги при растущем BTC — win 46%, средний R +0.15">по ветру · ${btc}</span>`;
+  return "";
+}
+
 function comboTag(sym) {
   const c = (state.feed?.combos || []).find((x) => x.symbol === sym);
   if (!c) return "";
@@ -308,6 +329,7 @@ function cardHtml(sig, isFresh = false) {
       ${sig.emits > 1 ? `<span class="badge" title="повторных алертов">×${sig.emits}</span>` : ""}
       ${biasTag(sig)}
       ${riskTag(sig)}
+      ${weatherTag(sig)}
       ${pumpTag(sig.symbol)}
       ${comboTag(sig.symbol)}
       ${extra ? `<span class="src-note" title="${esc(extra)}">${esc(extra)}</span>` : ""}
@@ -417,6 +439,11 @@ const _hdrPct = {};
 function headerTick(id, name, last, pcnt) {
   const p = parseFloat(pcnt);
   if (isFinite(p)) _hdrPct[id] = p * 100;
+  if (id === "btc-tick" && isFinite(p)) {
+    const was = state.btcRet24;
+    state.btcRet24 = p * 100;   // погода для скринер-плашек
+    if (was == null && state.feed) renderLive(state.feed);  // первый тик — дорисовать плашки
+  }
   const chg = _hdrPct[id];
   $(id).innerHTML = `${name} <b>${last.toLocaleString("en-US", { maximumFractionDigits: last > 1000 ? 0 : 2 })}</b>` +
     (chg != null ? ` <span style="color:var(--${chg >= 0 ? "up" : "down"})">${fmtPct(chg, 1)}</span>` : "");

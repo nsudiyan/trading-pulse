@@ -196,6 +196,13 @@ td .star { font-size: 14px; }
 .card.entry .big { font-size: 21px; }
 .card.entry.awk { border-color: rgba(250, 178, 25, 0.55); }
 
+/* погодная плашка BTC (скринер): по ветру — зелёная, против — риск-стиль */
+.windtag {
+  font-size: 10px; padding: 1px 6px; border-radius: 4px;
+  color: var(--up); border: 1px solid rgba(12, 163, 12, 0.4);
+  white-space: nowrap;
+}
+
 /* ⚡ связки пробуждение×Rose */
 .badge.combo { color: #f5d90a; border-color: rgba(245, 217, 10, 0.45); }
 .card.entry.combo { border-color: rgba(245, 217, 10, 0.5); }
