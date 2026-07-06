@@ -531,6 +531,7 @@ function renderEntry() {
       <div class="row1">
         ${starHtml(s.symbol)}
         <span class="sym">${esc(s.symbol)}</span>
+        <span class="badge" style="color:var(--up)" title="план: вход ЛОНГ по рынку · горизонт до 24ч — ходы зреют 4–9ч и дольше, выход через 6ч режет профит · пилы −1–2% нормальны: риск размером позиции, не тесным стопом (стоп −2% выбивается в 62% случаев) · фиксировать при сломе структуры: OI падает на росте / объём без хода / pump-раздача">▲ лонг</span>
         ${isAwk ? '<span class="badge" style="color:var(--warn)">🌅</span>' : ""}
         <span class="when">${agoStr(s.ts_utc)}</span>
       </div>
