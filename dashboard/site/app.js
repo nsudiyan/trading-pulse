@@ -236,14 +236,17 @@ function comboTag(sym) {
    пика при пике ≥8% → карточка исчезает немедленно. Сервер дополнительно
    выкидывает раздачу и финально-отдавшие треки. */
 function comboAlive(c) {
+  // «вход сейчас»: ход по посту уже случился (пик ≥8%) = отработана; провал −3% = мертва
   const px = state.lastPx.get(c.symbol);
-  if (px == null || !c.basis) return { alive: true, live: null };  // цены ещё нет — не судим
+  if (px == null || !c.basis) {
+    return { alive: (c.peak24_pct || 0) < 8, live: null };  // цены ещё нет — судим по фиду
+  }
   let live = (px - c.basis) / c.basis * 100;
   if (c.direction === "short") live = -live;
   const peakRef = Math.max(c.peak24_pct || 0, state.comboPeak.get(c.symbol) || 0, live);
   state.comboPeak.set(c.symbol, peakRef);
+  if (peakRef >= 8) return { alive: false, live };
   if (live < -3) return { alive: false, live };
-  if (peakRef >= 8 && (peakRef - live) / peakRef >= 0.8) return { alive: false, live };
   return { alive: true, live };
 }
 

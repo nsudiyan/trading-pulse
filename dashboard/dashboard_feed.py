@@ -618,8 +618,9 @@ def combos_block() -> list[dict]:
                 continue          # раздача/слом = связка мертва (просьба брата: удалять)
             o = t.get("outcome") or {}
             peak, ret = o.get("peak24_pct"), o.get("ret24_pct")
-            # финальный трек, отдавший ≥80% пика при пике ≥8% — поезд ушёл
-            if o.get("final") and peak and peak >= 8 and ret is not None and (peak - ret) / peak >= 0.8:
+            # блок = «вход сейчас»: пик ≥8% от поста УЖЕ случился → связка
+            # отработана, снять (урок брата 06.07: не музей, а рабочий стол)
+            if peak is not None and peak >= 8:
                 continue
             aw_ts, aw_r = max(awake, key=lambda x: x[1])
             out.append({
