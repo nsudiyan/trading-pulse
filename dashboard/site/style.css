@@ -196,6 +196,14 @@ td .star { font-size: 14px; }
 .card.entry .big { font-size: 21px; }
 .card.entry.awk { border-color: rgba(250, 178, 25, 0.55); }
 
+/* волновая заметка в entry-секции (каскад одного скана скрыт) */
+.wave-note {
+  grid-column: 1 / -1;
+  font-size: 11px; color: var(--muted);
+  border: 1px dashed var(--grid); border-radius: 8px;
+  padding: 8px 12px;
+}
+
 /* погодная плашка BTC (скринер): по ветру — зелёная, против — риск-стиль */
 .windtag {
   font-size: 10px; padding: 1px 6px; border-radius: 4px;

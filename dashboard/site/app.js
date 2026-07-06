@@ -505,11 +505,27 @@ function renderEntry() {
     if (ok) out.push({ card, isAwk, ageH });
   }
   out.sort((a, b) => a.ageH - b.ageH);                    // свежие первыми
-  if (!out.length) {
+  // рыночная волна: ≥5 кандидатов из одного 5-мин скана = не пробуждения,
+  // а общий BTC-движ (radar_resolved: каскадные good 15% vs 23% у одиночных) — скрыть
+  const buckets = new Map();
+  for (const it of out) {
+    const b = Math.round(new Date(it.card.sig.ts_utc) / 300_000);
+    (buckets.get(b) || buckets.set(b, []).get(b)).push(it);
+  }
+  let waveNote = "";
+  for (const [, items] of buckets) {
+    if (items.filter((x) => !x.isAwk).length >= 5) {
+      const hidden = items.filter((x) => !x.isAwk);
+      hidden.forEach((x) => { x.hide = true; });
+      waveNote += `<div class="wave-note">⚠ рыночная волна ${agoStr(hidden[0].card.sig.ts_utc)}: ${hidden.length} монет хитанули одним сканом — это BTC-движ, не пробуждения (каскадные отрабатывают в 1.5 раза хуже: good 15% vs 23%) — скрыты</div>`;
+    }
+  }
+  const shown = out.filter((x) => !x.hide);
+  if (!shown.length && !waveNote) {
     box.innerHTML = '<div class="empty">Кандидатов сейчас нет — правила строгие.</div>';
     return;
   }
-  box.innerHTML = out.map(({ card, isAwk }) => {
+  box.innerHTML = waveNote + shown.map(({ card, isAwk }) => {
     const s = card.sig;
     return `<div class="card entry${isAwk ? " awk" : ""}">
       <div class="row1">
