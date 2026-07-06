@@ -245,6 +245,18 @@ function weatherTag(sig) {
   return "";
 }
 
+/* 🎣 игла-вынос стопов (ретро 06.07, n=150): контр-сигнал — после иглы-вверх
+   3ч-медиана −0.5% (вверх 43%), после иглы-вниз +0.6% (вверх 61%) */
+function sweepTag(sym) {
+  const sw = (state.feed?.sweeps || []).find((x) => x.symbol === sym);
+  if (!sw || (Date.now() - new Date(sw.ts)) > 2 * 3600_000) return "";
+  const t = new Date(sw.ts);
+  const hhmm = `${String(t.getUTCHours() + 3).padStart(2, "0")}:${String(t.getUTCMinutes()).padStart(2, "0")}`;
+  if (sw.dir === "up")
+    return `<span class="risktag" title="игла ${hhmm} МСК: фитиль +${sw.wick_pct}% на объёме ×${sw.vol_x} — вынос шортовых стопов; ретро n=89: через 3ч медиана −0.5%, вверх лишь 43% — не вход, часто раздача">🎣 вынос вверх ${hhmm}</span>`;
+  return `<span class="windtag" title="игла ${hhmm} МСК: фитиль −${sw.wick_pct}% на объёме ×${sw.vol_x} — вынос лонговых стопов; ретро n=61: через 3ч медиана +0.6%, вверх 61% — стопы сняты, база отскока; свой стоп под такой лоу не ставить">🎣 вынос вниз ${hhmm}</span>`;
+}
+
 function comboTag(sym) {
   const c = (state.feed?.combos || []).find((x) => x.symbol === sym);
   if (!c) return "";
@@ -330,6 +342,7 @@ function cardHtml(sig, isFresh = false) {
       ${biasTag(sig)}
       ${riskTag(sig)}
       ${weatherTag(sig)}
+      ${sweepTag(sig.symbol)}
       ${pumpTag(sig.symbol)}
       ${comboTag(sig.symbol)}
       ${extra ? `<span class="src-note" title="${esc(extra)}">${esc(extra)}</span>` : ""}

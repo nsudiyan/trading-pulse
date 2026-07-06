@@ -637,6 +637,61 @@ def combos_block() -> list[dict]:
         return []
 
 
+def sweep_block(live: list[dict]) -> list[dict]:
+    """🎣 Иглы-выносы стопов на монетах живых сигналов (≤6ч, не мажоры).
+    Формула = ретро 06.07 (n=150 игл): фитиль пробил экстремум прошлых 2ч
+    (≥0.5%), закрытие вернулось ≥60% фитиля, объём ≥5× медианы. После иглы-вверх
+    3ч-медиана −0.52% (вверх 43%), после иглы-вниз +0.57% (вверх 61%).
+    Кейс-триггер: BREV 06.07 (вход брата вынесло каскадом после иглы ×15.5)."""
+    try:
+        import urllib.request
+        from bias import RADAR_MAJORS
+        now = utcnow()
+        syms, out = [], []
+        for s in live:
+            sym = s["symbol"]
+            if sym in RADAR_MAJORS or sym in syms:
+                continue
+            if (now - datetime.fromisoformat(s["ts_utc"])).total_seconds() > 6 * 3600:
+                continue
+            syms.append(sym)
+        now_ms = int(now.timestamp() * 1000)
+        for sym in syms[:40]:
+            try:
+                url = (f"https://api.bybit.com/v5/market/kline?category=linear&symbol={sym}"
+                       f"&interval=5&start={now_ms-3*3600_000}&limit=40")
+                with urllib.request.urlopen(url, timeout=8) as r:
+                    data = json.load(r)
+                if data.get("retCode") != 0:
+                    continue
+                bars = sorted([(int(x[0]), float(x[1]), float(x[2]), float(x[3]),
+                                float(x[4]), float(x[5])) for x in data["result"]["list"]])
+                bars = [b for b in bars if b[0] + 300_000 <= now_ms]  # только закрытые
+                if len(bars) < 26:
+                    continue
+                vols = sorted(b[5] for b in bars)
+                med_v = vols[len(vols)//2] or 1e-9
+                # свежайшая игла в последних 6 закрытых барах
+                for i in range(len(bars) - 1, max(len(bars) - 7, 24), -1):
+                    t, o, h, l, c, v = bars[i]
+                    hh = max(b[2] for b in bars[i-24:i])
+                    ll = min(b[3] for b in bars[i-24:i])
+                    if h > hh * 1.005 and v >= 5 * med_v and (h - c) >= 0.6 * (h - max(o, ll)) and h > o:
+                        out.append({"symbol": sym, "dir": "up", "ts": datetime.fromtimestamp(t/1000, tz=timezone.utc).isoformat(),
+                                    "wick_pct": round((h - c) / c * 100, 2), "vol_x": round(v / med_v, 1)})
+                        break
+                    if l < ll * 0.995 and v >= 5 * med_v and (c - l) >= 0.6 * (min(o, hh) - l) and l < o:
+                        out.append({"symbol": sym, "dir": "down", "ts": datetime.fromtimestamp(t/1000, tz=timezone.utc).isoformat(),
+                                    "wick_pct": round((c - l) / c * 100, 2), "vol_x": round(v / med_v, 1)})
+                        break
+            except Exception:
+                continue
+        return out
+    except Exception as e:
+        print(f"[feed] sweep пропущен: {e}")
+        return []
+
+
 def build_feed() -> dict:
     live = collect_live_signals()
     _enrich_bias(live)
@@ -646,6 +701,7 @@ def build_feed() -> dict:
         "pump_watch": pump_watch_block(),
         "pump_muted": pump_muted_block(),
         "combos": combos_block(),
+        "sweeps": sweep_block(live),
         "bias_accuracy": bias_accuracy(ledger),
         "generated_at": utcnow().isoformat(),
         "honest_window_note": f"аналитика бота: только сигналы с {HONEST_WINDOW_START} (правило честного окна)",
