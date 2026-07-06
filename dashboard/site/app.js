@@ -201,6 +201,7 @@ async function renderLive(feed) {
     }
     await Promise.all([...state.liveCards.values()].map(initCardBars));
     wsEnsure();
+    renderEntry();   // кандидаты сразу, не ждать 5с-интервала
   }
 }
 
@@ -278,6 +279,7 @@ async function initCardBars(card) {
 
 function updateCard(card, livePct) {
   if (card.basis == null || livePct == null) return;
+  card.lastPct = livePct;   // для секции «Вход имеет смысл сейчас»
   card.peak = card.peak == null ? livePct : Math.max(card.peak, livePct);
   card.dd = card.dd == null ? Math.min(0, livePct) : Math.min(card.dd, livePct);
   const pctEl = card.el.querySelector('[data-role="pct"]');
@@ -374,6 +376,62 @@ function domHl(t) {
   else if (pain > peak) out.dd = " hl-neg";
   return out;
 }
+
+/* ── «Вход имеет смысл сейчас»: механический шорт-лист по правилам форварда.
+   Каждое правило — из проверенного разреза, НЕ интуиция:
+   • радар-альт с наклоном ⬆ v3 (86% ходунов вверх, n=35; мажоры уже отсеяны)
+   • свежесть ≤3ч (медиана времени до пика 1.2–1.7ч — позже вход догоняющий)
+   • цена не убежала: −1.5%…+2.5% от алерта; просадка с алерта ≥ −2% (не пила)
+   • пик ещё не отработан (≤+3.5%) и монета не под pump-раздачей
+   • 🌅-пробуждения — отдельные правила: окно 30ч, коридор −3%…+5%
+   Пересчёт каждые 5с из живых WS-данных карточек. ═ НЕ СИГНАЛ ГАРАНТИИ ═
+   ВАЖНО: правила продублированы серверно в dashboard_feed.log_entry_candidates
+   (форензика outcomes/entry_candidates.csv) — менять СИНХРОННО. */
+function entryReason(card, isAwakening) {
+  const bits = [isAwakening ? "🌅 пробуждение (окно 12–35ч)" : "радар-альт ⬆ (86% ходунов вверх)"];
+  bits.push("не убежала", `просадка ${fmtPct(card.dd, 1)}`);
+  return bits.join(" · ");
+}
+
+function renderEntry() {
+  const box = $("entry-cards");
+  if (!box || !state.feed) return;
+  const pumps = new Map((state.feed.pump_watch || []).map((p) => [p.symbol, p]));
+  const out = [];
+  for (const card of state.liveCards.values()) {
+    const s = card.sig;
+    if (s.source !== "radar" || !s.bias || s.bias.side !== "up") continue;
+    if (card.lastPct == null || card.dd == null || card.peak == null) continue;
+    const p = pumps.get(s.symbol);
+    if (p && (p.dist || p.broke)) continue;               // раздача/слом — не вход
+    const ageH = (Date.now() - new Date(s.ts_utc)) / 3600_000;
+    const isAwk = (s.vol_ratio || 0) >= 15;
+    const ok = isAwk
+      ? (ageH <= 30 && card.lastPct >= -3 && card.lastPct <= 5 && card.dd >= -4)
+      : (ageH <= 3 && card.lastPct >= -1.5 && card.lastPct <= 2.5
+         && card.dd >= -2 && card.peak <= 3.5);
+    if (ok) out.push({ card, isAwk, ageH });
+  }
+  out.sort((a, b) => a.ageH - b.ageH);                    // свежие первыми
+  if (!out.length) {
+    box.innerHTML = '<div class="empty">Кандидатов сейчас нет — правила строгие.</div>';
+    return;
+  }
+  box.innerHTML = out.map(({ card, isAwk }) => {
+    const s = card.sig;
+    return `<div class="card entry${isAwk ? " awk" : ""}">
+      <div class="row1">
+        ${starHtml(s.symbol)}
+        <span class="sym">${esc(s.symbol)}</span>
+        ${isAwk ? '<span class="badge" style="color:var(--warn)">🌅</span>' : ""}
+        <span class="when">${agoStr(s.ts_utc)}</span>
+      </div>
+      <div class="big ${card.lastPct > 0 ? "pos" : card.lastPct < 0 ? "neg" : ""}">${fmtPct(card.lastPct)}</div>
+      <div class="meta">${esc(entryReason(card, isAwk))}</div>
+    </div>`;
+  }).join("");
+}
+setInterval(renderEntry, 5000);
 
 /* ── Pump-надзор: эпизоды + заглушенные лонги ── */
 function renderPump(feed) {

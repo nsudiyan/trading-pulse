@@ -437,6 +437,117 @@ def _enrich_bias(live: list[dict]) -> None:
         print(f"[feed] bias enrich skipped: {e}")
 
 
+# ─── Форензика «Вход имеет смысл сейчас» ─────────────────────────────────────
+# Правила = КОПИЯ фронтовых (site/app.js renderEntry) — менять СИНХРОННО.
+# Кандидат логируется ОДИН раз при первом прохождении правил: форвард потом
+# меряет «вход при первом появлении в секции» (просьба брата 2026-07-06).
+ENTRY_LOG_PATH = OUT / "entry_candidates.csv"
+ENTRY_SEEN_PATH = DIR / "entry_logged.json"
+ENTRY_FIELDS = ["logged_ts_utc", "symbol", "signal_ts_utc", "kind", "age_h",
+                "basis", "last_pct", "peak_pct", "dd_pct", "vol_ratio"]
+
+
+def _fetch_5m_closed(symbol: str, start_ms: int) -> list:
+    """Закрытые 5м бары от start_ms: (t,o,h,l,c). Как fetch_15m, но 5м."""
+    import urllib.request
+    now_ms = int(utcnow().timestamp() * 1000)
+    url = (f"https://api.bybit.com/v5/market/kline?category=linear&symbol={symbol}"
+           f"&interval=5&start={start_ms}&end={now_ms}&limit=1000")
+    with urllib.request.urlopen(url, timeout=10) as r:
+        data = json.load(r)
+    if data.get("retCode") != 0:
+        raise RuntimeError(f"retCode={data.get('retCode')}")
+    rows = data.get("result", {}).get("list") or []
+    rows.reverse()
+    bar = 5 * 60_000
+    return [(int(x[0]), float(x[1]), float(x[2]), float(x[3]), float(x[4]))
+            for x in rows
+            if int(x[0]) + bar <= now_ms]
+
+
+def log_entry_candidates(live: list[dict]) -> None:
+    """Серверный двойник фронт-отбора: radar-альт ⬆ v3, свежий, цена не убежала,
+    без пилы, не в раздаче; 🌅 (vol_ratio≥15) — окно 30ч и коридор шире.
+    Fail-open: сбой не трогает сборку фида."""
+    try:
+        import urllib.request
+        seen = set(jload(ENTRY_SEEN_PATH, []))
+        pumps = {p["symbol"]: p for p in pump_watch_block()}
+        now = utcnow()
+
+        pre = []
+        for s in live:
+            if s.get("source") != "radar" or s.get("major_radar"):
+                continue
+            if (s.get("bias") or {}).get("side") != "up":
+                continue
+            p = pumps.get(s["symbol"])
+            if p and (p.get("dist") or p.get("broke")):
+                continue
+            age_h = (now - datetime.fromisoformat(s["ts_utc"])).total_seconds() / 3600
+            is_awk = (s.get("vol_ratio") or 0) >= 15
+            if age_h > (30 if is_awk else 3):
+                continue
+            key = f"{s['symbol']}|{s['ts_utc'][:16]}"
+            if key in seen:
+                continue
+            pre.append((s, age_h, is_awk, key))
+        if not pre:
+            return
+
+        with urllib.request.urlopen(
+                "https://api.bybit.com/v5/market/tickers?category=linear", timeout=10) as r:
+            tick = {t["symbol"]: float(t.get("lastPrice") or 0)
+                    for t in json.load(r)["result"]["list"]}
+
+        new_rows = []
+        for s, age_h, is_awk, key in pre[:12]:            # кап запросов за тик
+            last = tick.get(s["symbol"]) or 0
+            if last <= 0:
+                continue
+            try:
+                sig_ms = int(datetime.fromisoformat(s["ts_utc"]).timestamp() * 1000)
+                bars = _fetch_5m_closed(s["symbol"], sig_ms)
+            except Exception:
+                continue
+            bars = [b for b in bars if b[0] >= ((sig_ms // 300_000) + 1) * 300_000]
+            if not bars:
+                continue
+            basis = bars[0][4]
+            if basis <= 0:
+                continue
+            post = bars[1:]
+            last_pct = (last - basis) / basis * 100
+            peak = max([(b[2] - basis) / basis * 100 for b in post] + [last_pct, 0])
+            dd = min([(b[3] - basis) / basis * 100 for b in post] + [last_pct, 0])
+            ok = (age_h <= 30 and -3 <= last_pct <= 5 and dd >= -4) if is_awk else \
+                 (last_pct >= -1.5 and last_pct <= 2.5 and dd >= -2 and peak <= 3.5)
+            if not ok:
+                continue
+            new_rows.append({
+                "logged_ts_utc": now.replace(microsecond=0).isoformat(),
+                "symbol": s["symbol"], "signal_ts_utc": s["ts_utc"],
+                "kind": "awakening" if is_awk else "radar_alt",
+                "age_h": round(age_h, 2), "basis": basis,
+                "last_pct": round(last_pct, 2), "peak_pct": round(peak, 2),
+                "dd_pct": round(dd, 2), "vol_ratio": s.get("vol_ratio"),
+            })
+            seen.add(key)
+
+        if new_rows:
+            write_header = not ENTRY_LOG_PATH.exists()
+            with open(ENTRY_LOG_PATH, "a", encoding="utf-8", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=ENTRY_FIELDS)
+                if write_header:
+                    w.writeheader()
+                w.writerows(new_rows)
+            ENTRY_SEEN_PATH.write_text(json.dumps(sorted(seen)[-3000:]))
+            print(f"[feed] entry-кандидатов залогировано: {len(new_rows)}: "
+                  f"{[r['symbol'] for r in new_rows]}")
+    except Exception as e:
+        print(f"[feed] entry-лог пропущен: {e}")
+
+
 def bias_accuracy(ledger: dict) -> dict:
     """Форвард-экзамен наклона: bias_at_birth vs ret24 финальных треков."""
     try:
@@ -477,6 +588,7 @@ def bias_accuracy(ledger: dict) -> dict:
 def build_feed() -> dict:
     live = collect_live_signals()
     _enrich_bias(live)
+    log_entry_candidates(live)   # форензика шорт-листа «вход сейчас»
     ledger = update_ledger(live)
     return {
         "pump_watch": pump_watch_block(),
