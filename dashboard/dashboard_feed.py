@@ -437,8 +437,36 @@ def _enrich_bias(live: list[dict]) -> None:
         print(f"[feed] bias enrich skipped: {e}")
 
 
-_last_chg24: dict = {}   # symbol → %24ч на последнем entry-тике (для diary ctx)
-_btc_range24: float | None = None   # размах BTC 24ч, режим-тег дневника
+def fetch_market_snapshot() -> dict | None:
+    """ОДИН полный tickers-запрос на тик фида (ревью 07.07 S3: раньше chg24/
+    range жили в модульных глобалах, обновлялись только при наличии entry-
+    кандидатов и протухали на тиках без них — дневник получал контекст
+    прошлого рынка). Потребители: log_entry_candidates, combos_block, diary."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(
+                "https://api.bybit.com/v5/market/tickers?category=linear",
+                timeout=10) as r:
+            tl = json.load(r)["result"]["list"]
+        snap = {
+            "last": {t["symbol"]: float(t.get("lastPrice") or 0) for t in tl},
+            "chg24": {t["symbol"]: round(float(t.get("price24hPcnt") or 0) * 100, 2)
+                      for t in tl},
+            "btc_ret24": None, "btc_range24": None,
+        }
+        b = next((t for t in tl if t["symbol"] == "BTCUSDT"), None)
+        if b:
+            snap["btc_ret24"] = round(float(b.get("price24hPcnt") or 0) * 100, 2)
+            try:
+                snap["btc_range24"] = round(
+                    (float(b["highPrice24h"]) - float(b["lowPrice24h"]))
+                    / float(b["lastPrice"]) * 100, 2)
+            except Exception:
+                pass
+        return snap
+    except Exception as e:
+        print(f"[feed] market snapshot fail: {e}")
+        return None
 
 # ─── Форензика «Вход имеет смысл сейчас» ─────────────────────────────────────
 # Правила = КОПИЯ фронтовых (site/app.js renderEntry) — менять СИНХРОННО.
@@ -468,7 +496,7 @@ def _fetch_5m_closed(symbol: str, start_ms: int) -> list:
             if int(x[0]) + bar <= now_ms]
 
 
-def log_entry_candidates(live: list[dict]) -> None:
+def log_entry_candidates(live: list[dict], mkt: dict | None = None) -> None:
     """Серверный двойник фронт-отбора: radar-альт ⬆ v3, свежий, цена не убежала,
     без пилы, не в раздаче; 🌅 (vol_ratio≥15) — окно 30ч и коридор шире.
     Fail-open: сбой не трогает сборку фида."""
@@ -520,23 +548,11 @@ def log_entry_candidates(live: list[dict]) -> None:
             print(f"[feed] entry: волна {len(dropped)} монет скрыта (не лог/не пуш): {dropped}")
         if not pre:
             return
-
-        with urllib.request.urlopen(
-                "https://api.bybit.com/v5/market/tickers?category=linear", timeout=10) as r:
-            _tl = json.load(r)["result"]["list"]
-            tick = {t["symbol"]: float(t.get("lastPrice") or 0) for t in _tl}
-            # 24ч-изменение на момент попадания в зону: метка «вторая волна»
-            # (≥+10% — кейс ALLO 07.07, правило брата «сайз меньше») + когорта
-            # в дневник; кладём в модульный кэш для diary.upsert (тот же тик)
-            global _last_chg24, _btc_range24
-            _last_chg24 = {t["symbol"]: round(float(t.get("price24hPcnt") or 0) * 100, 2)
-                           for t in _tl}
-            try:  # размах BTC за 24ч — режим-тег для дневника (дыра №12)
-                b = next(t for t in _tl if t["symbol"] == "BTCUSDT")
-                _btc_range24 = round((float(b["highPrice24h"]) - float(b["lowPrice24h"]))
-                                     / float(b["lastPrice"]) * 100, 2)
-            except Exception:
-                pass
+        if not mkt:
+            print("[feed] entry: нет market snapshot — тик пропущен (кандидаты не потеряны, дедуп не тронут)")
+            return
+        tick = mkt["last"]
+        chg24 = mkt["chg24"]
 
         new_rows = []
         for s, age_h, is_awk, key in pre[:12]:            # кап запросов за тик
@@ -589,7 +605,7 @@ def log_entry_candidates(live: list[dict]) -> None:
                 from push_send import send_push
                 for r in new_rows[:3]:
                     awk = r["kind"] == "awakening"
-                    c24 = _last_chg24.get(r["symbol"])
+                    c24 = chg24.get(r["symbol"])
                     warn = (f" · ⚠ уже {c24:+.0f}%/24ч — СAЙЗ МЕНЬШЕ"
                             if c24 is not None and c24 >= 10 else "")
                     send_push(
@@ -663,7 +679,7 @@ def bias_accuracy(ledger: dict) -> dict:
     return out
 
 
-def combos_block() -> list[dict]:
+def combos_block(mkt: dict | None = None) -> list[dict]:
     """⚡ Связки «пробуждение × Rose-пост × структура жива» (лид 2026-07-06,
     n=5: посты с радар-хитом ≤72ч до отрабатывают ×2 лучше — VANRY +146%).
     Показ, пока Rose-пост свежее 48ч. НЕ торговое правило — визуальная сводка.
@@ -731,7 +747,6 @@ def combos_block() -> list[dict]:
                 "peak24_pct": peak, "ret24_pct": ret,
             })
         # 2) live-маркеры (rose_watch, 60с) — только те, кого каноника ещё не знает
-        import urllib.request
         for m in jload(DIR / "rose_live_posts.json", []) or []:
             key = f"{m.get('channel')}:{m.get('msg_id')}"
             if key in seen_keys:
@@ -743,14 +758,10 @@ def combos_block() -> list[dict]:
             hit = passes(m["symbol"], post_ts)
             if not hit:
                 continue
-            basis = None
-            try:
-                with urllib.request.urlopen(
-                        "https://api.bybit.com/v5/market/tickers?category=linear&symbol="
-                        + m["symbol"], timeout=6) as r:
-                    basis = float(json.load(r)["result"]["list"][0]["lastPrice"])
-            except Exception:
-                pass
+            # basis из снапшота тика (S3: без синхронного fetch на маркер);
+            # нет снапшота → None, резолвер дневника возьмёт close первого
+            # полного бара после поста (та же конвенция входа)
+            basis = (mkt or {}).get("last", {}).get(m["symbol"]) or None
             seen_keys.add(key)
             out.append({
                 "symbol": m["symbol"], "direction": m.get("direction"),
@@ -759,7 +770,20 @@ def combos_block() -> list[dict]:
                 "basis": basis, "msg_key": key, "fast": True,
                 "peak24_pct": None, "ret24_pct": None,
             })
-        out.sort(key=lambda x: x["post_ts"], reverse=True)
+        # M2 (ревью 07.07): одна МОНЕТА = одна связка. Оба Rose-канала могут
+        # запостить одно и то же (и fast/canonical пересекаются) — сворачиваем
+        # по symbol: каноника приоритетнее fast, затем самый ранний post_ts.
+        by_sym: dict[str, dict] = {}
+        for c in out:
+            prev = by_sym.get(c["symbol"])
+            if prev is None:
+                by_sym[c["symbol"]] = c
+                continue
+            better = (not c.get("fast"), -datetime.fromisoformat(c["post_ts"]).timestamp())
+            prev_rank = (not prev.get("fast"), -datetime.fromisoformat(prev["post_ts"]).timestamp())
+            if better > prev_rank:
+                by_sym[c["symbol"]] = c
+        out = sorted(by_sym.values(), key=lambda x: x["post_ts"], reverse=True)
         return out
     except Exception as e:
         print(f"[feed] combos пропущен: {e}")
@@ -832,7 +856,7 @@ def _push_new_combos(combos: list[dict]) -> None:
         for c in combos:
             # msg_key стабилен между быстрой (превью) и канонической (Telethon)
             # версией одного поста — двойного пуша нет (брат: «нужно 2 минуты»)
-            key = c.get("msg_key") or f"{c['symbol']}|{c['post_ts'][:16]}"
+            key = f"{c['symbol']}|{c.get('awake_ts') or c['post_ts'][:16]}"
             if key in seen:
                 continue
             seen.add(key)
@@ -862,23 +886,17 @@ def _diary_safe() -> dict:
 def build_feed() -> dict:
     live = collect_live_signals()
     _enrich_bias(live)
-    log_entry_candidates(live)   # форензика шорт-листа «вход сейчас»
-    combos = combos_block()
-    _push_new_combos(combos)     # 🔔 новые связки — пушем на устройства
+    mkt = fetch_market_snapshot()          # ОДИН tickers-запрос на тик (S3)
+    log_entry_candidates(live, mkt)        # форензика шорт-листа «вход сейчас»
+    combos = combos_block(mkt)
+    _push_new_combos(combos)               # 🔔 новые связки — пушем на устройства
     # 📓 дневник: новые записи с ЗАМОРОЗКОЙ ожидания в момент появления в зоне
     try:
         import diary
-        btc = None
-        try:
-            import urllib.request
-            with urllib.request.urlopen(
-                    "https://api.bybit.com/v5/market/tickers?category=linear&symbol=BTCUSDT",
-                    timeout=6) as r:
-                btc = round(float(json.load(r)["result"]["list"][0]["price24hPcnt"]) * 100, 2)
-        except Exception:
-            pass
-        diary.upsert_new(extra_combo=combos, btc_ret24=btc, chg24_map=_last_chg24,
-                         btc_range24=_btc_range24)
+        diary.upsert_new(extra_combo=combos,
+                         btc_ret24=(mkt or {}).get("btc_ret24"),
+                         chg24_map=(mkt or {}).get("chg24") or {},
+                         btc_range24=(mkt or {}).get("btc_range24"))
     except Exception as e:
         print(f"[feed] diary upsert пропущен: {e}")
     ledger = update_ledger(live)

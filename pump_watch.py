@@ -45,6 +45,7 @@ PLATEAU_OI_RISE = 10.0    # OI от минимума после пика ≥ +10
 EFFORT_VOL_RATIO = 0.30   # объём часа ≥ 30% пикового часа...
 EFFORT_MAX_MOVE = 5.0     # ...при |Δцены за час| < 5% = усилие без результата
 BREAK_TOL = 0.005         # слом = last < plateau_low × (1 − 0.5%)
+RETRY_FAIL_SEC = 60       # ретрай ignite-отправки после fail не чаще раза в минуту
 WATCH_TTL_H = 48.0        # надзор эпизода; дольше — история, снимаем
 STATE_CAP = 10            # максимум монет под pump-надзором (лимит внимания)
 
@@ -271,6 +272,14 @@ def live_break_pass(tickers: dict, dry_run: bool = False,
         last = (t or {}).get("last") or 0.0
         if last <= 0 or last >= st["plateau_low"] * (1.0 - BREAK_TOL):
             continue
+        # ретрай-кулдаун после неудачной отправки: не долбить TG каждые 12с
+        # и не плодить строки форензики (ревью 07.07 R1 — регрессия фикса MED-1:
+        # log_stage вне `if sent` перелогировал слом каждые 12с при sent=False)
+        fail_ts = getattr(live_break_pass, "_fail_ts", None)
+        if fail_ts is None:
+            fail_ts = live_break_pass._fail_ts = {}
+        if now - fail_ts.get(sym, 0) < RETRY_FAIL_SEC:
+            continue
         msg = build_break_msg(sym, st, last, (t or {}).get("funding", 0.0))
         if dry_run:
             print(f"[pump][ignite-dry] BREAK {sym}: last {last} < plateau "
@@ -279,25 +288,28 @@ def live_break_pass(tickers: dict, dry_run: bool = False,
                 mem_seen.add(sym)
             continue
         sent = send_tg(msg, radar_buttons(sym))
-        # очередь пишем ТОЛЬКО при доставке (код-ревью 2026-07-06 MED-1): раньше
-        # писалась безусловно → недоставленный 🔻 навсегда помечался доставленным
-        # (WATCH подхватывал очередь → break_sent). Теперь fail → очереди нет →
-        # следующий 12с-тик повторит send_tg (ретрай, как у медленного пути).
-        # Порядок «очередь ПЕРЕД log_stage» сохранён: kill в окне не даёт дублей.
-        if sent:
-            atomic_json_update(
-                IGNITE_BREAKS_PATH,
-                lambda d, s=sym: {**{k: v for k, v in (d or {}).items()
-                                     if now - v.get("ts", 0) < WATCH_TTL_H * 3600},
-                                  s: {"ts": now, "price": last,
-                                      "plateau": st["plateau_low"]}},
-                default={})
+        if not sent:
+            # ни очереди, ни log_stage: инвариант «1 слом = 1 строка» священен.
+            # Ретрай через RETRY_FAIL_SEC; если TG лежит дольше — медленный
+            # WATCH-скан (≤10 мин) сам отправит и залогирует слом своим путём.
+            fail_ts[sym] = now
+            print(f"[pump] ignite-BREAK {sym}: send fail, retry ≥{RETRY_FAIL_SEC}с")
+            continue
+        # очередь ПЕРЕД log_stage (kill в окне не даёт дублей); пишем только
+        # при доставке (MED-1) — WATCH подхватит и выставит break_sent
+        atomic_json_update(
+            IGNITE_BREAKS_PATH,
+            lambda d, s=sym: {**{k: v for k, v in (d or {}).items()
+                                 if now - v.get("ts", 0) < WATCH_TTL_H * 3600},
+                              s: {"ts": now, "price": last,
+                                  "plateau": st["plateau_low"]}},
+            default={})
         log_stage(sym, "pump_break", last,
                   {"plateau_low": st["plateau_low"], "peak": st.get("peak"),
                    "off_peak_pct": round((st["peak"] - last) / st["peak"] * 100, 1)
                    if st.get("peak") else None,
-                   "src": "ignite"}, sent=sent)
-        print(f"[pump] ignite-BREAK {sym}: {last} < {st['plateau_low']} (sent={sent})")
+                   "src": "ignite"}, sent=True)
+        print(f"[pump] ignite-BREAK {sym}: {last} < {st['plateau_low']} (sent=True)")
 
 
 # ============================== ПРОХОД ==============================

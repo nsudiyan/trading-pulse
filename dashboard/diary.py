@@ -47,6 +47,7 @@ RADAR_RESOLVED = TRADING / "outcomes" / "radar_resolved.csv"
 
 MIN_CLASS_N = 10          # замок №2: до этого порога вердикт = «копим базу»
 HORIZON_H = 24            # экзамен по peak/dd/ret за 24ч от появления в зоне
+DEAD_GRACE_H = 48         # signal_ts + HORIZON + это = запись no_data, из очереди (S1)
 AWAKENING_RATIO = 15.0
 
 
@@ -180,6 +181,33 @@ def grade(exp: dict, outcome: dict) -> dict:
             "note": f"в хвосте нормы (забор {lo_fence:+.1f}..{hi_fence:+.1f})"}
 
 
+def _chg24_at(symbol: str, signal_ts: str, age_h: float,
+              current_chg24: float | None) -> float | None:
+    """24ч-изменение цены НА МОМЕНТ СИГНАЛА (ревью 07.07 M1: метка «вторая
+    волна» мерялась на момент лога — look-ahead для поздних заходов, у
+    пробуждений лог бывает на часы позже сигнала). age_h ≤ 0.25 — лог почти
+    мгновенный (тик 60с), берём текущее без сети; иначе считаем по 1ч-барам
+    close(signal) vs close(signal−24ч). None = честно «не знаем»."""
+    if age_h <= 0.25:
+        return current_chg24
+    try:
+        t_sig = int(datetime.fromisoformat(signal_ts).timestamp() * 1000)
+        url = (f"https://api.bybit.com/v5/market/kline?category=linear&symbol={symbol}"
+               f"&interval=60&start={t_sig - 25 * 3600_000}&end={t_sig}&limit=30")
+        with urllib.request.urlopen(url, timeout=8) as r:
+            d = json.load(r)
+        if d.get("retCode") != 0:
+            return None
+        bars = sorted((int(x[0]), float(x[4])) for x in d["result"]["list"])
+        if len(bars) < 20:
+            return None
+        c_now = bars[-1][1]
+        c_then = min(bars, key=lambda b: abs(b[0] - (t_sig - 24 * 3600_000)))[1]
+        return round((c_now - c_then) / c_then * 100, 2) if c_then > 0 else None
+    except Exception:
+        return None
+
+
 def _fetch_bars_15m(symbol: str, start_ms: int, end_ms: int) -> list:
     url = (f"https://api.bybit.com/v5/market/kline?category=linear&symbol={symbol}"
            f"&interval=15&start={start_ms}&end={end_ms}&limit=120")
@@ -196,18 +224,23 @@ def _fetch_bars_15m(symbol: str, start_ms: int, end_ms: int) -> list:
 def resolve_record(rec: dict) -> dict | None:
     """peak/dd/ret за 24ч от basis, бары строго ПОСЛЕ signal_ts (анти-look-ahead:
     бар входа выброшен, как всюду в проекте). None = данных пока нет."""
-    basis = rec.get("basis")
-    if not basis:
-        return None
     t0 = int(datetime.fromisoformat(rec["signal_ts"]).timestamp() * 1000)
     try:
         bars = _fetch_bars_15m(rec["symbol"], t0, t0 + (HORIZON_H + 1) * 3600_000)
     except Exception:
         return None
     first_full = ((t0 // 900_000) + 1) * 900_000
-    post = [b for b in bars if b[0] >= first_full][1:]   # й бар входа выброшен
+    full = [b for b in bars if b[0] >= first_full]
+    post = full[1:]                                      # бар входа выброшен
     if not post:
         return None
+    basis = rec.get("basis")
+    if not basis:
+        # fast-связка без basis (не было снапшота при рождении): та же
+        # конвенция входа — close первого ПОЛНОГО бара после поста
+        basis = full[0][4]
+        if not basis:
+            return None
     horizon_end = t0 + HORIZON_H * 3600_000
     inwin = [b for b in post if b[0] < horizon_end]
     if not inwin:
@@ -217,7 +250,8 @@ def resolve_record(rec: dict) -> dict | None:
     ret = (inwin[-1][4] - basis) / basis * 100
     final = post and post[-1][0] + 15 * 60_000 >= horizon_end
     return {"peak24": round(peak, 2), "dd24": round(dd, 2),
-            "ret24": round(ret, 2), "bars": len(inwin), "final": bool(final)}
+            "ret24": round(ret, 2), "bars": len(inwin), "final": bool(final),
+            "basis": round(basis, 8)}
 
 
 def upsert_new(extra_combo: list[dict] | None = None,
@@ -254,7 +288,11 @@ def upsert_new(extra_combo: list[dict] | None = None,
                         # «вторая волна» (≥+10%/24ч до сигнала) — когорта для
                         # форвард-разреза (кейс ALLO 07.07); None = не знаем
                         "chg24_at_zone": (chg24_map or {}).get(r["symbol"]),
-                        "second_wave": ((chg24_map or {}).get(r["symbol"]) or 0) >= 10 or None},
+                        # когорта «вторых волн» = chg24_at_signal ≥ 10 (факт
+                        # храним, производное считаем при разрезе)
+                        "chg24_at_signal": _chg24_at(r["symbol"], r["signal_ts_utc"],
+                                                     float(r["age_h"]),
+                                                     (chg24_map or {}).get(r["symbol"]))},
                 "expectation": build_expectation(kind, closed),
                 "outcome": None, "grade": {"verdict": "pending"},
             }
@@ -264,7 +302,10 @@ def upsert_new(extra_combo: list[dict] | None = None,
         for c in combos:
             # id по msg_key: быстрая (превью, 60с) и каноническая (Telethon,
             # 15 мин) версии одного поста = ОДНА запись дневника, без дублей
-            rid = f"{c['symbol']}|{c.get('msg_key') or c['post_ts']}|combo"
+            # id по ПРОБУЖДЕНИЮ (awake_ts): подтверждение поста меняет msg_key
+            # (последний alert) → был дубль записи (ревью 07.07 S2); пробуждение
+            # стабильно задаёт событие связки на всём её жизненном цикле
+            rid = f"{c['symbol']}|{c.get('awake_ts') or c.get('msg_key') or c['post_ts']}|combo"
             if rid in have:
                 continue
             d["records"].append({
@@ -287,12 +328,28 @@ def upsert_new(extra_combo: list[dict] | None = None,
 
 
 def resolve_pending(max_fetch: int = 25) -> int:
-    """Резолв незакрытых записей (снимок → сеть → merge под локом)."""
+    """Резолв незакрытых записей (снимок → сеть → merge под локом).
+
+    Анти-голодание (ревью 07.07 S1): записи старше HORIZON+DEAD_GRACE_H без
+    успешного резолва финализируются status=no_data БЕЗ сетевой попытки и
+    навсегда выходят из очереди — мёртвый хвост (делисты, битые символы)
+    не съедает бюджет max_fetch у живых. no_data в базы ожиданий не попадает
+    (туда берутся только записи с числовым peak24)."""
     snap = atomic_json_read(DIARY_PATH, default={"records": []}) or {"records": []}
     updates: dict[str, dict] = {}
     fetched = 0
+    now = utcnow()
     for rec in snap["records"]:
         if (rec.get("outcome") or {}).get("final"):
+            continue
+        try:
+            age_h = (now - datetime.fromisoformat(rec["signal_ts"])).total_seconds() / 3600
+        except Exception:
+            age_h = None
+        if age_h is not None and age_h > HORIZON_H + DEAD_GRACE_H:
+            updates[rec["id"]] = {"outcome": {"status": "no_data", "final": True},
+                                  "grade": {"verdict": "no_data",
+                                            "note": f"свечей не дождались за {age_h:.0f}ч — из очереди"}}
             continue
         if fetched >= max_fetch:
             break
@@ -313,6 +370,9 @@ def resolve_pending(max_fetch: int = 25) -> int:
             if u:
                 r["outcome"] = u["outcome"]
                 r["grade"] = u["grade"]
+                # fast-связка родилась без basis → доустановить из резолва
+                if not r.get("basis") and u["outcome"].get("basis"):
+                    r["basis"] = u["outcome"]["basis"]
         return d
 
     atomic_json_update(DIARY_PATH, mut, default={"records": []})
