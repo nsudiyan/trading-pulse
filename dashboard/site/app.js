@@ -35,6 +35,7 @@ function agoStr(iso) {
 const SRC_RU = { tg_channel: "ТГК", screener: "скринер", storm: "шторм", radar: "радар", alert: "алерт" };
 const OUR_SOURCES = new Set(["storm", "radar", "screener", "alert"]); // наши системы (не чужие ТГК)
 const FRESH_MIN = 15; // сигнал моложе 15 мин = метка NEW
+const SECOND_WAVE_CHG = 10; // монета уже +10%/24ч на входе = «вторая волна» → сайз меньше (брат 07.07, кейс ALLO)
 const state = {
   feed: null,
   liveCards: new Map(),   // id → {sig, basis, peak, dd, sparkPts, el}
@@ -44,6 +45,7 @@ const state = {
   liveFilter: "ours",     // по умолчанию — наши сигналы
   starred: new Set(JSON.parse(localStorage.getItem("pulse_starred") || "[]")),
   lastPx: new Map(),      // symbol → живая цена с WS (для связок и не только)
+  chg24: new Map(),       // symbol → живой % за 24ч с WS (метка «вторая волна»)
   comboPeak: new Map(),   // symbol → максимальный живой % от базиса поста за сессию
 };
 
@@ -583,6 +585,8 @@ function wsEnsure() {
     const last = parseFloat(m.data.lastPrice);
     if (!isFinite(last)) return; // дельта без lastPrice
     state.lastPx.set(sym, last);
+    const p24 = parseFloat(m.data.price24hPcnt);
+    if (isFinite(p24)) state.chg24.set(sym, p24 * 100);
     if ((state.feed?.combos || []).some((c) => c.symbol === sym)) comboTickRender();
     if (sym === "BTCUSDT") headerTick("btc-tick", "BTC", last, m.data.price24hPcnt);
     if (sym === "ETHUSDT") headerTick("eth-tick", "ETH", last, m.data.price24hPcnt);
@@ -692,12 +696,15 @@ function renderEntry() {
   }
   box.innerHTML = waveNote + shown.map(({ card, isAwk }) => {
     const s = card.sig;
+    const c24 = state.chg24.get(s.symbol);
+    const secondWave = c24 != null && c24 >= SECOND_WAVE_CHG;
     return `<div class="card entry${isAwk ? " awk" : ""}">
       <div class="row1">
         ${starHtml(s.symbol)}
         <span class="sym">${esc(s.symbol)}</span>
         <span class="badge" style="color:var(--up)" title="план: вход ЛОНГ по рынку · горизонт до 24ч — ходы зреют 4–9ч и дольше, выход через 6ч режет профит · пилы −1–2% нормальны: риск размером позиции, не тесным стопом (стоп −2% выбивается в 62% случаев) · фиксировать при сломе структуры: OI падает на росте / объём без хода / pump-раздача">▲ лонг</span>
         ${isAwk ? '<span class="badge" style="color:var(--warn)">🌅</span>' : ""}
+        ${secondWave ? `<span class="risktag" title="монета уже сделала ${fmtPct(c24, 1)} за сутки ДО этого сигнала — «вторая волна» на разогнанной монете: статистика пула собрана на тихих стартах, здесь она не гарантирована (кейс ALLO 07.07). Правило брата: сайз меньше стандартного микро">⚠ уже ${fmtPct(c24, 0)}/24ч — сайз меньше</span>` : ""}
         <span class="when">${agoStr(s.ts_utc)}</span>
       </div>
       <div class="big ${card.lastPct > 0 ? "pos" : card.lastPct < 0 ? "neg" : ""}">${fmtPct(card.lastPct)}</div>

@@ -186,7 +186,8 @@ def resolve_record(rec: dict) -> dict | None:
 
 
 def upsert_new(extra_combo: list[dict] | None = None,
-               btc_ret24: float | None = None) -> int:
+               btc_ret24: float | None = None,
+               chg24_map: dict | None = None) -> int:
     """Затянуть в дневник новые записи: все entry-кандидаты из CSV + связки.
     Идемпотентно по id. Ожидание замораживается ЗДЕСЬ, в момент рождения."""
     rows = []
@@ -213,7 +214,11 @@ def upsert_new(extra_combo: list[dict] | None = None,
                         "dd_at_zone": float(r["dd_pct"]),
                         "age_h": float(r["age_h"]),
                         "vol_ratio": float(r["vol_ratio"]) if r.get("vol_ratio") else None,
-                        "btc_ret24": btc_ret24},
+                        "btc_ret24": btc_ret24,
+                        # «вторая волна» (≥+10%/24ч до сигнала) — когорта для
+                        # форвард-разреза (кейс ALLO 07.07); None = не знаем
+                        "chg24_at_zone": (chg24_map or {}).get(r["symbol"]),
+                        "second_wave": ((chg24_map or {}).get(r["symbol"]) or 0) >= 10 or None},
                 "expectation": build_expectation(kind, closed),
                 "outcome": None, "grade": {"verdict": "pending"},
             }

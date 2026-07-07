@@ -437,6 +437,8 @@ def _enrich_bias(live: list[dict]) -> None:
         print(f"[feed] bias enrich skipped: {e}")
 
 
+_last_chg24: dict = {}   # symbol → %24ч на последнем entry-тике (для diary ctx)
+
 # ─── Форензика «Вход имеет смысл сейчас» ─────────────────────────────────────
 # Правила = КОПИЯ фронтовых (site/app.js renderEntry) — менять СИНХРОННО.
 # Кандидат логируется ОДИН раз при первом прохождении правил: форвард потом
@@ -520,8 +522,14 @@ def log_entry_candidates(live: list[dict]) -> None:
 
         with urllib.request.urlopen(
                 "https://api.bybit.com/v5/market/tickers?category=linear", timeout=10) as r:
-            tick = {t["symbol"]: float(t.get("lastPrice") or 0)
-                    for t in json.load(r)["result"]["list"]}
+            _tl = json.load(r)["result"]["list"]
+            tick = {t["symbol"]: float(t.get("lastPrice") or 0) for t in _tl}
+            # 24ч-изменение на момент попадания в зону: метка «вторая волна»
+            # (≥+10% — кейс ALLO 07.07, правило брата «сайз меньше») + когорта
+            # в дневник; кладём в модульный кэш для diary.upsert (тот же тик)
+            global _last_chg24
+            _last_chg24 = {t["symbol"]: round(float(t.get("price24hPcnt") or 0) * 100, 2)
+                           for t in _tl}
 
         new_rows = []
         for s, age_h, is_awk, key in pre[:12]:            # кап запросов за тик
@@ -574,10 +582,13 @@ def log_entry_candidates(live: list[dict]) -> None:
                 from push_send import send_push
                 for r in new_rows[:3]:
                     awk = r["kind"] == "awakening"
+                    c24 = _last_chg24.get(r["symbol"])
+                    warn = (f" · ⚠ уже {c24:+.0f}%/24ч — СAЙЗ МЕНЬШЕ"
+                            if c24 is not None and c24 >= 10 else "")
                     send_push(
                         f"🎯 {r['symbol']}" + (" 🌅" if awk else "") + " — вход имеет смысл",
                         f"{'пробуждение ×' + str(r['vol_ratio']) if awk else 'радар-альт ⬆'} · "
-                        f"live {r['last_pct']:+.1f}% · просадка {r['dd_pct']:+.1f}% · ЛОНГ, план на карточке",
+                        f"live {r['last_pct']:+.1f}% · просадка {r['dd_pct']:+.1f}% · ЛОНГ, план на карточке{warn}",
                         tag=f"entry-{r['symbol']}")
             except Exception as e:
                 print(f"[push] entry пропущен: {e}")
@@ -859,7 +870,7 @@ def build_feed() -> dict:
                 btc = round(float(json.load(r)["result"]["list"][0]["price24hPcnt"]) * 100, 2)
         except Exception:
             pass
-        diary.upsert_new(extra_combo=combos, btc_ret24=btc)
+        diary.upsert_new(extra_combo=combos, btc_ret24=btc, chg24_map=_last_chg24)
     except Exception as e:
         print(f"[feed] diary upsert пропущен: {e}")
     ledger = update_ledger(live)
