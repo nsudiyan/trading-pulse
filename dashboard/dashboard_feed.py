@@ -452,6 +452,8 @@ def fetch_market_snapshot() -> dict | None:
             "last": {t["symbol"]: float(t.get("lastPrice") or 0) for t in tl},
             "chg24": {t["symbol"]: round(float(t.get("price24hPcnt") or 0) * 100, 2)
                       for t in tl},
+            "funding": {t["symbol"]: round(float(t.get("fundingRate") or 0) * 100, 4)
+                        for t in tl},
             "btc_ret24": None, "btc_range24": None,
         }
         b = next((t for t in tl if t["symbol"] == "BTCUSDT"), None)
@@ -887,6 +889,12 @@ def build_feed() -> dict:
     live = collect_live_signals()
     _enrich_bias(live)
     mkt = fetch_market_snapshot()          # ОДИН tickers-запрос на тик (S3)
+    if mkt:
+        for s_ in live:
+            if s_.get("source") == "storm" and s_.get("direction") == "short":
+                fr = mkt["funding"].get(s_["symbol"])
+                if fr is not None:
+                    s_["funding_now"] = fr
     log_entry_candidates(live, mkt)        # форензика шорт-листа «вход сейчас»
     combos = combos_block(mkt)
     _push_new_combos(combos)               # 🔔 новые связки — пушем на устройства

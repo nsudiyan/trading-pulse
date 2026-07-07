@@ -405,6 +405,20 @@ function sweepTag(sym) {
   return `<span class="windtag" title="игла ${hhmm} МСК: фитиль −${sw.wick_pct}% на объёме ×${sw.vol_x} — вынос лонговых стопов; ретро n=61: через 3ч медиана +0.6%, вверх 61% — стопы сняты, база отскока; свой стоп под такой лоу не ставить">🎣 вынос вниз ${hhmm}</span>`;
 }
 
+/* 🔒 funding-чек шторм-шортов (добро брата 07.07 после MAGMA): автоматизация
+   ручного чеклиста MUSDT-эталона. ИНФО, не сигнал: лид «вниз-пробой при
+   funding-плюсе доигрывается 17% vs 7%» жив 3/3 (MUSDT/ADA/MAGMA), но правилом
+   станет только после side_study-2 (n≥60). База funding = 0.005%/период. */
+function fundingTag(sig) {
+  if (sig.source !== "storm" || sig.direction !== "short" || sig.funding_now == null) return "";
+  const f = sig.funding_now, xBase = Math.abs(f) / 0.005;
+  if (f >= 0.01)
+    return `<span class="windtag" title="funding ${fmtPct(f, 3)}/период = ${xBase.toFixed(0)}× базы ПРИ падении — лонги платят и упираются (запертая толпа сверху, выкупать пробой некому). MUSDT-паттерн: live-счёт лида 3/3 (MUSDT +11%, ADA +3%, MAGMA +19.8%), ретро 17% vs 7%. НЕ правило до side_study-2 — решение твоё, скальп-класс, сайз малый">🔒 лонги заперты · f ${fmtPct(f, 3)}</span>`;
+  if (f <= -0.01)
+    return `<span class="risktag" title="funding ${fmtPct(f, 3)}/период — толпа уже В ШОРТАХ и платит: классический профиль выкупа пробоя (94% таких возвращаются). Анти-сторона funding-лида">⚡ толпа в шортах · выкуп-риск</span>`;
+  return "";
+}
+
 function comboTag(sym) {
   const c = (state.feed?.combos || []).find((x) => x.symbol === sym);
   if (!c) return "";
@@ -495,6 +509,7 @@ function cardHtml(sig, isFresh = false) {
       ${sig.emits > 1 ? `<span class="badge" title="повторных алертов">×${sig.emits}</span>` : ""}
       ${biasTag(sig)}
       ${riskTag(sig)}
+      ${fundingTag(sig)}
       ${weatherTag(sig)}
       ${sweepTag(sig.symbol)}
       ${pumpTag(sig.symbol)}
