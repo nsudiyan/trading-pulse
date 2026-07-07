@@ -28,6 +28,17 @@ TARGETS = [
     BASE / "outcomes" / "pump_resolved.csv",
     BASE / "outcomes" / "trades.json",
     BASE / "outcomes" / "rejected_history.csv",   # A2: персист-сток реджектов (контрфакты)
+    # ── добавлено 2026-07-07 (аудит передачи вахты): невосполнимые данные
+    #    боевого периода — код переписывается, форензика НИКОГДА ──
+    BASE / "dashboard" / "diary.json",            # дневник: замороженные ожидания
+    BASE / "dashboard" / "signals_ledger.json",                 # треки 6ч/24ч всех источников
+    BASE / "dashboard" / "rose_history.json",     # посты платного канала + треки
+    BASE / "outcomes" / "entry_candidates.csv",   # форензика зоны входа
+    BASE / "outcomes" / "radar_hits.csv",
+    BASE / "outcomes" / "radar_resolved.csv",
+    BASE / "outcomes" / "storm_stages.csv",       # стадии шторма/pump
+    BASE / "outcomes" / "rose_signals.csv",
+    BASE / "outcomes" / "rose_outcomes.csv",
 ]
 
 
