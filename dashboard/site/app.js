@@ -221,7 +221,7 @@ function renderBiasAcc(feed) {
   }
 }
 
-async function renderLive(feed) {
+async function renderLive(feed, force = false) {
   let sigs = pickLiveSignals(feed);
   renderBiasAcc(feed);
   liveFilterBar(sigs);
@@ -240,7 +240,7 @@ async function renderLive(feed) {
   }
   // реконсиляция: пересборка только при изменении набора
   const haveIds = new Set(state.liveCards.keys());
-  const same = wantIds.size === haveIds.size && [...wantIds].every((i) => haveIds.has(i));
+  const same = !force && wantIds.size === haveIds.size && [...wantIds].every((i) => haveIds.has(i));
   if (!same) {
     box.innerHTML = "";
     state.liveCards.clear();
@@ -302,7 +302,7 @@ function sweepTag(sym) {
   const sw = (state.feed?.sweeps || []).find((x) => x.symbol === sym);
   if (!sw || (Date.now() - new Date(sw.ts)) > 2 * 3600_000) return "";
   const t = new Date(sw.ts);
-  const hhmm = `${String(t.getUTCHours() + 3).padStart(2, "0")}:${String(t.getUTCMinutes()).padStart(2, "0")}`;
+  const hhmm = `${String((t.getUTCHours() + 3) % 24).padStart(2, "0")}:${String(t.getUTCMinutes()).padStart(2, "0")}`;
   if (sw.dir === "up")
     return `<span class="risktag" title="игла ${hhmm} МСК: фитиль +${sw.wick_pct}% на объёме ×${sw.vol_x} — вынос шортовых стопов; ретро n=89: через 3ч медиана −0.5%, вверх лишь 43% — не вход, часто раздача">🎣 вынос вверх ${hhmm}</span>`;
   return `<span class="windtag" title="игла ${hhmm} МСК: фитиль −${sw.wick_pct}% на объёме ×${sw.vol_x} — вынос лонговых стопов; ретро n=61: через 3ч медиана +0.6%, вверх 61% — стопы сняты, база отскока; свой стоп под такой лоу не ставить">🎣 вынос вниз ${hhmm}</span>`;
@@ -327,8 +327,11 @@ function comboAlive(c) {
   }
   let live = (px - c.basis) / c.basis * 100;
   if (c.direction === "short") live = -live;
-  const peakRef = Math.max(c.peak24_pct || 0, state.comboPeak.get(c.symbol) || 0, live);
-  state.comboPeak.set(c.symbol, peakRef);
+  // ключ = монета|пост, НЕ только монета (код-ревью 2026-07-06 HIGH-1): иначе
+  // пик от ПРОШЛОЙ связки по той же монете (за сессию) убивал бы новую связку
+  const pk = `${c.symbol}|${c.post_ts}`;
+  const peakRef = Math.max(c.peak24_pct || 0, state.comboPeak.get(pk) || 0, live);
+  state.comboPeak.set(pk, peakRef);
   if (peakRef >= 8) return { alive: false, live };
   if (live < -3) return { alive: false, live };
   return { alive: true, live };
@@ -338,6 +341,9 @@ function renderCombos() {
   const box = $("combo-cards");
   if (!box || !state.feed) return;
   const rows = [];
+  // чистка comboPeak от ключей исчезнувших связок (не копить за сессию)
+  const liveKeys = new Set((state.feed.combos || []).map((c) => `${c.symbol}|${c.post_ts}`));
+  for (const k of state.comboPeak.keys()) if (!liveKeys.has(k)) state.comboPeak.delete(k);
   for (const c of state.feed.combos || []) {
     const { alive, live } = comboAlive(c);
     if (!alive) continue;
@@ -506,7 +512,7 @@ function headerTick(id, name, last, pcnt) {
   if (id === "btc-tick" && isFinite(p)) {
     const was = state.btcRet24;
     state.btcRet24 = p * 100;   // погода для скринер-плашек
-    if (was == null && state.feed) renderLive(state.feed);  // первый тик — дорисовать плашки
+    if (was == null && state.feed) renderLive(state.feed, true);  // первый тик — форс-перерисовка (иначе реконсиляция пропустит и weatherTag не появится)
   }
   const chg = _hdrPct[id];
   $(id).innerHTML = `${name} <b>${last.toLocaleString("en-US", { maximumFractionDigits: last > 1000 ? 0 : 2 })}</b>` +
@@ -573,7 +579,7 @@ function renderEntry() {
   // а общий BTC-движ (radar_resolved: каскадные good 15% vs 23% у одиночных) — скрыть
   const buckets = new Map();
   for (const it of out) {
-    const b = Math.round(new Date(it.card.sig.ts_utc) / 300_000);
+    const b = Math.floor(new Date(it.card.sig.ts_utc) / 300_000);   // floor = 5-мин скан-бакет (совпадает с сервером)
     (buckets.get(b) || buckets.set(b, []).get(b)).push(it);
   }
   let waveNote = "";

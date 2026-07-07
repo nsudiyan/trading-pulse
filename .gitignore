@@ -103,3 +103,4 @@ archive/dead_2026-06-29/
 dashboard/push_subs.json
 dashboard/push_vapid.json
 dashboard/combo_push_seen.json
+dashboard/entry_logged.json

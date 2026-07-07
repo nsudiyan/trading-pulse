@@ -279,14 +279,19 @@ def live_break_pass(tickers: dict, dry_run: bool = False,
                 mem_seen.add(sym)
             continue
         sent = send_tg(msg, radar_buttons(sym))
-        # очередь ПЕРЕД log_stage (как кулдаун ignite): kill в окне не даёт дублей
-        atomic_json_update(
-            IGNITE_BREAKS_PATH,
-            lambda d, s=sym: {**{k: v for k, v in (d or {}).items()
-                                 if now - v.get("ts", 0) < WATCH_TTL_H * 3600},
-                              s: {"ts": now, "price": last,
-                                  "plateau": st["plateau_low"]}},
-            default={})
+        # очередь пишем ТОЛЬКО при доставке (код-ревью 2026-07-06 MED-1): раньше
+        # писалась безусловно → недоставленный 🔻 навсегда помечался доставленным
+        # (WATCH подхватывал очередь → break_sent). Теперь fail → очереди нет →
+        # следующий 12с-тик повторит send_tg (ретрай, как у медленного пути).
+        # Порядок «очередь ПЕРЕД log_stage» сохранён: kill в окне не даёт дублей.
+        if sent:
+            atomic_json_update(
+                IGNITE_BREAKS_PATH,
+                lambda d, s=sym: {**{k: v for k, v in (d or {}).items()
+                                     if now - v.get("ts", 0) < WATCH_TTL_H * 3600},
+                                  s: {"ts": now, "price": last,
+                                      "plateau": st["plateau_low"]}},
+                default={})
         log_stage(sym, "pump_break", last,
                   {"plateau_low": st["plateau_low"], "peak": st.get("peak"),
                    "off_peak_pct": round((st["peak"] - last) / st["peak"] * 100, 1)

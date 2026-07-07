@@ -471,7 +471,11 @@ def log_entry_candidates(live: list[dict]) -> None:
     Fail-open: сбой не трогает сборку фида."""
     try:
         import urllib.request
-        seen = set(jload(ENTRY_SEEN_PATH, []))
+        # seen хранится СПИСКОМ в порядке добавления (хронология) — обрезка
+        # [-N:] оставляет свежие; set только для быстрой проверки membership
+        # (код-ревью 2026-07-06: sorted()[-N] выкидывал алфавитно-ранние, не старые)
+        seen_list = jload(ENTRY_SEEN_PATH, [])
+        seen = set(seen_list)
         pumps = {p["symbol"]: p for p in pump_watch_block()}
         now = utcnow()
 
@@ -492,6 +496,25 @@ def log_entry_candidates(live: list[dict]) -> None:
             if key in seen:
                 continue
             pre.append((s, age_h, is_awk, key))
+        if not pre:
+            return
+
+        # волновой фильтр = как на фронте (renderEntry): ≥5 non-awk из одного
+        # 5-мин скана — рыночная волна (BTC-движ), НЕ логируем и НЕ пушим (CSV
+        # = ровно то, что видит юзер; волны для анализа есть в radar_resolved
+        # с cascade=1). floor-бакет по signal_ts (код-ревью 2026-07-06 MED-2/-4).
+        def _bucket(sig):
+            return int(datetime.fromisoformat(sig["ts_utc"]).timestamp()) // 300
+        wave_counts: dict[int, int] = {}
+        for s, _a, is_awk, _k in pre:
+            if not is_awk:
+                wave_counts[_bucket(s)] = wave_counts.get(_bucket(s), 0) + 1
+        wave_buckets = {b for b, n in wave_counts.items() if n >= 5}
+        if wave_buckets:
+            dropped = [s["symbol"] for s, _a, awk, _k in pre
+                       if not awk and _bucket(s) in wave_buckets]
+            pre = [x for x in pre if x[2] or _bucket(x[0]) not in wave_buckets]
+            print(f"[feed] entry: волна {len(dropped)} монет скрыта (не лог/не пуш): {dropped}")
         if not pre:
             return
 
@@ -533,6 +556,7 @@ def log_entry_candidates(live: list[dict]) -> None:
                 "dd_pct": round(dd, 2), "vol_ratio": s.get("vol_ratio"),
             })
             seen.add(key)
+            seen_list.append(key)
 
         if new_rows:
             write_header = not ENTRY_LOG_PATH.exists()
@@ -541,15 +565,14 @@ def log_entry_candidates(live: list[dict]) -> None:
                 if write_header:
                     w.writeheader()
                 w.writerows(new_rows)
-            ENTRY_SEEN_PATH.write_text(json.dumps(sorted(seen)[-3000:]))
+            ENTRY_SEEN_PATH.write_text(json.dumps(seen_list[-3000:]))
             print(f"[feed] entry-кандидатов залогировано: {len(new_rows)}: "
                   f"{[r['symbol'] for r in new_rows]}")
-            # 🔔 пуш на устройства (волну ≥5 монет одним сканом не шлём — шум)
+            # 🔔 пуш (волна уже отфильтрована выше; кап [:3] — от спама в
+            # редкий день с многими одиночными сигналами из разных сканов)
             try:
                 from push_send import send_push
-                real = [r for r in new_rows if r["kind"] == "awakening"] \
-                    if len(new_rows) >= 5 else new_rows
-                for r in real[:3]:
+                for r in new_rows[:3]:
                     awk = r["kind"] == "awakening"
                     send_push(
                         f"🎯 {r['symbol']}" + (" 🌅" if awk else "") + " — вход имеет смысл",
@@ -734,18 +757,24 @@ def _push_new_combos(combos: list[dict]) -> None:
     try:
         from push_send import send_push
         seen_p = DIR / "combo_push_seen.json"
-        seen = set(jload(seen_p, []))
+        seen_list = jload(seen_p, [])       # порядок добавления = хронология
+        seen = set(seen_list)
+        changed = False
         for c in combos:
             key = f"{c['symbol']}|{c['post_ts'][:16]}"
             if key in seen:
                 continue
             seen.add(key)
+            seen_list.append(key)
+            changed = True
             send_push(
                 f"⚡ СВЯЗКА {c['symbol']} — пробуждение × Rose",
                 f"🌅 ×{c['awake_ratio']} было ДО поста · {c.get('channel') or 'rose'} "
                 f"{c.get('direction') or ''} · такие посты ×2 лучше — окно входа открыто",
                 tag=f"combo-{c['symbol']}")
-        seen_p.write_text(json.dumps(sorted(seen)[-500:]))
+        # обрезка по хронологии, не по алфавиту; пишем только при изменении
+        if changed:
+            seen_p.write_text(json.dumps(seen_list[-500:]))
     except Exception as e:
         print(f"[push] combos пропущен: {e}")
 
