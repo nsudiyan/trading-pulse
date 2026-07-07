@@ -221,7 +221,9 @@ def upsert_new(extra_combo: list[dict] | None = None,
             have.add(rid)
             added += 1
         for c in combos:
-            rid = f"{c['symbol']}|{c['post_ts']}|combo"
+            # id по msg_key: быстрая (превью, 60с) и каноническая (Telethon,
+            # 15 мин) версии одного поста = ОДНА запись дневника, без дублей
+            rid = f"{c['symbol']}|{c.get('msg_key') or c['post_ts']}|combo"
             if rid in have:
                 continue
             d["records"].append({

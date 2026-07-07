@@ -233,6 +233,25 @@ def poll_channels(state: dict, tickers_cache: dict, dry_run: bool = False) -> di
             if ch == "rose":
                 direction = "LONG"
             sig_id = f"{ch}/{post['id']}"
+            # ⚡ live-маркер поста для связок дашборда (брат 2026-07-07: «16 мин
+            # много, нужно 2») — feed-тик (60с) сверит с журналом пробуждений,
+            # не дожидаясь Telethon-цикла (15 мин). Fail-open: сторож важнее.
+            try:
+                _mark = {"channel": ch, "msg_id": post["id"], "symbol": symbol,
+                         "direction": direction.lower(),
+                         "ts_utc": datetime.fromtimestamp(
+                             post["ts"], tz=timezone.utc).isoformat()}
+                _now = time.time()
+                atomic_json_update(
+                    Path(__file__).parent / "dashboard" / "rose_live_posts.json",
+                     lambda lst, m=_mark, n=_now: (
+                         [x for x in (lst or [])
+                          if n - datetime.fromisoformat(x["ts_utc"]).timestamp() < 48 * 3600
+                          and not (x["channel"] == m["channel"] and x["msg_id"] == m["msg_id"])]
+                         + [m])[-100:],
+                     default=[])
+            except Exception as _e:
+                print(f"[rose] live-маркер не записан (не критично): {_e}")
             age_min = (time.time() - post["ts"]) / 60.0
             if not tickers_cache:
                 try:

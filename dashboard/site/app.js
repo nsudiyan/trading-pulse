@@ -457,7 +457,7 @@ function renderCombos() {
         <span class="when">пост ${agoStr(c.post_ts)}</span>
       </div>
       <div class="big ${cls(live ?? c.peak24_pct)}">${fmtPct(live ?? c.peak24_pct, 1)} <span style="font-size:11px;color:var(--muted)">${live != null ? "live от поста" : "пик 24ч"}</span></div>
-      <div class="meta">🌅 ×${c.awake_ratio} за ${Math.round((new Date(c.post_ts) - new Date(c.awake_ts)) / 3600_000)}ч до поста · ${esc(c.channel || "rose")} ${esc(c.direction || "")} · пик 24ч ${fmtPct(c.peak24_pct, 1)}</div>
+      <div class="meta">🌅 ×${c.awake_ratio} за ${Math.round((new Date(c.post_ts) - new Date(c.awake_ts)) / 3600_000)}ч до поста · ${esc(c.channel || "rose")} ${esc(c.direction || "")}${c.fast ? " · ⚡ только что (трек уточняется)" : " · пик 24ч " + fmtPct(c.peak24_pct, 1)}</div>
     </div>`).join("");
 }
 let _comboLast = 0;

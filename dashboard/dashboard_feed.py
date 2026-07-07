@@ -648,7 +648,16 @@ def bias_accuracy(ledger: dict) -> dict:
 def combos_block() -> list[dict]:
     """⚡ Связки «пробуждение × Rose-пост × структура жива» (лид 2026-07-06,
     n=5: посты с радар-хитом ≤72ч до отрабатывают ×2 лучше — VANRY +146%).
-    Показ, пока Rose-пост свежее 48ч. НЕ торговое правило — визуальная сводка."""
+    Показ, пока Rose-пост свежее 48ч. НЕ торговое правило — визуальная сводка.
+
+    ДВА ИСТОЧНИКА постов (брат 2026-07-07 «16 мин много, нужно 2»):
+    1) канонический — rose_history.json (Telethon, 15-мин цикл): точный basis,
+       peak/ret, правило снятия по пику;
+    2) live-маркеры rose_live_posts.json от rose_watch (превью каналов, 60с):
+       связка рождается ≤2 мин после поста, basis = lastPrice на момент
+       рождения, помечена fast=true; при появлении канонического трека с тем
+       же msg_key быстрый вариант вытесняется. Правила отбора ИДЕНТИЧНЫ —
+       качество анализа не отличается, отличается только скорость."""
     try:
         from bias import RADAR_MAJORS
         hits = []
@@ -661,34 +670,76 @@ def combos_block() -> list[dict]:
                     continue
         now = utcnow()
         pumps = {p["symbol"]: p for p in pump_watch_block()}
-        out = []
-        for t in jload(DIR / "rose_history.json", {"tracks": []})["tracks"]:
-            post_ts = datetime.fromisoformat(t["anchor_ts"])
-            if (now - post_ts).total_seconds() > 48 * 3600:
-                continue
-            sym = t["symbol"]
+
+        def passes(sym: str, post_ts: datetime):
+            """Общие правила связки; возвращает (awake_ts, ratio) или None."""
             if sym in RADAR_MAJORS:
-                continue
+                return None
+            if (now - post_ts).total_seconds() > 48 * 3600:
+                return None
             awake = [(ts, r) for s, ts, r in hits
                      if s == sym and 0 <= (post_ts - ts).total_seconds() <= 72 * 3600 and r >= 5]
             if not awake:
-                continue
+                return None
             p = pumps.get(sym)
             if p and (p.get("dist") or p.get("broke")):
-                continue          # раздача/слом = связка мертва (просьба брата: удалять)
+                return None       # раздача/слом = связка мертва
+            return max(awake, key=lambda x: x[1])
+
+        out, seen_keys = [], set()
+        # 1) канонические (Telethon-треки)
+        for t in jload(DIR / "rose_history.json", {"tracks": []})["tracks"]:
+            post_ts = datetime.fromisoformat(t["anchor_ts"])
+            hit = passes(t["symbol"], post_ts)
+            if not hit:
+                continue
             o = t.get("outcome") or {}
             peak, ret = o.get("peak24_pct"), o.get("ret24_pct")
-            # блок = «вход сейчас»: пик ≥8% от поста УЖЕ случился → связка
-            # отработана, снять (урок брата 06.07: не музей, а рабочий стол)
+            # «вход сейчас»: пик ≥8% от поста уже случился → снята (урок 06.07)
             if peak is not None and peak >= 8:
+                # ключ всё равно занимаем: быстрый двойник не должен воскресить
+                for a in t.get("alerts") or []:
+                    seen_keys.add(f"{a.get('channel')}:{a.get('msg_id')}")
                 continue
-            aw_ts, aw_r = max(awake, key=lambda x: x[1])
+            last_a = (t.get("alerts") or [{}])[-1]
+            key = f"{last_a.get('channel')}:{last_a.get('msg_id')}"
+            for a in t.get("alerts") or []:
+                seen_keys.add(f"{a.get('channel')}:{a.get('msg_id')}")
             out.append({
-                "symbol": sym, "direction": t.get("direction"),
-                "awake_ts": aw_ts.isoformat(), "awake_ratio": aw_r,
-                "post_ts": t["anchor_ts"], "channel": (t.get("alerts") or [{}])[-1].get("channel"),
-                "basis": o.get("basis"),
+                "symbol": t["symbol"], "direction": t.get("direction"),
+                "awake_ts": hit[0].isoformat(), "awake_ratio": hit[1],
+                "post_ts": t["anchor_ts"], "channel": last_a.get("channel"),
+                "basis": o.get("basis"), "msg_key": key,
                 "peak24_pct": peak, "ret24_pct": ret,
+            })
+        # 2) live-маркеры (rose_watch, 60с) — только те, кого каноника ещё не знает
+        import urllib.request
+        for m in jload(DIR / "rose_live_posts.json", []) or []:
+            key = f"{m.get('channel')}:{m.get('msg_id')}"
+            if key in seen_keys:
+                continue
+            try:
+                post_ts = datetime.fromisoformat(m["ts_utc"])
+            except Exception:
+                continue
+            hit = passes(m["symbol"], post_ts)
+            if not hit:
+                continue
+            basis = None
+            try:
+                with urllib.request.urlopen(
+                        "https://api.bybit.com/v5/market/tickers?category=linear&symbol="
+                        + m["symbol"], timeout=6) as r:
+                    basis = float(json.load(r)["result"]["list"][0]["lastPrice"])
+            except Exception:
+                pass
+            seen_keys.add(key)
+            out.append({
+                "symbol": m["symbol"], "direction": m.get("direction"),
+                "awake_ts": hit[0].isoformat(), "awake_ratio": hit[1],
+                "post_ts": m["ts_utc"], "channel": m.get("channel"),
+                "basis": basis, "msg_key": key, "fast": True,
+                "peak24_pct": None, "ret24_pct": None,
             })
         out.sort(key=lambda x: x["post_ts"], reverse=True)
         return out
@@ -761,7 +812,9 @@ def _push_new_combos(combos: list[dict]) -> None:
         seen = set(seen_list)
         changed = False
         for c in combos:
-            key = f"{c['symbol']}|{c['post_ts'][:16]}"
+            # msg_key стабилен между быстрой (превью) и канонической (Telethon)
+            # версией одного поста — двойного пуша нет (брат: «нужно 2 минуты»)
+            key = c.get("msg_key") or f"{c['symbol']}|{c['post_ts'][:16]}"
             if key in seen:
                 continue
             seen.add(key)
