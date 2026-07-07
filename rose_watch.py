@@ -233,25 +233,6 @@ def poll_channels(state: dict, tickers_cache: dict, dry_run: bool = False) -> di
             if ch == "rose":
                 direction = "LONG"
             sig_id = f"{ch}/{post['id']}"
-            # ⚡ live-маркер поста для связок дашборда (брат 2026-07-07: «16 мин
-            # много, нужно 2») — feed-тик (60с) сверит с журналом пробуждений,
-            # не дожидаясь Telethon-цикла (15 мин). Fail-open: сторож важнее.
-            try:
-                _mark = {"channel": ch, "msg_id": post["id"], "symbol": symbol,
-                         "direction": direction.lower(),
-                         "ts_utc": datetime.fromtimestamp(
-                             post["ts"], tz=timezone.utc).isoformat()}
-                _now = time.time()
-                atomic_json_update(
-                    Path(__file__).parent / "dashboard" / "rose_live_posts.json",
-                     lambda lst, m=_mark, n=_now: (
-                         [x for x in (lst or [])
-                          if n - datetime.fromisoformat(x["ts_utc"]).timestamp() < 48 * 3600
-                          and not (x["channel"] == m["channel"] and x["msg_id"] == m["msg_id"])]
-                         + [m])[-100:],
-                     default=[])
-            except Exception as _e:
-                print(f"[rose] live-маркер не записан (не критично): {_e}")
             age_min = (time.time() - post["ts"]) / 60.0
             if not tickers_cache:
                 try:
@@ -262,6 +243,27 @@ def poll_channels(state: dict, tickers_cache: dict, dry_run: bool = False) -> di
                     print(f"[rose] tickers fail, {sig_id} отложен до след. опроса: {e}")
                     seen.remove(post["id"])
                     break
+            # ⚡ live-маркер поста для связок дашборда (брат 07.07: «нужно 2 мин»).
+            # ПОСЛЕ tickers: в маркер идёт ЦЕНА НА МОМЕНТ ПОСТА — фиксированный
+            # базис связки (ревью 07.07: без него fast-basis дрейфовал за ценой
+            # и правило «провал −3%» было слепым — кейс LIT). Fail-open.
+            try:
+                _mark = {"channel": ch, "msg_id": post["id"], "symbol": symbol,
+                         "direction": direction.lower(),
+                         "price": (tickers_cache.get(symbol) or {}).get("last"),
+                         "ts_utc": datetime.fromtimestamp(
+                             post["ts"], tz=timezone.utc).isoformat()}
+                _now = time.time()
+                atomic_json_update(
+                    Path(__file__).parent / "dashboard" / "rose_live_posts.json",
+                    lambda lst, m=_mark, n=_now: (
+                        [x for x in (lst or [])
+                         if n - datetime.fromisoformat(x["ts_utc"]).timestamp() < 48 * 3600
+                         and not (x["channel"] == m["channel"] and x["msg_id"] == m["msg_id"])]
+                        + [m])[-100:],
+                    default=[])
+            except Exception as _e:
+                print(f"[rose] live-маркер не записан (не критично): {_e}")
             if symbol not in tickers_cache:
                 # монета не на Bybit — подкопать нечем, но факт фиксируем:
                 # доля таких сигналов сама по себе ответ про применимость идеи

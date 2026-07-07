@@ -760,10 +760,11 @@ def combos_block(mkt: dict | None = None) -> list[dict]:
             hit = passes(m["symbol"], post_ts)
             if not hit:
                 continue
-            # basis из снапшота тика (S3: без синхронного fetch на маркер);
-            # нет снапшота → None, резолвер дневника возьмёт close первого
-            # полного бара после поста (та же конвенция входа)
-            basis = (mkt or {}).get("last", {}).get(m["symbol"]) or None
+            # basis = ЦЕНА НА МОМЕНТ ПОСТА из маркера (фиксированная; ревью
+            # 07.07 кейс LIT: снапшотный basis дрейфовал за ценой каждый тик и
+            # правила смерти слепли). Фолбэк для старых маркеров без price —
+            # снапшот, но только как последняя соломинка.
+            basis = m.get("price") or (mkt or {}).get("last", {}).get(m["symbol"]) or None
             seen_keys.add(key)
             out.append({
                 "symbol": m["symbol"], "direction": m.get("direction"),
@@ -772,6 +773,21 @@ def combos_block(mkt: dict | None = None) -> list[dict]:
                 "basis": basis, "msg_key": key, "fast": True,
                 "peak24_pct": None, "ret24_pct": None,
             })
+        # Серверное зеркало правил смерти (кейс LIT 07.07: фронт снимал по WS,
+        # а фид продолжал нести мёртвую связку): по live из снапшота тика.
+        if mkt:
+            alive = []
+            for c in out:
+                b, px = c.get("basis"), mkt["last"].get(c["symbol"])
+                if b and px:
+                    live = (px - b) / b * 100
+                    if (c.get("direction") or "").lower() == "short":
+                        live = -live
+                    if live <= -3 or live >= 8:
+                        continue      # пост провален / ход случился — снята
+                alive.append(c)
+            out = alive
+
         # M2 (ревью 07.07): одна МОНЕТА = одна связка. Оба Rose-канала могут
         # запостить одно и то же (и fast/canonical пересекаются) — сворачиваем
         # по symbol: каноника приоритетнее fast, затем самый ранний post_ts.
