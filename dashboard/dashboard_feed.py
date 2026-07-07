@@ -438,6 +438,7 @@ def _enrich_bias(live: list[dict]) -> None:
 
 
 _last_chg24: dict = {}   # symbol → %24ч на последнем entry-тике (для diary ctx)
+_btc_range24: float | None = None   # размах BTC 24ч, режим-тег дневника
 
 # ─── Форензика «Вход имеет смысл сейчас» ─────────────────────────────────────
 # Правила = КОПИЯ фронтовых (site/app.js renderEntry) — менять СИНХРОННО.
@@ -527,9 +528,15 @@ def log_entry_candidates(live: list[dict]) -> None:
             # 24ч-изменение на момент попадания в зону: метка «вторая волна»
             # (≥+10% — кейс ALLO 07.07, правило брата «сайз меньше») + когорта
             # в дневник; кладём в модульный кэш для diary.upsert (тот же тик)
-            global _last_chg24
+            global _last_chg24, _btc_range24
             _last_chg24 = {t["symbol"]: round(float(t.get("price24hPcnt") or 0) * 100, 2)
                            for t in _tl}
+            try:  # размах BTC за 24ч — режим-тег для дневника (дыра №12)
+                b = next(t for t in _tl if t["symbol"] == "BTCUSDT")
+                _btc_range24 = round((float(b["highPrice24h"]) - float(b["lowPrice24h"]))
+                                     / float(b["lastPrice"]) * 100, 2)
+            except Exception:
+                pass
 
         new_rows = []
         for s, age_h, is_awk, key in pre[:12]:            # кап запросов за тик
@@ -870,7 +877,8 @@ def build_feed() -> dict:
                 btc = round(float(json.load(r)["result"]["list"][0]["price24hPcnt"]) * 100, 2)
         except Exception:
             pass
-        diary.upsert_new(extra_combo=combos, btc_ret24=btc, chg24_map=_last_chg24)
+        diary.upsert_new(extra_combo=combos, btc_ret24=btc, chg24_map=_last_chg24,
+                         btc_range24=_btc_range24)
     except Exception as e:
         print(f"[feed] diary upsert пропущен: {e}")
     ledger = update_ledger(live)

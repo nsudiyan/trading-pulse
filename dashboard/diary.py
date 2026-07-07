@@ -97,12 +97,47 @@ def _cold_start_base(kind: str) -> list[float]:
     return out
 
 
+def mark_waves() -> int:
+    """Диспансеризация (07.07): пометить волновые записи (≥5 radar_alt одного
+    5-мин скана — 06.07 сервер логировал волну, фронт скрывал). Помеченные
+    исключаются из own-базы ожиданий. Замороженные expectation НЕ трогаем
+    (замок №1) — чинится линейка будущих ожиданий, не история."""
+    def mut(d):
+        d = d or {"records": []}
+        buckets: dict[int, list] = {}
+        for r in d["records"]:
+            if r.get("kind") != "radar_alt":
+                continue
+            try:
+                b = int(datetime.fromisoformat(r["signal_ts"]).timestamp()) // 300
+            except Exception:
+                continue
+            buckets.setdefault(b, []).append(r)
+        n = 0
+        for b, recs in buckets.items():
+            if len(recs) >= 5:
+                for r in recs:
+                    if not (r.get("ctx") or {}).get("wave"):
+                        r.setdefault("ctx", {})["wave"] = True
+                        n += 1
+        return d
+    atomic_json_update(DIARY_PATH, mut, default={"records": []})
+    return _last_marked(mut)
+
+
+def _last_marked(_):   # счётчик через повторное чтение (mut внутри лока)
+    d = atomic_json_read(DIARY_PATH, default={"records": []}) or {"records": []}
+    return sum(1 for r in d["records"] if (r.get("ctx") or {}).get("wave"))
+
+
 def build_expectation(kind: str, closed_records: list[dict]) -> dict:
     """Ожидание класса из ЗАКРЫТЫХ записей дневника; холодный старт — прокси.
+    Волновые записи (ctx.wave) в базу НЕ идут — коррелированы (см. mark_waves).
     Возвращаемый дикт замораживается в записи (замок №1)."""
     own = [r["outcome"]["peak24"] for r in closed_records
            if r.get("kind") == kind and (r.get("outcome") or {}).get("final")
-           and r["outcome"].get("peak24") is not None]
+           and r["outcome"].get("peak24") is not None
+           and not (r.get("ctx") or {}).get("wave")]
     if len(own) >= MIN_CLASS_N:
         base, src = own, "diary"
     else:
@@ -187,7 +222,8 @@ def resolve_record(rec: dict) -> dict | None:
 
 def upsert_new(extra_combo: list[dict] | None = None,
                btc_ret24: float | None = None,
-               chg24_map: dict | None = None) -> int:
+               chg24_map: dict | None = None,
+               btc_range24: float | None = None) -> int:
     """Затянуть в дневник новые записи: все entry-кандидаты из CSV + связки.
     Идемпотентно по id. Ожидание замораживается ЗДЕСЬ, в момент рождения."""
     rows = []
@@ -214,7 +250,7 @@ def upsert_new(extra_combo: list[dict] | None = None,
                         "dd_at_zone": float(r["dd_pct"]),
                         "age_h": float(r["age_h"]),
                         "vol_ratio": float(r["vol_ratio"]) if r.get("vol_ratio") else None,
-                        "btc_ret24": btc_ret24,
+                        "btc_ret24": btc_ret24, "btc_range24": btc_range24,
                         # «вторая волна» (≥+10%/24ч до сигнала) — когорта для
                         # форвард-разреза (кейс ALLO 07.07); None = не знаем
                         "chg24_at_zone": (chg24_map or {}).get(r["symbol"]),
@@ -336,6 +372,8 @@ def _selfcheck() -> None:
 if __name__ == "__main__":
     if "--selfcheck" in sys.argv:
         _selfcheck()
+    elif "--mark-waves" in sys.argv:
+        print(f"волновых помечено всего: {mark_waves()}")
     elif "--resolve" in sys.argv:
         n = resolve_pending()
         print(f"резолвнуто: {n}")
