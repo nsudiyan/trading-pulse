@@ -104,3 +104,5 @@ dashboard/push_subs.json
 dashboard/push_vapid.json
 dashboard/combo_push_seen.json
 dashboard/entry_logged.json
+dashboard/diary.json
+dashboard/rose_live_posts.json
