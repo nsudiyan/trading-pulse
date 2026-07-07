@@ -93,6 +93,101 @@ async function initPush() {
 }
 initPush();
 
+/* ── 📓 Дневник трейдера: вкладка + рендер журнала/ожиданий/сюрпризов ── */
+const PULSE_SECTIONS = ["sec-entry", "sec-live", "sec-pump", "sec-rose",
+                        "sec-history", "sec-bot", "sec-storm"];
+function switchTab(tab) {
+  document.querySelectorAll(".tab").forEach((b) =>
+    b.classList.toggle("active", b.dataset.tab === tab));
+  for (const id of PULSE_SECTIONS) { const el = $(id); if (el) el.hidden = tab !== "pulse"; }
+  const d = $("sec-diary"); if (d) d.hidden = tab !== "diary";
+  location.hash = tab === "diary" ? "#diary" : "";
+}
+document.querySelectorAll(".tab").forEach((b) =>
+  b.addEventListener("click", () => switchTab(b.dataset.tab)));
+if (location.hash === "#diary") switchTab("diary");
+
+const KIND_RU = { awakening: "🌅 пробуждение", radar_alt: "радар-альт", combo: "⚡ связка" };
+const VERDICT_RU = {
+  confirm: ["✅ в рамках", "var(--up)"],
+  tail_ok: ["〰 хвост нормы", "var(--ink-2)"],
+  surprise_up: ["🚀 сюрприз ↑", "var(--warn)"],
+  surprise_down: ["💥 сюрприз ↓", "var(--down)"],
+  collect: ["⏳ копим базу", "var(--muted)"],
+  in_progress: ["в работе", "var(--muted)"],
+  pending: ["ждёт данных", "var(--muted)"],
+};
+
+function renderDiary(feed) {
+  const dy = feed.diary || {};
+  const recs = dy.records || [];
+  const tiles = $("diary-tiles");
+  if (tiles) {
+    const vc = dy.verdict_counts || {};
+    tiles.innerHTML = [
+      ["записей", dy.n_total ?? 0, ""],
+      ["закрыто (24ч)", dy.n_closed ?? 0, ""],
+      ["✅ в рамках", vc.confirm ?? 0, "up"],
+      ["🚀 сюрпризов ↑", vc.surprise_up ?? 0, "warn"],
+      ["💥 сюрпризов ↓", vc.surprise_down ?? 0, "down"],
+      ["⏳ на тонкой базе", vc.collect ?? 0, ""],
+    ].map(([label, v, tone]) => {
+      const col = tone === "up" ? "var(--up)" : tone === "down" ? "var(--down)" : tone === "warn" ? "var(--warn)" : "var(--ink)";
+      return `<div class="tile"><div class="v" style="color:${col}">${v}</div><div class="l">${esc(label)}</div></div>`;
+    }).join("");
+  }
+  const cls = $("diary-classes");
+  if (cls) {
+    cls.innerHTML = Object.entries(dy.classes || {}).map(([k, c]) => {
+      const e = c.expectation_now || {};
+      const base = e.p50 != null
+        ? `p50 <b>${fmtPct(e.p50, 1)}</b> · разброс ${fmtPct(e.p25, 1)}…${fmtPct(e.p75, 1)} · ход≥5%: ${Math.round((e.move_rate || 0) * 100)}%`
+        : "база копится";
+      return `<div class="tile"><div class="v" style="font-size:15px">${esc(KIND_RU[k] || k)}</div>
+        <div class="l">${base}<br>n=${e.n_class ?? 0} (${esc(e.src || "—")}) · закрыто своих: ${c.n_closed}</div></div>`;
+    }).join("");
+  }
+  const tb = document.querySelector("#diary-table tbody");
+  if (tb) {
+    tb.innerHTML = recs.map((r) => {
+      const o = r.outcome || {};
+      const e = r.expectation || {};
+      const [vLabel, vColor] = VERDICT_RU[(r.grade || {}).verdict] || VERDICT_RU.pending;
+      const px = (p) => r.basis != null && p != null
+        ? (r.basis * (1 + p / 100)).toPrecision(5) : null;
+      const range = o.peak24 != null
+        ? `<span class="mono">${px(o.dd24)} … ${px(o.peak24)}</span>`
+        : "—";
+      return `<tr>
+        <td class="lft">${fmtMsk(r.zone_ts)}</td>
+        <td class="lft">${starHtml(r.symbol)} <b>${esc(r.symbol)}</b></td>
+        <td class="lft">${esc(KIND_RU[r.kind] || r.kind)}</td>
+        <td class="mono">${r.basis ?? "—"}</td>
+        <td>${range}</td>
+        <td class="${cls2(o.peak24)}">${fmtPct(o.peak24, 1)}</td>
+        <td class="${cls2(o.dd24)}">${fmtPct(o.dd24, 1)}</td>
+        <td class="${cls2(o.ret24)}"><b>${fmtPct(o.ret24, 1)}</b></td>
+        <td class="lft" title="заморожено ${esc(e.frozen_at || "")} · база: ${esc(e.src || "")}">${e.p50 != null ? fmtPct(e.p50, 1) + " (n=" + e.n_class + ")" : "копится"}</td>
+        <td class="lft" style="color:${vColor}" title="${esc((r.grade || {}).note || "")}">${vLabel}</td>
+      </tr>`;
+    }).join("");
+  }
+  const sup = $("diary-surprises");
+  if (sup) {
+    const ss = recs.filter((r) => ["surprise_up", "surprise_down"].includes((r.grade || {}).verdict));
+    sup.innerHTML = ss.length ? ss.map((r) => {
+      const o = r.outcome || {}, c = r.ctx || {}, e = r.expectation || {};
+      return `<div class="card entry${(r.grade.verdict === "surprise_up") ? " awk" : ""}">
+        <div class="row1">${starHtml(r.symbol)}<span class="sym">${esc(r.symbol)}</span>
+          <span class="when">${fmtMsk(r.zone_ts)}</span></div>
+        <div class="big ${cls2(o.peak24)}">${fmtPct(o.peak24, 1)} <span style="font-size:11px;color:var(--muted)">ожидали ${fmtPct(e.p50, 1)}</span></div>
+        <div class="meta">${esc(KIND_RU[r.kind] || r.kind)} · ×${c.vol_ratio ?? "—"} · BTC ${fmtPct(c.btc_ret24, 1)} при входе · ${esc((r.grade || {}).note || "")}</div>
+      </div>`;
+    }).join("") : '<div class="empty">Сюрпризов пока нет — исходы в рамках ожиданий.</div>';
+  }
+}
+const cls2 = (v) => (v == null ? "" : v > 0 ? "pos" : v < 0 ? "neg" : "");
+
 /* ── звёздочки: пометка «просмотрел/просмотрю» на МОНЕТЕ, живёт в браузере ── */
 function starHtml(sym) {
   const on = state.starred.has(sym);
@@ -854,6 +949,7 @@ async function refresh() {
   if (isNew) {
     renderPump(feed);
     renderCombos();
+    renderDiary(feed);
     renderRose(feed);
     renderHistory(feed);
     renderBot(feed);

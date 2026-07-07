@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="icon-180.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=28">
+<link rel="stylesheet" href="style.css?v=29">
 </head>
 <body>
 <div class="wrap">
@@ -25,6 +25,12 @@
     <span class="hdr-tick" id="bias-score" title="наклон стороны: угадано / всего экзаменованных движений (форвард, все версии)"></span>
   </div>
 </header>
+
+<nav class="tabs">
+  <button class="tab active" data-tab="pulse">⚡ Пульс</button>
+  <button class="tab" data-tab="diary">📓 Дневник трейдера</button>
+</nav>
+
 
 <section id="sec-entry">
   <div class="sec-head">
@@ -153,6 +159,32 @@
   </div>
 </section>
 
+<section id="sec-diary" hidden>
+  <div class="sec-head">
+    <h2>📓 Дневник трейдера</h2>
+    <span class="sub">ВСЕ сигналы зон входа — включая не отработавшие · «вход» = момент появления в зоне · ожидание класса ЗАМОРАЖИВАЕТСЯ при рождении записи и не переписывается · вердикт только по закрытым суткам · сюрпризы копятся в библиотеку, но НЕ меняют торговые правила (правила — только через форвард-экзамен)</span>
+  </div>
+  <div class="tiles" id="diary-tiles"></div>
+
+  <div class="sec-head" style="margin-top:14px"><h2 style="font-size:12px">🧠 Что бот выучил — ожидания классов (замороженные базы)</h2></div>
+  <div class="tiles" id="diary-classes"></div>
+
+  <div class="sec-head" style="margin-top:14px"><h2 style="font-size:12px">Журнал сделок зоны</h2></div>
+  <div class="tbl-wrap">
+    <table id="diary-table">
+      <thead><tr>
+        <th class="lft">В зоне с (МСК)</th><th class="lft">Монета</th><th class="lft">Класс</th>
+        <th>Базис</th><th>Диапазон сделки (24ч)</th><th>Пик</th><th>Просадка</th><th>Итог 24ч</th>
+        <th class="lft">Ожидание (p50)</th><th class="lft">Вердикт</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="sec-head" style="margin-top:14px"><h2 style="font-size:12px">🚀💥 Библиотека сюрпризов</h2></div>
+  <div class="cards" id="diary-surprises"><div class="empty">Сюрпризов пока нет — исходы в рамках ожиданий.</div></div>
+</section>
+
 <footer>
   Данные: локальный бот → GitHub → этот дашборд (обновление ~1–2 мин) · живые цены — Bybit WebSocket напрямую ·
   аналитика бота считается только в честном окне (с 02.06.2026) · время на странице — МСК.
@@ -161,6 +193,6 @@
 
 </div>
 <div class="tooltip" id="tooltip"></div>
-<script src="app.js?v=28"></script>
+<script src="app.js?v=29"></script>
 </body>
 </html>

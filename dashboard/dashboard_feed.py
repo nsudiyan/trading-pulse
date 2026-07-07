@@ -779,18 +779,43 @@ def _push_new_combos(combos: list[dict]) -> None:
         print(f"[push] combos пропущен: {e}")
 
 
+def _diary_safe() -> dict:
+    try:
+        import diary
+        return diary.diary_block()
+    except Exception as e:
+        print(f"[feed] diary block пропущен: {e}")
+        return {}
+
+
 def build_feed() -> dict:
     live = collect_live_signals()
     _enrich_bias(live)
     log_entry_candidates(live)   # форензика шорт-листа «вход сейчас»
     combos = combos_block()
     _push_new_combos(combos)     # 🔔 новые связки — пушем на устройства
+    # 📓 дневник: новые записи с ЗАМОРОЗКОЙ ожидания в момент появления в зоне
+    try:
+        import diary
+        btc = None
+        try:
+            import urllib.request
+            with urllib.request.urlopen(
+                    "https://api.bybit.com/v5/market/tickers?category=linear&symbol=BTCUSDT",
+                    timeout=6) as r:
+                btc = round(float(json.load(r)["result"]["list"][0]["price24hPcnt"]) * 100, 2)
+        except Exception:
+            pass
+        diary.upsert_new(extra_combo=combos, btc_ret24=btc)
+    except Exception as e:
+        print(f"[feed] diary upsert пропущен: {e}")
     ledger = update_ledger(live)
     return {
         "pump_watch": pump_watch_block(),
         "pump_muted": pump_muted_block(),
         "combos": combos,
         "sweeps": sweep_block(live),
+        "diary": _diary_safe(),
         "bias_accuracy": bias_accuracy(ledger),
         "generated_at": utcnow().isoformat(),
         "honest_window_note": f"аналитика бота: только сигналы с {HONEST_WINDOW_START} (правило честного окна)",

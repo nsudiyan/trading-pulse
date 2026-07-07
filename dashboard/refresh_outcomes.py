@@ -62,6 +62,15 @@ def main():
         from file_lock import atomic_json_update
         atomic_json_update(LEDGER_PATH, merge,
                            default={"tracks": [], "seen_ids": []})
+
+    # 3) 📓 дневник трейдера: резолв незакрытых записей (fail-open)
+    try:
+        import diary
+        n = diary.resolve_pending()
+        if n:
+            print(f"[refresh] diary resolved: {n}")
+    except Exception as e:
+        print(f"[refresh] diary пропущен: {e}")
     return 0
 
 

@@ -191,6 +191,19 @@ td .star { font-size: 14px; }
 .biastag.up.strong { background: rgba(12, 163, 12, 0.16); font-weight: 700; }
 .biastag.down.strong { background: rgba(208, 59, 59, 0.16); font-weight: 700; }
 
+/* ── вкладки Пульс / Дневник ── */
+.tabs { display: flex; gap: 8px; margin-top: 14px; }
+.tab {
+  background: var(--surface); color: var(--ink-2);
+  border: 1px solid var(--border); border-radius: 10px;
+  font-size: 13px; font-weight: 600; padding: 7px 16px; cursor: pointer;
+}
+.tab.active {
+  color: var(--ink); border-color: var(--up);
+  box-shadow: 0 0 14px rgba(12, 163, 12, 0.15);
+}
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
 /* 🔔 подписка на пуши зон входа */
 .pushbtn {
   background: var(--surface-2); color: var(--ink-2);
