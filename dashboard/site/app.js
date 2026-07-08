@@ -4,6 +4,7 @@
    браузера — отработка активных сигналов тикает в реальном времени. */
 "use strict";
 
+const FEED_PROXY = "/api/feed";  // свежий фид через Vercel-прокси (мимо Fastly-кэша raw, max-age=300)
 const FEED_RAW = "https://raw.githubusercontent.com/nsudiyan/mirofish-state/main/trading_feed.json";
 const FEED_POLL_MS = 15_000;
 const BYBIT_REST = "https://api.bybit.com/v5/market/kline";
@@ -110,9 +111,12 @@ document.querySelectorAll(".tab").forEach((b) =>
 if (location.hash === "#diary") switchTab("diary");
 
 const KIND_RU = { awakening: "🌅 пробуждение", radar_alt: "радар-альт", combo: "⚡ связка" };
+// [лейбл, цвет, подсказка]; вердикт = экзамен ПРОГНОЗА класса по пику 24ч, не PnL сделки
 const VERDICT_RU = {
-  confirm: ["✅ в рамках", "var(--up)"],
-  tail_ok: ["〰 хвост нормы", "var(--ink-2)"],
+  confirm: ["🎯 по прогнозу", "var(--s1)",
+    "пик 24ч попал в коридор ожиданий класса (p25–p75) — прогноз сбылся. Это НЕ оценка прибыли: итог сделки в колонке «Итог 24ч»"],
+  tail_ok: ["〰 хвост нормы", "var(--ink-2)",
+    "пик вне коридора p25–p75, но внутри забора Тьюки — необычно, но не сюрприз"],
   surprise_up: ["🚀 сюрприз ↑", "var(--warn)"],
   surprise_down: ["💥 сюрприз ↓", "var(--down)"],
   collect: ["⏳ копим базу", "var(--muted)"],
@@ -123,13 +127,16 @@ const VERDICT_RU = {
 function renderDiary(feed) {
   const dy = feed.diary || {};
   const recs = dy.records || [];
+  // сторона записи; старые записи без side уже забэкфилены (08.07), «—» = источник не сообщил
+  const sideHtml = (s) => s === "long" ? '<span class="dir long">▲ LONG</span>'
+    : s === "short" ? '<span class="dir short">▼ SHORT</span>' : "—";
   const tiles = $("diary-tiles");
   if (tiles) {
     const vc = dy.verdict_counts || {};
     tiles.innerHTML = [
       ["записей", dy.n_total ?? 0, ""],
       ["закрыто (24ч)", dy.n_closed ?? 0, ""],
-      ["✅ в рамках", vc.confirm ?? 0, "up"],
+      ["🎯 по прогнозу", vc.confirm ?? 0, ""],
       ["🚀 сюрпризов ↑", vc.surprise_up ?? 0, "warn"],
       ["💥 сюрпризов ↓", vc.surprise_down ?? 0, "down"],
       ["⏳ на тонкой базе", vc.collect ?? 0, ""],
@@ -154,7 +161,7 @@ function renderDiary(feed) {
     tb.innerHTML = recs.map((r) => {
       const o = r.outcome || {};
       const e = r.expectation || {};
-      const [vLabel, vColor] = VERDICT_RU[(r.grade || {}).verdict] || VERDICT_RU.pending;
+      const [vLabel, vColor, vHint] = VERDICT_RU[(r.grade || {}).verdict] || VERDICT_RU.pending;
       const px = (p) => r.basis != null && p != null
         ? (r.basis * (1 + p / 100)).toPrecision(5) : null;
       const range = o.peak24 != null
@@ -164,13 +171,14 @@ function renderDiary(feed) {
         <td class="lft">${fmtMsk(r.zone_ts)}</td>
         <td class="lft">${starHtml(r.symbol)} <b>${esc(r.symbol)}</b></td>
         <td class="lft">${esc(KIND_RU[r.kind] || r.kind)}</td>
+        <td>${sideHtml(r.side)}</td>
         <td class="mono">${r.basis ?? "—"}</td>
         <td>${range}</td>
         <td class="${cls2(o.peak24)}">${fmtPct(o.peak24, 1)}</td>
         <td class="${cls2(o.dd24)}">${fmtPct(o.dd24, 1)}</td>
         <td class="${cls2(o.ret24)}"><b>${fmtPct(o.ret24, 1)}</b></td>
         <td class="lft" title="заморожено ${esc(e.frozen_at || "")} · база: ${esc(e.src || "")}">${e.p50 != null ? fmtPct(e.p50, 1) + " (n=" + e.n_class + ")" : "копится"}</td>
-        <td class="lft" style="color:${vColor}" title="${esc((r.grade || {}).note || "")}">${vLabel}</td>
+        <td class="lft" style="color:${vColor}" title="${esc((r.grade || {}).note || vHint || "")}">${vLabel}</td>
       </tr>`;
     }).join("");
   }
@@ -181,6 +189,7 @@ function renderDiary(feed) {
       const o = r.outcome || {}, c = r.ctx || {}, e = r.expectation || {};
       return `<div class="card entry${(r.grade.verdict === "surprise_up") ? " awk" : ""}">
         <div class="row1">${starHtml(r.symbol)}<span class="sym">${esc(r.symbol)}</span>
+          ${sideHtml(r.side)}
           <span class="when">${fmtMsk(r.zone_ts)}</span></div>
         <div class="big ${cls2(o.peak24)}">${fmtPct(o.peak24, 1)} <span style="font-size:11px;color:var(--muted)">ожидали ${fmtPct(e.p50, 1)}</span></div>
         <div class="meta">${esc(KIND_RU[r.kind] || r.kind)} · ×${c.vol_ratio ?? "—"} · BTC ${fmtPct(c.btc_ret24, 1)} при входе · ${esc((r.grade || {}).note || "")}</div>
@@ -217,8 +226,11 @@ document.addEventListener("click", (ev) => {
 
 /* ── фид ── */
 async function fetchFeed() {
-  const bust = Math.floor(Date.now() / 15_000); // бастер по 15с: каждый poll мимо CDN-кэша
-  for (const url of [`${FEED_RAW}?t=${bust}`, `feed.json?t=${bust}`]) {
+  // 1) /api/feed — свежий (contents API, no-store); 2) raw — fallback если прокси лёг
+  // (bust на raw бесполезен: Fastly игнорит query — оставлен лишь чтобы не долбить один URL);
+  // 3) статичный feed.json — последний резерв (устаревает на момент деплоя).
+  const bust = Math.floor(Date.now() / 15_000);
+  for (const url of [FEED_PROXY, `${FEED_RAW}?t=${bust}`, `feed.json?t=${bust}`]) {
     try {
       const r = await fetch(url, { cache: "no-store" });
       if (r.ok) return await r.json();
@@ -255,6 +267,36 @@ async function fetchBars(symbol, fromMs) {
     state.klineCache.set(key, { bars, fetchedAt: Date.now() });
     return bars;
   } catch (_) { return hit ? hit.bars : []; }
+}
+
+/* 🔒 шорт-тест (просьба брата 08.07): витрина шторм-шортов с активной плашкой
+   «лонги заперты» (условие = fundingTag: funding_now ≥ 0.01 при падении).
+   Наблюдение для глаз, НЕ сигнал; в дневник такие не пишутся. */
+function renderShortWatch() {
+  const box = $("short-watch-cards");
+  if (!box) return;
+  const out = [...state.liveCards.values()].filter((c) => {
+    const s = c.sig;
+    return s.source === "storm" && s.direction === "short"
+      && s.funding_now != null && s.funding_now >= 0.01;
+  }).sort((a, b) => new Date(b.sig.ts_utc) - new Date(a.sig.ts_utc));
+  if (!out.length) {
+    box.innerHTML = '<div class="empty">Сейчас таких нет.</div>';
+    return;
+  }
+  box.innerHTML = out.slice(0, 8).map((c) => {
+    const s = c.sig, live = c.lastPct;
+    return `<div class="shortw-row">
+      <div class="shortw-top">${starHtml(s.symbol)}<b>${esc(s.symbol)}</b>
+        <span class="dir short">▼ SHORT</span>
+        <span class="when">${fmtMsk(s.ts_utc)}</span></div>
+      <div class="shortw-mid">
+        <span class="big ${live > 0 ? "pos" : live < 0 ? "neg" : ""}">${live != null ? fmtPct(live) : "—"}</span>
+        <span class="mono muted-note">пик ${fmtPct(c.peak, 1)} · против ${fmtPct(c.dd, 1)}</span>
+      </div>
+      ${fundingTag(s)}
+    </div>`;
+  }).join("");
 }
 
 function sigPct(sig, basis, price) {
@@ -726,6 +768,7 @@ function renderEntry() {
       <div class="meta">${esc(entryReason(card, isAwk))}</div>
     </div>`;
   }).join("");
+  renderShortWatch();   // 🔒 шорт-тест живёт в том же цикле, что зоны входа
 }
 setInterval(renderEntry, 5000);
 

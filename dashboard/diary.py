@@ -278,6 +278,9 @@ def upsert_new(extra_combo: list[dict] | None = None,
             kind = r["kind"]
             rec = {
                 "id": rid, "kind": kind, "symbol": r["symbol"],
+                # радар/пробуждение = всегда лонг от базиса; шорт-класс,
+                # если появится, обязан принести side из источника явно
+                "side": "long",
                 "signal_ts": r["signal_ts_utc"], "zone_ts": r["logged_ts_utc"],
                 "basis": float(r["basis"]),
                 "ctx": {"live_at_zone": float(r["last_pct"]),
@@ -300,6 +303,11 @@ def upsert_new(extra_combo: list[dict] | None = None,
             have.add(rid)
             added += 1
         for c in combos:
+            # шорты пока НЕ встраиваем (решение брата 08.07): экзамен дневника
+            # меряет пик ВВЕРХ от базиса — шорт-пост лонговой линейкой не мерить,
+            # в базы классов не пускать (на Пульсе связка живёт как жила)
+            if (c.get("direction") or "").lower() == "short":
+                continue
             # id по msg_key: быстрая (превью, 60с) и каноническая (Telethon,
             # 15 мин) версии одного поста = ОДНА запись дневника, без дублей
             # id по ПРОБУЖДЕНИЮ (awake_ts): подтверждение поста меняет msg_key
@@ -310,6 +318,8 @@ def upsert_new(extra_combo: list[dict] | None = None,
                 continue
             d["records"].append({
                 "id": rid, "kind": "combo", "symbol": c["symbol"],
+                # сторона связки — из направления поста канала; неизвестно → None (фронт покажет «—»)
+                "side": c.get("direction") if c.get("direction") in ("long", "short") else None,
                 "signal_ts": c["post_ts"], "zone_ts": utcnow().isoformat(),
                 "basis": c.get("basis"),
                 "ctx": {"awake_ratio": c.get("awake_ratio"),

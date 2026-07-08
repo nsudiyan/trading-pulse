@@ -72,6 +72,8 @@ section { margin-top: 28px; }
 .card .sym { font-weight: 700; color: var(--ink); font-size: 15px; }
 .card .dir { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 20px; }
 .dir.long { color: var(--up); background: rgba(12, 163, 12, 0.12); }
+/* плашка стороны в дневнике — вне .card размер задаём сами */
+#diary-table .dir, #diary-surprises .dir { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 20px; white-space: nowrap; }
 .dir.short { color: var(--down); background: rgba(208, 59, 59, 0.12); }
 .dir.none { color: var(--muted); background: rgba(255,255,255,0.06); }
 .badge {
@@ -242,6 +244,21 @@ td .star { font-size: 14px; }
   border: 1px solid rgba(12, 163, 12, 0.5);
   color: var(--up);
   font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+}
+/* 🔒 шорт-тест: окно справа от зон входа (просьба брата 08.07) */
+#sec-entry { display: grid; grid-template-columns: minmax(0, 1fr) 300px; column-gap: 18px; align-items: start; }
+#short-watch { border-left: 1px dashed var(--grid); padding-left: 16px; }
+#short-watch .shortw-row { padding: 9px 0; border-bottom: 1px solid var(--grid); display: flex; flex-direction: column; gap: 5px; }
+#short-watch .shortw-row:last-child { border-bottom: none; }
+#short-watch .shortw-top { display: flex; align-items: center; gap: 6px; }
+#short-watch .shortw-top .when { color: var(--muted); font-size: 11px; margin-left: auto; }
+#short-watch .shortw-mid { display: flex; align-items: baseline; gap: 8px; }
+#short-watch .shortw-mid .big { font-size: 16px; font-weight: 700; }
+#short-watch .muted-note { color: var(--muted); font-size: 11px; }
+#short-watch .dir { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 20px; white-space: nowrap; }
+@media (max-width: 900px) {
+  #sec-entry { grid-template-columns: 1fr; }
+  #short-watch { border-left: none; padding-left: 0; margin-top: 14px; border-top: 1px dashed var(--grid); padding-top: 12px; }
 }
 #sec-entry .sec-head h2 { color: var(--ink); }
 #sec-entry .combo-head h2 { color: var(--warn); }

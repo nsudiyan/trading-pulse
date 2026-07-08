@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="icon-180.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=32">
+<link rel="stylesheet" href="style.css?v=33">
 </head>
 <body>
 <div class="wrap">
@@ -33,16 +33,25 @@
 
 
 <section id="sec-entry">
-  <div class="sec-head">
-    <h2>🎯 Вход имеет смысл сейчас</h2>
-    <span class="sub">все кандидаты — ЛОНГ (секция строится на «радар-альт ⬆»: 86% ходунов вверх) · свежесть ≤3ч · цена не убежала · без пилы · не в раздаче · план действий — в подсказке под «▲ лонг» на карточке — НЕ гарантия: ход случается у ~45% сигналов, риск размером позиции</span>
+  <div class="entry-main">
+    <div class="sec-head">
+      <h2>🎯 Вход имеет смысл сейчас</h2>
+      <span class="sub">все кандидаты — ЛОНГ (секция строится на «радар-альт ⬆»: 86% ходунов вверх) · свежесть ≤3ч · цена не убежала · без пилы · не в раздаче · план действий — в подсказке под «▲ лонг» на карточке — НЕ гарантия: ход случается у ~45% сигналов, риск размером позиции</span>
+    </div>
+    <div class="cards" id="entry-cards"><div class="empty">Кандидатов сейчас нет — правила строгие.</div></div>
+    <div class="sec-head" style="margin-top:14px">
+      <h2 style="font-size:12px">⚡ Связки: пробуждение → Rose-пост → структура жива</h2>
+      <span class="sub">радар-хит ≥5× за ≤72ч ДО поста Rose (такие посты отрабатывают ×2 лучше, n=5: VANRY +146%) · висит, только пока вход ещё осмыслен — снимается САМА, как только ход случился (пик от поста ≥8%), пост провален (ниже −3%), раздача или 48ч · лид, не гарантия</span>
+    </div>
+    <div class="cards" id="combo-cards"><div class="empty">Живых связок нет.</div></div>
   </div>
-  <div class="cards" id="entry-cards"><div class="empty">Кандидатов сейчас нет — правила строгие.</div></div>
-  <div class="sec-head" style="margin-top:14px">
-    <h2 style="font-size:12px">⚡ Связки: пробуждение → Rose-пост → структура жива</h2>
-    <span class="sub">радар-хит ≥5× за ≤72ч ДО поста Rose (такие посты отрабатывают ×2 лучше, n=5: VANRY +146%) · висит, только пока вход ещё осмыслен — снимается САМА, как только ход случился (пик от поста ≥8%), пост провален (ниже −3%), раздача или 48ч · лид, не гарантия</span>
-  </div>
-  <div class="cards" id="combo-cards"><div class="empty">Живых связок нет.</div></div>
+  <aside id="short-watch">
+    <div class="sec-head">
+      <h2 style="font-size:12px">🔒 Шорт-тест: лонги заперты</h2>
+      <span class="sub">шторм-шорты с funding ≥ +0.010% при падении — MUSDT-паттерн (лид 3/3, ретро 17% vs 7%) · тест-витрина для глаз: НЕ сигнал, в дневник не пишется, правилом станет только после side_study-2</span>
+    </div>
+    <div id="short-watch-cards"><div class="empty">Сейчас таких нет.</div></div>
+  </aside>
 </section>
 
 <section id="sec-live">
@@ -162,7 +171,7 @@
 <section id="sec-diary" hidden>
   <div class="sec-head">
     <h2>📓 Дневник трейдера</h2>
-    <span class="sub">ВСЕ сигналы зон входа — включая не отработавшие · «вход» = момент появления в зоне · ожидание класса ЗАМОРАЖИВАЕТСЯ при рождении записи и не переписывается · вердикт только по закрытым суткам · сюрпризы копятся в библиотеку, но НЕ меняют торговые правила (правила — только через форвард-экзамен)</span>
+    <span class="sub">ВСЕ сигналы зон входа — включая не отработавшие · «вход» = момент появления в зоне · ожидание класса ЗАМОРАЖИВАЕТСЯ при рождении записи и не переписывается · вердикт только по закрытым суткам · <b>вердикт экзаменует ПРОГНОЗ класса (пик 24ч против коридора p25–p75), а НЕ прибыльность — итог сделки в колонке «Итог 24ч»</b> · сюрпризы копятся в библиотеку, но НЕ меняют торговые правила (правила — только через форвард-экзамен)</span>
   </div>
   <div class="tiles" id="diary-tiles"></div>
 
@@ -174,6 +183,7 @@
     <table id="diary-table">
       <thead><tr>
         <th class="lft">В зоне с (МСК)</th><th class="lft">Монета</th><th class="lft">Класс</th>
+        <th>Сторона</th>
         <th>Базис</th><th>Диапазон сделки (24ч)</th><th>Пик</th><th>Просадка</th><th>Итог 24ч</th>
         <th class="lft">Ожидание (p50)</th><th class="lft">Вердикт</th>
       </tr></thead>
@@ -193,6 +203,6 @@
 
 </div>
 <div class="tooltip" id="tooltip"></div>
-<script src="app.js?v=32"></script>
+<script src="app.js?v=34"></script>
 </body>
 </html>
