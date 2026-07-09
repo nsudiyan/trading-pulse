@@ -406,6 +406,15 @@ function biasTag(sig) {
     title="наклон структуры ${b.v} (НЕ прогноз с доказанным эджем — точность меряется форвардом): ${esc(why)}">${arrow} наклон</span>`;
 }
 
+/* ⚠ «вторая волна»: монета УЖЕ дала ход (chg24 ≥10%) ДО этой метки — предупреждение
+   «сайз меньше», НЕ фильтр (§7 брата: метить, не убирать; фильтр решает ретро-валидация
+   Ф1). chg24 живой с Bybit WS (state.chg24). Кейсы поздней метки: SKYAI1/NEXUS 09.07. */
+function waveTag(sym) {
+  const c = state.chg24.get(sym);
+  if (c == null || c < SECOND_WAVE_CHG) return "";
+  return `<span class="risktag" title="монета уже сделала ${fmtPct(c, 1)} за сутки — «вторая волна» на разогнанной монете: статистика пула собрана на тихих стартах, здесь не гарантирована (кейсы ALLO 07.07, SKYAI1/NEXUS 09.07 — поздняя метка после вертикали часто откатывает). Правило брата: сайз меньше стандартного микро, решение твоё">⚠ уже ${fmtPct(c, 0)}/24ч — сайз меньше</span>`;
+}
+
 function riskTag(sig) {
   // шторм-шорт = статистически самая сливная категория (форвард 04-06.07:
   // чётких 2/33, сливов 30%) — маркируем, не скрываем (просьба брата)
@@ -550,6 +559,7 @@ function cardHtml(sig, isFresh = false) {
       <span class="badge ${sig.source}">${SRC_RU[sig.source] || sig.source}</span>
       ${sig.emits > 1 ? `<span class="badge" title="повторных алертов">×${sig.emits}</span>` : ""}
       ${biasTag(sig)}
+      <span data-role="wave">${waveTag(sig.symbol)}</span>
       ${riskTag(sig)}
       ${fundingTag(sig)}
       ${weatherTag(sig)}
@@ -595,6 +605,8 @@ function updateCard(card, livePct) {
   pctEl.className = `big ${livePct > 0 ? "pos" : livePct < 0 ? "neg" : ""}`;
   card.el.querySelector('[data-role="meta"]').innerHTML =
     `пик <b>${fmtPct(card.peak, 1)}</b> · просадка <b>${fmtPct(card.dd, 1)}</b>`;
+  const waveEl = card.el.querySelector('[data-role="wave"]');   // chg24 приходит с WS асинхронно — обновляем по тику
+  if (waveEl) waveEl.innerHTML = waveTag(card.sig.symbol);
   drawSpark(card, livePct);
 }
 
