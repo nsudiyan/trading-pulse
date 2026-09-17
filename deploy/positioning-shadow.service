@@ -1,0 +1,14 @@
+[Unit]
+Description=Trading Pulse Positioning V1 shadow snapshot (Bybit-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/trading
+ExecStart=/usr/bin/python3 /root/trading/positioning_shadow.py
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ReadWritePaths=/root/trading/outcomes
+

@@ -38,6 +38,7 @@ STATE_FILE = "trading_feed.json"
 
 LIVE_WINDOW_H = 48    # сигналы моложе 48ч считаем «живыми» для ленты
 FEED_SIGNALS_MAX = 200
+RADAR_EVENT_META_PATH = OUT / "radar_event_metadata.jsonl"
 
 
 def utcnow() -> datetime:
@@ -63,6 +64,55 @@ def jload(path: Path, default):
 
 
 # ─── Живая лента сигналов ────────────────────────────────────────────────────
+
+def collect_raw_market_events() -> list[dict]:
+    """Relay only first-party, append-only radar metadata for the auditable UI.
+
+    Old ``radar_hits.csv`` deliberately remains outside this projection: it
+    does not contain the source candle time, venue/provider, closed-bar volume
+    or detector version.  Missing facts are never reconstructed from a row's
+    position or scan cadence.  The metadata file is written by vol_radar only
+    after a new hit has been observed.
+    """
+    now = utcnow()
+    cutoff = now - timedelta(hours=LIVE_WINDOW_H)
+    rows: list[dict] = []
+    try:
+        with open(RADAR_EVENT_META_PATH, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    source = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(source, dict) or source.get("event_type") != "radar":
+                    continue
+                received = parse_naive_utc(source.get("server_received_at_utc", ""))
+                if received is None or received < cutoff:
+                    continue
+                # Copy published fields verbatim into the public feed contract;
+                # do not derive a timestamp, venue, price, volume or version.
+                rows.append({
+                    "id": source.get("event_id"),
+                    "eventType": source.get("event_type"),
+                    "symbol": source.get("symbol"),
+                    "venue": source.get("venue"),
+                    "provider": source.get("provider"),
+                    "detectedAtUtc": source.get("detected_at_utc"),
+                    "sourceTimestampUtc": source.get("source_timestamp_utc"),
+                    "serverReceivedAtUtc": source.get("server_received_at_utc"),
+                    "timeframe": source.get("timeframe"),
+                    "methodVersion": source.get("method_version"),
+                    "price": source.get("price"),
+                    "volume": source.get("volume"),
+                    "vol_ratio": source.get("vol_ratio"),
+                    "dataQuality": source.get("data_quality"),
+                    "liquidityVerified": source.get("liquidity_verified") is True,
+                })
+    except FileNotFoundError:
+        pass
+    # A repeated write should not become a repeated live observation.
+    unique = {str(r.get("id")): r for r in rows if r.get("id")}
+    return sorted(unique.values(), key=lambda r: r.get("detectedAtUtc") or "", reverse=True)[:FEED_SIGNALS_MAX]
 
 def collect_live_signals() -> list[dict]:
     """Union всех источников сигналов за последние LIVE_WINDOW_H часов.
@@ -479,6 +529,38 @@ ENTRY_SEEN_PATH = DIR / "entry_logged.json"
 ENTRY_FIELDS = ["logged_ts_utc", "symbol", "signal_ts_utc", "kind", "age_h",
                 "basis", "last_pct", "peak_pct", "dd_pct", "vol_ratio"]
 
+# H-IMPULSE-REVIEW-01 — отдельная, forward-only очередь для ручной проверки
+# стакана. Она НЕ меняет радар, не назначает LONG/SHORT и не влияет на старый
+# entry_candidates.csv: это нужно, чтобы не подменять накопленную форензику
+# новой постфактум-гипотезой.
+IMPULSE_LOG_PATH = OUT / "impulse_review_candidates.csv"
+IMPULSE_SEEN_PATH = DIR / "impulse_review_seen.json"
+IMPULSE_ACTIVE_PATH = DIR / "impulse_review_active.json"
+IMPULSE_FIELDS = ["protocol", "logged_ts_utc", "symbol", "signal_ts_utc", "kind",
+                  "age_h", "basis", "last_pct", "peak_pct", "dd_pct", "vol_ratio",
+                  "btc_ret24", "btc_range24", "chg24_at_alert"]
+IMPULSE_ACTIVE_MIN = 15
+
+
+def is_impulse_review_candidate(row: dict) -> bool:
+    """Чистая проверка H-IMPULSE-REVIEW-01, без сети и без торгового вывода."""
+    try:
+        age_h = float(row.get("age_h"))
+        ratio = float(row.get("vol_ratio"))
+        dd_pct = float(row.get("dd_pct"))
+        last_pct = float(row.get("last_pct"))
+        peak_pct = float(row.get("peak_pct"))
+    except (TypeError, ValueError):
+        return False
+    return bool(
+        row.get("kind") == "radar_alt"
+        and age_h <= 0.25
+        and 5 <= ratio <= 9
+        and dd_pct >= -0.5
+        and -0.5 <= last_pct <= 1.0
+        and peak_pct <= 1.0
+    )
+
 
 def _fetch_5m_closed(symbol: str, start_ms: int) -> list:
     """Закрытые 5м бары от start_ms: (t,o,h,l,c). Как fetch_15m, но 5м."""
@@ -498,7 +580,7 @@ def _fetch_5m_closed(symbol: str, start_ms: int) -> list:
             if int(x[0]) + bar <= now_ms]
 
 
-def log_entry_candidates(live: list[dict], mkt: dict | None = None) -> None:
+def log_entry_candidates(live: list[dict], mkt: dict | None = None) -> list[dict]:
     """Серверный двойник фронт-отбора: radar-альт ⬆ v3, свежий, цена не убежала,
     без пилы, не в раздаче; 🌅 (vol_ratio≥15) — окно 30ч и коридор шире.
     Fail-open: сбой не трогает сборку фида."""
@@ -530,7 +612,7 @@ def log_entry_candidates(live: list[dict], mkt: dict | None = None) -> None:
                 continue
             pre.append((s, age_h, is_awk, key))
         if not pre:
-            return
+            return []
 
         # волновой фильтр = как на фронте (renderEntry): ≥5 non-awk из одного
         # 5-мин скана — рыночная волна (BTC-движ), НЕ логируем и НЕ пушим (CSV
@@ -549,10 +631,10 @@ def log_entry_candidates(live: list[dict], mkt: dict | None = None) -> None:
             pre = [x for x in pre if x[2] or _bucket(x[0]) not in wave_buckets]
             print(f"[feed] entry: волна {len(dropped)} монет скрыта (не лог/не пуш): {dropped}")
         if not pre:
-            return
+            return []
         if not mkt:
             print("[feed] entry: нет market snapshot — тик пропущен (кандидаты не потеряны, дедуп не тронут)")
-            return
+            return []
         tick = mkt["last"]
         chg24 = mkt["chg24"]
 
@@ -601,24 +683,83 @@ def log_entry_candidates(live: list[dict], mkt: dict | None = None) -> None:
             ENTRY_SEEN_PATH.write_text(json.dumps(seen_list[-3000:]))
             print(f"[feed] entry-кандидатов залогировано: {len(new_rows)}: "
                   f"{[r['symbol'] for r in new_rows]}")
-            # 🔔 пуш (волна уже отфильтрована выше; кап [:3] — от спама в
-            # редкий день с многими одиночными сигналами из разных сканов)
-            try:
-                from push_send import send_push
-                for r in new_rows[:3]:
-                    awk = r["kind"] == "awakening"
-                    c24 = chg24.get(r["symbol"])
-                    warn = (f" · ⚠ уже {c24:+.0f}%/24ч — СAЙЗ МЕНЬШЕ"
-                            if c24 is not None and c24 >= 10 else "")
-                    send_push(
-                        f"🎯 {r['symbol']}" + (" 🌅" if awk else "") + " — вход имеет смысл",
-                        f"{'пробуждение ×' + str(r['vol_ratio']) if awk else 'радар-альт ⬆'} · "
-                        f"live {r['last_pct']:+.1f}% · просадка {r['dd_pct']:+.1f}% · ЛОНГ, план на карточке{warn}",
-                        tag=f"entry-{r['symbol']}")
-            except Exception as e:
-                print(f"[push] entry пропущен: {e}")
+        return new_rows
     except Exception as e:
         print(f"[feed] entry-лог пропущен: {e}")
+        return []
+
+
+def log_impulse_review_candidates(new_rows: list[dict], mkt: dict | None) -> list[dict]:
+    """Записывает и доставляет ТОЛЬКО свежий кандидат для ручной проверки.
+
+    Гипотеза H-IMPULSE-REVIEW-01 взята из четырёх сильных карточек, но не
+    считается edge: возраст ≤15 мин, 5–9× объёма, почти нет отката/догоняния.
+    Её задача — собрать чистый forward-журнал и вовремя позвать человека к
+    стакану. Уведомление не содержит направления, цены входа или обещания.
+    """
+    now = utcnow()
+    try:
+        active = jload(IMPULSE_ACTIVE_PATH, [])
+        if not isinstance(active, list):
+            active = []
+        cutoff = now - timedelta(minutes=IMPULSE_ACTIVE_MIN)
+        active = [r for r in active
+                  if (parse_naive_utc(r.get("signal_ts_utc", "")) or now) >= cutoff]
+        seen_list = jload(IMPULSE_SEEN_PATH, [])
+        seen = set(seen_list)
+        made = []
+        for r in new_rows:
+            if not is_impulse_review_candidate(r):
+                continue
+            key = f"{r['symbol']}|{r['signal_ts_utc'][:16]}"
+            if key in seen:
+                continue
+            row = {
+                "protocol": "H-IMPULSE-REVIEW-01",
+                "logged_ts_utc": now.replace(microsecond=0).isoformat(),
+                "symbol": r["symbol"], "signal_ts_utc": r["signal_ts_utc"],
+                "kind": r["kind"], "age_h": r["age_h"], "basis": r["basis"],
+                "last_pct": r["last_pct"], "peak_pct": r["peak_pct"],
+                "dd_pct": r["dd_pct"], "vol_ratio": r["vol_ratio"],
+                "btc_ret24": (mkt or {}).get("btc_ret24"),
+                "btc_range24": (mkt or {}).get("btc_range24"),
+                "chg24_at_alert": (mkt or {}).get("chg24", {}).get(r["symbol"]),
+            }
+            made.append(row)
+            active.append(row)
+            seen.add(key)
+            seen_list.append(key)
+
+        if made:
+            write_header = not IMPULSE_LOG_PATH.exists()
+            with open(IMPULSE_LOG_PATH, "a", encoding="utf-8", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=IMPULSE_FIELDS)
+                if write_header:
+                    w.writeheader()
+                w.writerows(made)
+            IMPULSE_SEEN_PATH.write_text(json.dumps(seen_list[-3000:]))
+            try:
+                from push_send import send_push
+                for r in made[:3]:
+                    send_push(
+                        f"🧪 Стакан: {r['symbol']} — проверить",
+                        f"Свежий объём ×{r['vol_ratio']} · от базиса {r['last_pct']:+.1f}% · "
+                        f"просадка {r['dd_pct']:+.1f}%. Открой Tiger Trade и проверь ленту/лимитки. "
+                        "Это не LONG/SHORT и не вход.",
+                        tag=f"impulse-review-{r['symbol']}")
+            except Exception as e:
+                print(f"[push] impulse-review пропущен: {e}")
+            print(f"[feed] impulse-review залогировано: {[r['symbol'] for r in made]}")
+
+        # Активность строго 15 минут: старый кандидат не должен прийти пушем
+        # или остаться визуально как якобы актуальный.
+        active = [r for r in active
+                  if (parse_naive_utc(r.get("signal_ts_utc", "")) or now) >= cutoff]
+        IMPULSE_ACTIVE_PATH.write_text(json.dumps(active, ensure_ascii=False))
+        return active
+    except Exception as e:
+        print(f"[feed] impulse-review пропущен: {e}")
+        return []
 
 
 def bias_accuracy(ledger: dict) -> dict:
@@ -901,8 +1042,34 @@ def _diary_safe() -> dict:
         return {}
 
 
+def forward_movement_block() -> dict:
+    """Public, outcome-sealed status of the frozen movement forward test.
+
+    The collector owns this file.  The dashboard only relays it; it never
+    derives a direction, a PnL, or an interim effect from the raw ledger.
+    """
+    path = OUT / "radar_move_forward_status.json"
+    data = jload(path, {})
+    return data if isinstance(data, dict) else {}
+
+
+def positioning_block() -> dict:
+    """Read-only relay of the independent Positioning shadow state.
+
+    A collector failure must never alter current Radar collection, thresholds,
+    notifications, or outcome logic.
+    """
+    try:
+        from positioning_shadow import read_public_state
+        return read_public_state()
+    except Exception as e:
+        print(f"[feed] positioning block unavailable: {e}")
+        return {"mode": "shadow", "status": "data_unavailable", "shortlist": [], "cases": [], "snapshots": []}
+
+
 def build_feed() -> dict:
     live = collect_live_signals()
+    raw_market_events = collect_raw_market_events()
     _enrich_bias(live)
     mkt = fetch_market_snapshot()          # ОДИН tickers-запрос на тик (S3)
     if mkt:
@@ -911,7 +1078,8 @@ def build_feed() -> dict:
                 fr = mkt["funding"].get(s_["symbol"])
                 if fr is not None:
                     s_["funding_now"] = fr
-    log_entry_candidates(live, mkt)        # форензика шорт-листа «вход сейчас»
+    entry_rows = log_entry_candidates(live, mkt)  # прежняя форензика, без пуша
+    impulse_review = log_impulse_review_candidates(entry_rows, mkt)
     combos = combos_block(mkt)
     _push_new_combos(combos)               # 🔔 новые связки — пушем на устройства
     # 📓 дневник: новые записи с ЗАМОРОЗКОЙ ожидания в момент появления в зоне
@@ -929,11 +1097,15 @@ def build_feed() -> dict:
         "pump_muted": pump_muted_block(),
         "combos": combos,
         "sweeps": sweep_block(live),
+        "impulse_review": impulse_review,
         "diary": _diary_safe(),
+        "forward_movement": forward_movement_block(),
+        "positioning": positioning_block(),
         "bias_accuracy": bias_accuracy(ledger),
         "generated_at": utcnow().isoformat(),
         "honest_window_note": f"аналитика бота: только сигналы с {HONEST_WINDOW_START} (правило честного окна)",
         "live_signals": live,
+        "raw_market_events": raw_market_events,
         "rose": rose_block(),
         "signals_history": [_track_row(t) for t in ledger["tracks"][:150]],
         "bot_stats": bot_stats(),
@@ -976,7 +1148,21 @@ def content_fingerprint(feed: dict) -> str:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-push", action="store_true")
+    ap.add_argument("--selfcheck", action="store_true")
     args = ap.parse_args()
+
+    if args.selfcheck:
+        base = {"kind": "radar_alt", "age_h": 0.2, "vol_ratio": 6,
+                "last_pct": 0.3, "peak_pct": 0.4, "dd_pct": -0.2}
+        assert is_impulse_review_candidate(base)
+        assert is_impulse_review_candidate({**base, "last_pct": 0, "peak_pct": 0,
+                                            "dd_pct": 0})
+        assert not is_impulse_review_candidate({**base, "age_h": 0.26})
+        assert not is_impulse_review_candidate({**base, "vol_ratio": 9.1})
+        assert not is_impulse_review_candidate({**base, "dd_pct": -0.51})
+        assert not is_impulse_review_candidate({**base, "kind": "awakening"})
+        print("dashboard_feed impulse-review selfcheck OK")
+        return 0
 
     feed = build_feed()
     payload = json.dumps(feed, ensure_ascii=False, separators=(",", ":"))

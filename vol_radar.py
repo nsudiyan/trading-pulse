@@ -22,6 +22,10 @@ from volume_profile import fetch_klines
 BYBIT = "https://api.bybit.com/v5/market"
 COOLDOWN_PATH = Path(__file__).parent / "outcomes" / "radar_cooldown.json"
 HITS_PATH = Path(__file__).parent / "outcomes" / "radar_hits.csv"   # история алертов для просмотра графиков
+# Append-only facts for the auditable UI.  This intentionally does not alter
+# the legacy radar_hits.csv contract consumed by old tools and parity scripts.
+# Only rows created after this writer is installed have these facts.
+EVENT_META_PATH = Path(__file__).parent / "outcomes" / "radar_event_metadata.jsonl"
 BUDGET_PATH = Path(__file__).parent / "outcomes" / "radar_budget.json"
 COOLDOWN_H = 4.0          # ДОСТАВЛЕННЫЙ символ — тишина 4ч
 UNSENT_COOLDOWN_MIN = 30  # НЕдоставленный детект — только CSV-дедуп эпизода (30м):
@@ -31,6 +35,9 @@ UNSENT_COOLDOWN_MIN = 30  # НЕдоставленный детект — тол
                           # старый формат мигрируется на лету (ts → ts+4ч).
 VOL_MULT = 5.0            # объём последнего бара >= 5.0× среднего (2026-07-02: 4→5, отбор лучших)
 PRICE_STILL_MAX = 1.0     # |изменение цены| <= 1% — цена ещё НЕ отреагировала (опережение)
+METHOD_VERSION = "vol_radar.detect_spike.closed_bar/v1"
+PROVIDER = "bybit.v5.market.kline"
+VENUE = "BYBIT"
 
 # Анти-шум доставки (2026-07-02, по ретро radar_hits.csv: 131/76/23 сообщений в день):
 # 50% хитов — рыночные каскады (>=3 монет разом при движении BTC), не пер-монетный сигнал.
@@ -86,8 +93,12 @@ def detect_spike(klines: list, vol_mult: float = VOL_MULT,
     live_chg = (klines[-1][4] - klines[pos][4]) / klines[pos][4] * 100.0
     if (vol_ratio >= vol_mult and abs(price_chg) <= price_still_max
             and abs(live_chg) <= price_still_max):
+        # The following facts are observational only.  Selection, cooldown,
+        # budget and notification branches never read them.
         return {"vol_ratio": round(vol_ratio, 2), "price_chg_pct": round(price_chg, 2),
-                "live_chg_pct": round(live_chg, 2)}
+                "live_chg_pct": round(live_chg, 2),
+                "closed_bar_open_ms": int(klines[pos][0]),
+                "closed_bar_volume": float(klines[pos][5])}
     return None
 
 
@@ -145,7 +156,52 @@ def fetch_perp_symbols(top: int | None = None) -> list[str]:
         return []
 
 
-def _log_hit(symbol: str, sp: dict, price: float, sent: bool):
+def _iso_from_ms(value: int) -> str:
+    """UTC ISO for an exchange kline timestamp in milliseconds."""
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(value / 1000, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _log_event_metadata(symbol: str, sp: dict, price: float, scan_interval: str,
+                        server_received_at) -> None:
+    """Write source facts for a *new* hit without modifying detector behavior.
+
+    `source_timestamp_utc` is the close time of Bybit's exact closed kline,
+    not a guessed scan time.  No order-book/liquidity assertion is made here.
+    """
+    try:
+        from datetime import timezone
+        interval_minutes = int(scan_interval)
+        open_ms = int(sp["closed_bar_open_ms"])
+        source_close_ms = open_ms + interval_minutes * 60_000
+        received = server_received_at.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        row = {
+            "event_id": f"radar:{symbol}:{received}",
+            "event_type": "radar",
+            "symbol": symbol,
+            "venue": VENUE,
+            "provider": PROVIDER,
+            "detected_at_utc": received,
+            "source_timestamp_utc": _iso_from_ms(source_close_ms),
+            "source_bar_open_utc": _iso_from_ms(open_ms),
+            "server_received_at_utc": received,
+            "timeframe": f"{interval_minutes}m",
+            "method_version": METHOD_VERSION,
+            "price": float(price),
+            "volume": float(sp["closed_bar_volume"]),
+            "vol_ratio": float(sp["vol_ratio"]),
+            "data_quality": "verified",
+            "liquidity_verified": False,
+        }
+        EVENT_META_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with EVENT_META_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+    except Exception as e:
+        # Observation metadata must never block an existing radar scan/log.
+        print(f"[radar] event metadata skipped: {e}")
+
+
+def _log_hit(symbol: str, sp: dict, price: float, sent: bool, *, server_received_at=None):
     """Append-only история алертов: ts, монета, сила спайка, цена, движение, доставлен ли."""
     import csv
     from datetime import datetime, timezone
@@ -155,7 +211,8 @@ def _log_hit(symbol: str, sp: dict, price: float, sent: bool):
         w = csv.writer(f)
         if new:
             w.writerow(["ts_utc", "symbol", "vol_ratio", "price", "price_chg_30m", "sent"])
-        w.writerow([datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+        at = server_received_at or datetime.now(timezone.utc)
+        w.writerow([at.strftime("%Y-%m-%dT%H:%M:%S"),
                     symbol, sp["vol_ratio"], price, sp["price_chg_pct"], int(sent)])
 
 
@@ -241,11 +298,18 @@ def run(dry_run: bool = False, top: int | None = 150, scan_interval: str = "30")
     cd = {k: v for k, v in cd.items() if v > now}  # чистим истёкшие
 
     hits = []                                  # проход 1: собрать ВСЕ спайки скана
+    # Pure observer inputs only.  These are populated from the original scan
+    # and are never read by hit selection, cooldown, budget or Telegram code.
+    scan_klines: dict[str, list] = {}
+    raw_hit_symbols: set[str] = set()
     for sym in syms:
         if sym in cd:
             continue
         kl = fetch_klines(sym, interval=scan_interval, limit=12)
+        scan_klines[sym] = kl
         sp = detect_spike(kl)
+        if sp:
+            raw_hit_symbols.add(sym)
         if not sp:
             time.sleep(0.03); continue
         hits.append({"symbol": sym, "vol_ratio": sp["vol_ratio"],
@@ -260,6 +324,9 @@ def run(dry_run: bool = False, top: int | None = 150, scan_interval: str = "30")
         budget = {"date": today, "singles": 0, "cascade_ts": budget.get("cascade_ts", 0.0)}
 
     sent_syms: set[str] = set()
+    # Receipt timestamps are stored only after a successful individual
+    # Telegram send.  This list is not consulted by any production decision.
+    forward_receipts: list[tuple[dict, object]] = []
 
     # «Пробуждения» ≥15×: вне капа и вне топ-1, даже при каскаде (2026-07-05).
     awakenings = select_awakenings(hits)
@@ -284,6 +351,7 @@ def run(dry_run: bool = False, top: int | None = 150, scan_interval: str = "30")
                          build_awakening_message(h), reply_markup=radar_buttons(h["symbol"])):
                     budget["awakenings"] = int(budget.get("awakenings", 0)) + 1
                     sent_syms.add(h["symbol"])
+                    forward_receipts.append((h, datetime.now(timezone.utc)))
                     delivered_awk.add(h["symbol"])
             except Exception as e:
                 print(f"[radar] awakening send failed: {e}")
@@ -322,19 +390,46 @@ def run(dry_run: bool = False, top: int | None = 150, scan_interval: str = "30")
                              reply_markup=radar_buttons(h["symbol"])):
                         budget["singles"] = int(budget.get("singles", 0)) + 1
                         sent_syms.add(h["symbol"])
+                        forward_receipts.append((h, datetime.now(timezone.utc)))
                 if len(chosen) > room:
                     print(f"[radar] дневной кап {SINGLES_PER_DAY} исчерпан, тихо в CSV: "
                           f"{[h['symbol'] for h in chosen[room:]]}")
         except Exception as e:
             print(f"[radar] send failed: {e}")
 
+    # H-RADAR-MOVE-01 forward infrastructure.  It runs strictly after the
+    # completed delivery path above.  Symbols skipped by the existing cooldown
+    # are fetched here only to complete a matched-control snapshot; this later
+    # read cannot feed back into this scan's detector, delivery or state.
+    if not dry_run and forward_receipts:
+        for sym in syms:
+            if sym in scan_klines:
+                continue
+            kl = fetch_klines(sym, interval=scan_interval, limit=12)
+            scan_klines[sym] = kl
+            if detect_spike(kl):
+                raw_hit_symbols.add(sym)
+            time.sleep(0.03)
+        for h, receipt_time in forward_receipts:
+            try:
+                from radar_move_forward import record_delivery
+                record_delivery(symbol=h["symbol"], vol_ratio=h["vol_ratio"],
+                                symbols=syms, klines_by_symbol=scan_klines,
+                                raw_hits=raw_hit_symbols,
+                                receipt_time=receipt_time)
+            except Exception as e:
+                # Measurement cannot block or alter an already delivered alert.
+                print(f"[radar] forward observer snapshot failed for {h['symbol']}: {e}")
+
     for h in hits:                             # история пишется ВСЯ; sent = факт доставки
         # expiry: доставленный молчит 4ч; недоставленный — 30м CSV-дедупа,
         # потом снова кандидат (шанс на доставку/пробуждение не сгорает)
         cd[h["symbol"]] = now + (COOLDOWN_H * 3600 if h["symbol"] in sent_syms
                                  else UNSENT_COOLDOWN_MIN * 60)
-        _log_hit(h["symbol"], {"vol_ratio": h["vol_ratio"], "price_chg_pct": h["price_chg_pct"]},
-                 h["price"], sent=h["symbol"] in sent_syms)
+        receipt_time = datetime.now(timezone.utc).replace(microsecond=0)
+        _log_hit(h["symbol"], h, h["price"], sent=h["symbol"] in sent_syms,
+                 server_received_at=receipt_time)
+        _log_event_metadata(h["symbol"], h, h["price"], scan_interval, receipt_time)
     if not dry_run:
         _save_cooldown(cd)
         _save_budget(budget)

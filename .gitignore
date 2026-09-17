@@ -106,3 +106,10 @@ dashboard/combo_push_seen.json
 dashboard/entry_logged.json
 dashboard/diary.json
 dashboard/rose_live_posts.json
+
+# ── Large reproducible research outputs — source code stays tracked ──
+backtest_6y/out/
+flow_collector/server_archive/
+flow_collector/data_dom/
+local_structure_outcomes/
+dashboard/site/dist/

@@ -1,208 +1,27 @@
 <!doctype html>
 <html lang="ru">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Пульс — трейдинг-дашборд</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
-<link rel="manifest" href="manifest.webmanifest">
-<link rel="apple-touch-icon" href="icon-180.png">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=33">
-</head>
-<body>
-<div class="wrap">
-
-<header>
-  <h1>⚡ ПУЛЬС <span class="accent">· сигналы и отработка</span></h1>
-  <div class="hdr-status">
-    <span id="feed-status"><span class="dot"></span>фид…</span>
-    <span id="ws-status"><span class="dot"></span>live-цены…</span>
-    <span class="hdr-tick" id="btc-tick"></span>
-    <span class="hdr-tick" id="eth-tick"></span>
-    <button id="push-btn" class="pushbtn" hidden title="уведомления о новых кандидатах в зонах входа">🔔</button>
-    <span class="hdr-tick" id="bias-score" title="наклон стороны: угадано / всего экзаменованных движений (форвард, все версии)"></span>
-  </div>
-</header>
-
-<nav class="tabs">
-  <button class="tab active" data-tab="pulse">⚡ Пульс</button>
-  <button class="tab" data-tab="diary">📓 Дневник трейдера</button>
-</nav>
-
-
-<section id="sec-entry">
-  <div class="entry-main">
-    <div class="sec-head">
-      <h2>🎯 Вход имеет смысл сейчас</h2>
-      <span class="sub">все кандидаты — ЛОНГ (секция строится на «радар-альт ⬆»: 86% ходунов вверх) · свежесть ≤3ч · цена не убежала · без пилы · не в раздаче · план действий — в подсказке под «▲ лонг» на карточке — НЕ гарантия: ход случается у ~45% сигналов, риск размером позиции</span>
-    </div>
-    <div class="cards" id="entry-cards"><div class="empty">Кандидатов сейчас нет — правила строгие.</div></div>
-    <div class="sec-head" style="margin-top:14px">
-      <h2 style="font-size:12px">⚡ Связки: пробуждение → Rose-пост → структура жива</h2>
-      <span class="sub">радар-хит ≥5× за ≤72ч ДО поста Rose (такие посты отрабатывают ×2 лучше, n=5: VANRY +146%) · висит, только пока вход ещё осмыслен — снимается САМА, как только ход случился (пик от поста ≥8%), пост провален (ниже −3%), раздача или 48ч · лид, не гарантия</span>
-    </div>
-    <div class="cards" id="combo-cards"><div class="empty">Живых связок нет.</div></div>
-  </div>
-  <aside id="short-watch">
-    <div class="sec-head">
-      <h2 style="font-size:12px">🔒 Шорт-тест: лонги заперты</h2>
-      <span class="sub">шторм-шорты с funding ≥ +0.010% при падении — MUSDT-паттерн (лид 3/3, ретро 17% vs 7%) · тест-витрина для глаз: НЕ сигнал, в дневник не пишется, правилом станет только после side_study-2</span>
-    </div>
-    <div id="short-watch-cards"><div class="empty">Сейчас таких нет.</div></div>
-  </aside>
-</section>
-
-<section id="sec-live">
-  <div class="sec-head">
-    <h2>Живые сигналы</h2>
-    <span class="sub">отработка тикает в реальном времени с Bybit · % в сторону сигнала от цены на момент алерта · ⬆⬇ = наклон структуры (OI/funding/pump-стадия), не торговый прогноз</span>
-    <span class="sub" id="bias-acc" style="font-family:var(--mono)"></span>
-  </div>
-  <div class="filters" id="live-filters"></div>
-  <div class="cards" id="live-cards"><div class="empty">Загрузка…</div></div>
-</section>
-
-<section id="sec-pump">
-  <div class="sec-head">
-    <h2>🌋 Pump-надзор</h2>
-    <span class="sub">вертикаль ≥80%/4ч → плато → слом (кейс TAIKO 02.07) · пока монета под надзором, лонг-сетапы скринера по ней глушатся гейтом</span>
-  </div>
-  <div class="tiles" id="pump-tiles"></div>
-  <div class="tbl-wrap">
-    <table id="pump-table">
-      <thead><tr>
-        <th class="lft">Монета</th><th class="lft">Детект (МСК)</th><th class="lft">Тип</th>
-        <th class="lft">Стадия</th><th>Рост при детекте</th><th>Пик</th><th>Низ плато</th>
-      </tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
-  <div class="sec-head" style="margin-top:14px"><h2 style="font-size:12px">Заглушенные лонги скринера (PumpWatchGate)</h2></div>
-  <div class="tbl-wrap">
-    <table id="pump-muted-table">
-      <thead><tr>
-        <th class="lft">Время (МСК)</th><th class="lft">Монета</th><th class="lft">Сетап</th>
-        <th>Score</th><th class="lft">Причина (стадия, тип, возраст эпизода)</th>
-      </tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
-</section>
-
-<section id="sec-rose">
-  <div class="sec-head">
-    <h2>🌹 Rose — сигналы и анализ</h2>
-    <span class="sub">каналы rose + RoseSignalsPremium · повтор алерта ≤6ч = подтверждение, сутки итога отсчитываются заново · старт = первые 6ч, итог = макс. пик и просадка за 24ч от последнего подтверждения</span>
-  </div>
-  <div class="tiles" id="rose-tiles"></div>
-  <div class="filters" id="rose-filters"></div>
-  <div class="tbl-wrap">
-    <table id="rose-table">
-      <thead><tr>
-        <th class="lft">Алерт (МСК)</th><th class="lft">Монета</th><th class="lft">Напр.</th>
-        <th>Подтв.</th><th>Старт 6ч: пик</th><th>Старт 6ч: просадка</th>
-        <th>Пик 24ч</th><th>Просадка 24ч</th><th>Итог 24ч</th><th class="lft">Статус</th>
-      </tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
-  <button class="morebtn" id="rose-more" hidden>Показать ещё</button>
-</section>
-
-<section id="sec-history">
-  <div class="sec-head">
-    <h2>История сигналов — итог за сутки</h2>
-    <span class="sub">накапливается по всем источникам дашборда · пик и просадка в сторону сигнала за 24ч от последнего подтверждения</span>
-  </div>
-  <div class="filters" id="hist-filters"></div>
-  <div class="tbl-wrap">
-    <table id="hist-table">
-      <thead><tr>
-        <th class="lft">Алерт (МСК)</th><th class="lft">Источник</th><th class="lft">Монета</th><th class="lft">Напр.</th>
-        <th>Подтв.</th><th>Пик 24ч</th><th>Просадка 24ч</th><th>Итог 24ч</th><th class="lft">Статус</th>
-      </tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
-  <button class="morebtn" id="hist-more" hidden>Показать ещё</button>
-</section>
-
-<section id="sec-bot">
-  <div class="sec-head">
-    <h2>Скринер-бот</h2>
-    <span class="sub" id="bot-window"></span>
-  </div>
-  <div class="tiles" id="bot-tiles"></div>
-  <div class="charts2">
-    <div class="chart-box"><h3>Winrate по сетапам, % (24ч-горизонт)</h3><svg id="setup-chart"></svg></div>
-    <div class="chart-box"><h3>Накопленный R (все сигналы честного окна)</h3><svg id="equity-chart"></svg></div>
-  </div>
-  <div class="sec-head" style="margin-top:16px"><h2 style="font-size:12px">Последние резолвы</h2></div>
-  <div class="tbl-wrap">
-    <table id="bot-table">
-      <thead><tr>
-        <th class="lft">Время (МСК)</th><th class="lft">Монета</th><th class="lft">Сетап</th>
-        <th class="lft">Напр.</th><th>Δ24ч</th><th>R(24ч)</th><th>MFE</th><th>MAE</th><th class="lft">Итог</th>
-      </tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
-</section>
-
-<section id="sec-storm">
-  <div class="sec-head">
-    <h2>Шторм и радар</h2>
-    <span class="sub">пружины под наблюдением и статистика объёмных всплесков · по каналам шторм смотрит только rose и RoseSignalsPremium (rose_watch: пост → подкоп метриками → 6ч надзора → 🌹 алерт)</span>
-  </div>
-  <div class="tiles" id="storm-tiles"></div>
-  <div class="tbl-wrap">
-    <table id="storm-table">
-      <thead><tr>
-        <th class="lft">Монета</th><th class="lft">В списке с (МСК)</th><th>Цена входа в список</th>
-        <th>Ширина коробки</th><th>Сжатие, перц.</th><th>ΔOI 4ч</th><th>Funding</th>
-      </tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
-</section>
-
-<section id="sec-diary" hidden>
-  <div class="sec-head">
-    <h2>📓 Дневник трейдера</h2>
-    <span class="sub">ВСЕ сигналы зон входа — включая не отработавшие · «вход» = момент появления в зоне · ожидание класса ЗАМОРАЖИВАЕТСЯ при рождении записи и не переписывается · вердикт только по закрытым суткам · <b>вердикт экзаменует ПРОГНОЗ класса (пик 24ч против коридора p25–p75), а НЕ прибыльность — итог сделки в колонке «Итог 24ч»</b> · сюрпризы копятся в библиотеку, но НЕ меняют торговые правила (правила — только через форвард-экзамен)</span>
-  </div>
-  <div class="tiles" id="diary-tiles"></div>
-
-  <div class="sec-head" style="margin-top:14px"><h2 style="font-size:12px">🧠 Что бот выучил — ожидания классов (замороженные базы)</h2></div>
-  <div class="tiles" id="diary-classes"></div>
-
-  <div class="sec-head" style="margin-top:14px"><h2 style="font-size:12px">Журнал сделок зоны</h2></div>
-  <div class="tbl-wrap">
-    <table id="diary-table">
-      <thead><tr>
-        <th class="lft">В зоне с (МСК)</th><th class="lft">Монета</th><th class="lft">Класс</th>
-        <th>Сторона</th>
-        <th>Базис</th><th>Диапазон сделки (24ч)</th><th>Пик</th><th>Просадка</th><th>Итог 24ч</th>
-        <th class="lft">Ожидание (p50)</th><th class="lft">Вердикт</th>
-      </tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
-
-  <div class="sec-head" style="margin-top:14px"><h2 style="font-size:12px">🚀💥 Библиотека сюрпризов</h2></div>
-  <div class="cards" id="diary-surprises"><div class="empty">Сюрпризов пока нет — исходы в рамках ожиданий.</div></div>
-</section>
-
-<footer>
-  Данные: локальный бот → GitHub → этот дашборд (обновление ~1–2 мин) · живые цены — Bybit WebSocket напрямую ·
-  аналитика бота считается только в честном окне (с 02.06.2026) · время на странице — МСК.
-  <span id="gen-at"></span>
-</footer>
-
-</div>
-<div class="tooltip" id="tooltip"></div>
-<script src="app.js?v=35"></script>
-</body>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="#101417">
+    <meta name="description" content="Trading Pulse — исследовательский радар рыночных событий">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/archive.css">
+    <title>Trading Pulse — Research Radar</title>
+  </head>
+  <body>
+    <a class="skip" href="#main">К содержанию</a>
+    <header class="topbar">
+      <a href="#/radar" class="brand">TRADING <span>PULSE</span></a>
+      <p>Исследовательский радар ранних аномалий цены, объёма и структуры рынка</p>
+      <div id="system-pill" class="pill neutral">Загрузка статуса…</div>
+    </header>
+    <nav class="nav" aria-label="Разделы">
+      <a href="#/radar">⚡ Рабочее место</a><a href="#/positioning">◎ COT · Positioning</a><a href="#/archive">История</a><a href="#/data-health">Качество данных</a><a href="#/validation">Проверка</a><a href="#/methodology">Методология</a><a href="#/pumpwatch">PumpWatch</a><a href="#/rose">Rose Archive</a>
+    </nav>
+    <main id="main" tabindex="-1"><section class="loading"><h1>Загрузка исследовательской проекции</h1><p>Проверяем доступность и качество источника данных.</p></section></main>
+    <footer>Trading Pulse отображает наблюдения для ручного исследования. Режим направления и исполнения: отключён.</footer>
+    <script src="/app.js" defer></script>
+  </body>
 </html>

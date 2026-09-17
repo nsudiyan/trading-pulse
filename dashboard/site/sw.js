@@ -1,4 +1,4 @@
-/* Пульс — service worker: web push для зон входа. Кэшей нет — сайт живой. */
+/* Пульс — service worker: web push для исследовательских кандидатов (NO-TRADE). Кэшей нет — сайт живой. */
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
 

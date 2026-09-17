@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import sys
 import urllib.request
 from datetime import datetime, timezone
@@ -49,6 +50,10 @@ MIN_CLASS_N = 10          # замок №2: до этого порога вер
 HORIZON_H = 24            # экзамен по peak/dd/ret за 24ч от появления в зоне
 DEAD_GRACE_H = 48         # signal_ts + HORIZON + это = запись no_data, из очереди (S1)
 AWAKENING_RATIO = 15.0
+# Только витрина дневника: endpoint RET24 минус фиксированный круг costs.
+# Это НЕ PnL, не учитывает funding/slippage и не участвует в сигналах/вердиктах.
+COST_GRID_PCT = (0.14, 0.31, 0.71)
+MIN_DAY_CLUSTERS_FOR_T = 5
 
 
 def utcnow() -> datetime:
@@ -68,6 +73,72 @@ def _quartiles(vals: list[float]) -> dict:
         return round(xs[lo] + (xs[hi] - xs[lo]) * (k - lo), 2)
 
     return {"p25": q(0.25), "p50": q(0.5), "p75": q(0.75)}
+
+
+def _endpoint24_stats(kind: str, closed_records: list[dict]) -> dict:
+    """Read-only статистика исполнимого endpoint-а дневника.
+
+    MFE/peak24 остаётся отдельным описанием доступной волатильности и базой
+    старого экзамена сюрпризов. Здесь намеренно считается только ret24 — close
+    последнего 15m-бара в 24ч-окне — плюс грубая сетка ret24−cost. Это НЕ
+    торговый отчёт: funding, проскальзывание и исполнение лимиток не известны.
+
+    Обычный t по монетам здесь запрещён: записи одного дня/скана коррелированы.
+    Поэтому выводится только t по дневным средним и лишь от пяти UTC-дней;
+    иначе честное «insufficient», а не ложная значимость.
+    """
+    rets: list[float] = []
+    by_day: dict[str, list[float]] = {}
+    scans: set[int] = set()
+
+    for rec in closed_records:
+        if rec.get("kind") != kind:
+            continue
+        outcome = rec.get("outcome") or {}
+        ret = outcome.get("ret24")
+        if not outcome.get("final") or not isinstance(ret, (int, float)):
+            continue
+        rets.append(float(ret))
+        try:
+            ts = datetime.fromisoformat(rec["signal_ts"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        day = ts.astimezone(timezone.utc).date().isoformat()
+        by_day.setdefault(day, []).append(float(ret))
+        scans.add(int(ts.timestamp()) // 300)
+
+    out = {
+        "n": len(rets),
+        "utc_days": len(by_day),
+        "scan_clusters": len(scans),
+        "median_ret24": None,
+        "mean_ret24": None,
+        "mean_ret24_after_cost": {},
+        "day_t": None,
+        "day_t_status": "insufficient",
+    }
+    if not rets:
+        return out
+
+    mean_ret = sum(rets) / len(rets)
+    out["median_ret24"] = _quartiles(rets)["p50"]
+    out["mean_ret24"] = round(mean_ret, 2)
+    out["mean_ret24_after_cost"] = {
+        f"{cost:.2f}": round(mean_ret - cost, 2) for cost in COST_GRID_PCT
+    }
+
+    day_means = [sum(xs) / len(xs) for xs in by_day.values()]
+    if len(day_means) < MIN_DAY_CLUSTERS_FOR_T:
+        return out
+    avg = sum(day_means) / len(day_means)
+    variance = sum((x - avg) ** 2 for x in day_means) / (len(day_means) - 1)
+    se = math.sqrt(variance) / math.sqrt(len(day_means))
+    if se == 0:
+        out["day_t_status"] = "zero_dispersion"
+    else:
+        out["day_t"] = round(avg / se, 2)
+        out["day_t_status"] = "ok"
+    return out
 
 
 def _cold_start_base(kind: str) -> list[float]:
@@ -400,7 +471,10 @@ def diary_block(limit: int = 120) -> dict:
         verdicts[v] = verdicts.get(v, 0) + 1
     classes = {}
     for kind in ("awakening", "radar_alt", "combo"):
-        own = [r["outcome"]["peak24"] for r in closed if r["kind"] == kind]
+        # guard 11.07: цензурированный outcome-обрубок (VET: только final/status,
+        # без peak24) не должен валить весь diary-блок фида — fail-open по записи
+        own = [r["outcome"]["peak24"] for r in closed
+               if r["kind"] == kind and (r.get("outcome") or {}).get("peak24") is not None]
         c = {"n_closed": len(own)}
         if own:
             c.update(_quartiles(own))
@@ -408,6 +482,7 @@ def diary_block(limit: int = 120) -> dict:
         exp_now = build_expectation(kind, closed)
         c["expectation_now"] = {k: exp_now.get(k) for k in
                                 ("n_class", "src", "p25", "p50", "p75", "move_rate")}
+        c["endpoint24"] = _endpoint24_stats(kind, closed)
         classes[kind] = c
     surprises = [r for r in recs
                  if (r.get("grade") or {}).get("verdict") in ("surprise_up", "surprise_down")][:20]

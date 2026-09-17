@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Trading Pulse Positioning V1 shadow snapshot every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+Unit=positioning-shadow.service
+
+[Install]
+WantedBy=timers.target

@@ -95,7 +95,7 @@ if __name__ == "__main__":
     if "--selfcheck" in sys.argv:
         _selfcheck()
     elif "--test" in sys.argv:
-        n = send_push("⚡ Пульс — проверка", "Пуши с мака работают. Зоны входа под надзором.")
+        n = send_push("⚡ Пульс — серверная проверка", "Уведомление отправлено сервером: Пульс работает, даже когда Mac выключен.")
         print(f"доставлено: {n}")
     else:
         print("использование: push_send.py --test")

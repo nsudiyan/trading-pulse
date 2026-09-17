@@ -1,0 +1,6 @@
+.pill.legacy_only,.pill.legacy_only_stale,.pill.legacy_provenance_incomplete{color:var(--blue);border-color:#496d91}
+.archive-row{margin-top:10px;border-top:1px solid var(--line);padding-top:10px}
+.archive-row summary{cursor:pointer;color:var(--blue)}
+.archive-row pre{max-height:360px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#0c0f11;border:1px solid var(--line);border-radius:8px;padding:10px;color:var(--text);font-size:.78rem}
+.pill.manual_check{color:var(--blue);border-color:#496d91}
+.now-queue{margin:24px 0}.filter-bar{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}.live-filter[aria-pressed="true"]{border-color:var(--accent);color:var(--text)}.now-observation[hidden]{display:none}
