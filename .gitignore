@@ -113,3 +113,12 @@ flow_collector/server_archive/
 flow_collector/data_dom/
 local_structure_outcomes/
 dashboard/site/dist/
+dashboard/impulse_review_active.json
+backtest_6y/*.txt
+backtest_6y/*.json
+flow_collector/parallel_start.txt
+
+# Nested projects are backed up in their own repositories ──
+hflow_replay/
+xarb01/
+xarb_obs02/
