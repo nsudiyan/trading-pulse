@@ -136,6 +136,20 @@ function positioning(feed) {
     phase: text(row.phase_hypothesis), evidence: text(row.evidence_status), execution: text(row.execution_status),
     createdAtUtc: utc(row.created_at_utc), updatedAtUtc: utc(row.updated_at_utc),
   })).filter((row) => row.id && row.symbol && allowedLifecycle.has(row.lifecycle));
+  const coverage = raw.history_coverage && typeof raw.history_coverage === 'object' ? {
+    rows: number(raw.history_coverage.rows) || 0, startedAtUtc: utc(raw.history_coverage.started_at_utc),
+    ageMinutes: number(raw.history_coverage.age_minutes) || 0,
+    oneHourReady: raw.history_coverage.one_hour_ready === true, oneDayReady: raw.history_coverage.one_day_ready === true, oneWeekReady: raw.history_coverage.one_week_ready === true,
+  } : { rows: 0, startedAtUtc: null, ageMinutes: 0, oneHourReady: false, oneDayReady: false, oneWeekReady: false };
+  const contextRows = arr(raw.current_brief?.rows).map((row) => ({
+    symbol: canonical(row.symbol), asOfUtc: utc(row.as_of_utc), price: number(row.price), openInterestValue: number(row.open_interest_value), turnover24h: number(row.turnover_24h), fundingRate: number(row.funding_rate),
+    change1h: { available: row.change_1h?.available === true, pricePct: number(row.change_1h?.price_pct), oiValuePct: number(row.change_1h?.oi_value_pct) },
+    change24h: { available: row.change_24h?.available === true, pricePct: number(row.change_24h?.price_pct), oiValuePct: number(row.change_24h?.oi_value_pct) },
+    explanation: text(row.explanation), terminalCheck: text(row.terminal_check), fundingNote: text(row.funding_note), unknowns: arr(row.unknowns).map(text).filter(Boolean), dataQuality: text(row.data_quality) || 'unavailable',
+  })).filter((row) => row.symbol);
+  const weeklyRows = arr(raw.weekly_brief?.rows).map((row) => ({
+    symbol: canonical(row.symbol), price7dPct: number(row.price_7d_pct), oiValue7dPct: number(row.oi_value_7d_pct), fundingRate: number(row.funding_rate), turnover24h: number(row.turnover_24h), explanation: text(row.explanation), terminalCheck: text(row.terminal_check),
+  })).filter((row) => row.symbol);
   return {
     mode: 'shadow',
     status: allowedStatus.has(text(raw.status)?.toLowerCase()) ? text(raw.status).toLowerCase() : 'data_unavailable',
@@ -145,7 +159,9 @@ function positioning(feed) {
     shortlist: arr(raw.shortlist).map((row) => canonical(typeof row === 'string' ? row : row?.symbol)).filter(Boolean).slice(0, 5),
     cases, snapshots,
     outcomes: raw.outcomes && typeof raw.outcomes === 'object' ? { horizonsMinutes: arr(raw.outcomes.horizons_minutes).map(number).filter((value) => value !== null), available: number(raw.outcomes.available) || 0, status: text(raw.outcomes.status) || 'data_unavailable' } : { horizonsMinutes: [], available: 0, status: 'data_unavailable' },
-    weeklyBrief: raw.weekly_brief && typeof raw.weekly_brief === 'object' ? { status: text(raw.weekly_brief.status) || 'data_unavailable', reason: text(raw.weekly_brief.reason) } : { status: 'data_unavailable', reason: 'Не опубликован.' },
+    historyCoverage: coverage,
+    currentBrief: raw.current_brief && typeof raw.current_brief === 'object' ? { status: text(raw.current_brief.status) || 'data_unavailable', reason: text(raw.current_brief.reason), rows: contextRows } : { status: 'data_unavailable', reason: 'Не опубликован.', rows: [] },
+    weeklyBrief: raw.weekly_brief && typeof raw.weekly_brief === 'object' ? { status: text(raw.weekly_brief.status) || 'data_unavailable', reason: text(raw.weekly_brief.reason), rows: weeklyRows } : { status: 'data_unavailable', reason: 'Не опубликован.', rows: [] },
     limitations: arr(raw.limitations).map(text).filter(Boolean),
   };
 }
