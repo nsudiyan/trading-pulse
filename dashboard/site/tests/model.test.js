@@ -112,6 +112,25 @@ test('current live_signals become a sorted manual-check queue without leaking en
   assert.deepEqual([...new Set(model.nowObservations.map((item) => item.sourceModule))].sort(), ['radar', 'storm']);
 });
 
+test('terminal focus limits raw intake to three fresh deduplicated radar volume observations', () => {
+  const now = Date.parse('2026-09-14T15:40:00.000Z');
+  const signals = [
+    { id: 'a', symbol: 'AAAUSDT', source: 'radar', ts_utc: '2026-09-14T15:35:00.000Z', vol_ratio: 5.1 },
+    { id: 'a-repeat', symbol: 'AAAUSDT', source: 'radar', ts_utc: '2026-09-14T15:36:00.000Z', vol_ratio: 6.2 },
+    { id: 'b', symbol: 'BBBUSDT', source: 'radar', ts_utc: '2026-09-14T15:34:00.000Z', vol_ratio: 7.1, major_radar: true },
+    { id: 'c', symbol: 'CCCUSDT', source: 'radar', ts_utc: '2026-09-14T15:33:00.000Z', vol_ratio: 8.1 },
+    { id: 'd', symbol: 'DDDUSDT', source: 'radar', ts_utc: '2026-09-14T15:32:00.000Z', vol_ratio: 9.1 },
+    { id: 'storm', symbol: 'EEEUSDT', source: 'storm', ts_utc: '2026-09-14T15:39:00.000Z', vol_ratio: 99 },
+    { id: 'old', symbol: 'OLDUSDT', source: 'radar', ts_utc: '2026-09-14T15:10:00.000Z', vol_ratio: 99 },
+    { id: 'small', symbol: 'SMALLUSDT', source: 'radar', ts_utc: '2026-09-14T15:39:00.000Z', vol_ratio: 4.9 },
+  ];
+  const model = buildModel({ generated_at: '2026-09-14T15:40:00.000Z', live_signals: signals }, now);
+  assert.equal(model.nowObservations.length, 8);
+  assert.equal(model.focusObservations.length, 3);
+  assert.deepEqual(model.focusObservations.map((item) => item.symbol), ['BBBUSDT', 'DDDUSDT', 'CCCUSDT']);
+  assert.equal(model.focusObservations.every((item) => item.sourceModule === 'radar' && item.relativeVolume >= 5), true);
+});
+
 test('positioning is a separate shadow layer and ignores invalid trade-like cases', () => {
   const model = buildModel({
     generated_at: '2026-09-14T15:40:00.000Z',

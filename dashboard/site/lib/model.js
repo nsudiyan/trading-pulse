@@ -102,8 +102,8 @@ function legacyArchive(feed) {
 }
 
 function currentObservations(feed) {
-  // `live_signals` is shown as a separate manual-inspection queue.  Do not
-  // promote it to a Radar episode: its current rows do not meet that contract.
+  // `live_signals` is a raw intake, not a trade queue.  Do not promote it to
+  // a Radar episode and never substitute trade-plan values for market facts.
   return arr(feed.live_signals).map((raw, index) => ({
     id: text(raw.id) || `LIVE-${digest([index, raw])}`,
     symbol: canonical(raw.symbol),
@@ -112,8 +112,26 @@ function currentObservations(feed) {
     // Never substitute trade-plan fields such as `entry` for a live price.
     livePrice: number(raw.live_price ?? raw.last_price ?? raw.price),
     liveChangePct: number(raw.live_change_pct ?? raw.change_pct),
+    relativeVolume: number(raw.vol_ratio),
+    majorRadar: raw.major_radar === true,
     status: 'manual_check',
   })).sort((left, right) => (Date.parse(right.observedAtUtc || '') || 0) - (Date.parse(left.observedAtUtc || '') || 0) || left.id.localeCompare(right.id));
+}
+
+function terminalFocus(observations, now) {
+  // A deliberately narrow, transparent attention filter. It cannot make a
+  // trade claim: it only limits terminal attention to fresh radar observations
+  // with the source's published volume-anomaly field.
+  const twentyMinutes = 20 * 60 * 1000;
+  const bestBySymbol = new Map();
+  for (const item of observations) {
+    const observed = item.observedAtUtc ? Date.parse(item.observedAtUtc) : NaN;
+    const fresh = Number.isFinite(observed) && now >= observed && now - observed <= twentyMinutes;
+    if (!fresh || item.sourceModule !== 'radar' || !(item.relativeVolume >= 5) || !item.symbol) continue;
+    const previous = bestBySymbol.get(item.symbol);
+    if (!previous || Number(item.majorRadar) > Number(previous.majorRadar) || item.relativeVolume > previous.relativeVolume || observed > Date.parse(previous.observedAtUtc)) bestBySymbol.set(item.symbol, item);
+  }
+  return [...bestBySymbol.values()].sort((left, right) => Number(right.majorRadar) - Number(left.majorRadar) || right.relativeVolume - left.relativeVolume || Date.parse(right.observedAtUtc) - Date.parse(left.observedAtUtc)).slice(0, 3);
 }
 
 function positioning(feed) {
@@ -207,7 +225,7 @@ function buildModel(feed = {}, now = Date.now()) {
   const overallStatus = !feedFresh ? (archive.totalRecords ? 'legacy_only_stale' : 'unavailable') : verifiedDataCount ? (verifiedDataCount < episodes.length ? 'degraded' : 'healthy') : archive.totalRecords ? 'legacy_only' : 'unavailable';
   const health = { overallStatus, feedGeneratedAtUtc: generatedAtUtc, feedAgeMs, evaluatedAtUtc: new Date(now).toISOString(), feedFresh, missingRequiredFields, episodeCount: episodes.length, verifiedDataCount, legacyRecordCount: archive.totalRecords, legacySourceCounts: Object.fromEntries(archive.sources.map((source) => [source.id, source.count])), affectedModules: rawSources(feed).filter(([, rows]) => rows.length).map(([module]) => module), providers: [...new Set(episodes.flatMap((episode) => episode.rawAlerts.map((raw) => raw.provider)).filter(Boolean))], lastValidSourceTimestampUtc: episodes.filter((episode) => episode.dataQuality.status === 'verified').map((episode) => episode.dataQuality.sourceTimestampUtc).sort().at(-1) || null, lastError: null };
   const rose = arr(feed.rose?.tracks).map((track) => ({ symbol: canonical(track.symbol), timestampUtc: utc(track.first_ts), sourceModule: text(track.source), methodVersion: text(track.methodVersion), observationHorizons: ['6h', '24h'], dataQuality: 'unavailable', missingFields: ['methodVersion', 'sourceTimestampUtc', 'quality attestation'], completionStatus: track.final === true ? 'Завершено по флагу источника' : 'Не завершено по флагу источника', limitations: 'Направленные и результативные поля источника скрыты: контракт абсолютных high/low и качество не опубликованы.' }));
-  return { adapterVersion: POLICY.version, generatedAtUtc, evaluatedAtUtc: new Date(now).toISOString(), systemStatus: overallStatus, interpretationMode: 'NON-DIRECTIONAL', executionMode: 'DISABLED', episodes, nowObservations, positioning: positioningLayer, pumpWatch, pumpArchive: arr(feed.pump_watch).concat(arr(feed.pump_muted)).map((row) => ({ symbol: canonical(row.symbol), timestampUtc: utc(row.ts || row.added_ts), status: 'historical_only', reason: text(row.reason) || 'Состояние не опубликовано' })), validation: validation(feed), health, archive, rose, policy: POLICY, storage: { mode: 'read_only_feed_projection', persistentAuditAvailable: false, rawHistoryComplete: false } };
+  return { adapterVersion: POLICY.version, generatedAtUtc, evaluatedAtUtc: new Date(now).toISOString(), systemStatus: overallStatus, interpretationMode: 'NON-DIRECTIONAL', executionMode: 'DISABLED', episodes, nowObservations, focusObservations: terminalFocus(nowObservations, now), positioning: positioningLayer, pumpWatch, pumpArchive: arr(feed.pump_watch).concat(arr(feed.pump_muted)).map((row) => ({ symbol: canonical(row.symbol), timestampUtc: utc(row.ts || row.added_ts), status: 'historical_only', reason: text(row.reason) || 'Состояние не опубликовано' })), validation: validation(feed), health, archive, rose, policy: POLICY, storage: { mode: 'read_only_feed_projection', persistentAuditAvailable: false, rawHistoryComplete: false } };
 }
 
-module.exports = { buildModel, normalize, quality, validation, legacyArchive, currentObservations, positioning, canonical, utc, POLICY, LEGACY_STATUS };
+module.exports = { buildModel, normalize, quality, validation, legacyArchive, currentObservations, terminalFocus, positioning, canonical, utc, POLICY, LEGACY_STATUS };

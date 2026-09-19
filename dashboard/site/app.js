@@ -45,6 +45,7 @@
     const actualFacts = [];
     if (observation.livePrice !== null) actualFacts.push(['Текущая цена', observation.livePrice]);
     if (observation.liveChangePct !== null) actualFacts.push(['Изменение', `${observation.liveChangePct}%`]);
+    if (observation.relativeVolume !== null) actualFacts.push(['Относительный объём источника', `×${observation.relativeVolume}`]);
     return `<article class="card now-observation" data-live-source="${esc(observation.sourceModule)}">
       <div class="row"><div><p class="kicker">${esc(observation.sourceModule)}</p><h3>${esc(observation.symbol || 'инструмент не передан')}</h3></div>${badge(observation.status)}</div>
       <p class="meta">Время наблюдения: ${esc(observedAt)}</p>
@@ -55,11 +56,12 @@
 
   function nowObservationQueue(model) {
     const observations = Array.isArray(model.nowObservations) ? model.nowObservations : [];
-    const sources = [...new Set(observations.map((item) => item.sourceModule).filter(Boolean))].sort();
-    const filters = [['all', `Все (${observations.length})`], ...sources.map((source) => [source, `${source} (${observations.filter((item) => item.sourceModule === source).length})`])];
+    const focus = Array.isArray(model.focusObservations) ? model.focusObservations : [];
+    const rawNote = observations.length ? `<details class="details"><summary>Сырой поток скрыт: ${esc(observations.length)} строк</summary><p class="meta">Он включает старые, повторные и неотсортированные публикации. Он не является списком сделок и не требует открытия каждой монеты.</p></details>` : '';
     return `<section class="terminal-workbench" aria-label="Сейчас открыть в терминале">
-      <div class="workbench-heading"><div><p class="kicker">Приоритетная очередь ручной проверки</p><h2>⚡ СЕЙЧАС ОТКРЫТЬ В ТЕРМИНАЛЕ</h2><p class="subtitle">Открой график, затем сопоставь фьючерс, спот, стакан и ленты в Tiger Trade. Это не команда к действию и не трактовка рынка.</p></div>${badge('manual_check')}</div>
-      ${observations.length ? `<div class="filter-bar" role="group" aria-label="Фильтр источника">${filters.map(([value, label], index) => `<button type="button" class="live-filter" data-live-filter="${esc(value)}" aria-pressed="${index === 0 ? 'true' : 'false'}">${esc(label)}</button>`).join('')}</div><div class="grid now-observation-grid">${observations.map(nowObservationCard).join('')}</div>` : '<div class="empty terminal-empty"><strong>Сейчас в очереди нет наблюдений.</strong><br>Новые карточки появятся здесь только после фактической публикации текущей строки источником.</div>'}
+      <div class="workbench-heading"><div><p class="kicker">Короткий список для ручной проверки</p><h2>⚡ СЕЙЧАС ОТКРЫТЬ В ТЕРМИНАЛЕ</h2><p class="subtitle">Не больше трёх свежих радар-наблюдений. Условие: не старше 20 минут, источник — Radar, опубликованный относительный объём ≥ ×5; повторы одной монеты схлопываются.</p></div>${badge('manual_check')}</div>
+      ${focus.length ? `<div class="grid now-observation-grid">${focus.map(nowObservationCard).join('')}</div><p class="meta">Это приоритет внимания, а не сделка и не направление. Открой монету в Tiger Trade: график → фьючерс/спот → стакан → лента.</p>` : '<div class="empty terminal-empty"><strong>Сейчас нет свежего наблюдения, прошедшего фильтр внимания.</strong><br>Не нужно искать сделку: дождись следующего отфильтрованного радар-наблюдения.</div>'}
+      ${rawNote}
     </section>`;
   }
 
