@@ -134,6 +134,32 @@ function terminalFocus(observations, now) {
   return [...bestBySymbol.values()].sort((left, right) => Number(right.majorRadar) - Number(left.majorRadar) || right.relativeVolume - left.relativeVolume || Date.parse(right.observedAtUtc) - Date.parse(left.observedAtUtc)).slice(0, 3);
 }
 
+function acceptanceReview(feed) {
+  // This projection is a separate forward-only quality journal.  It is never
+  // used to infer a direction or execution plan from a Radar event.
+  const raw = feed.acceptance_review && typeof feed.acceptance_review === 'object' ? feed.acceptance_review : {};
+  const allowed = new Set(['pending_closed_m5', 'accepted_for_manual_review', 'rejected_for_review']);
+  const rows = arr(raw.active).map((row) => ({
+    id: text(row.event_id), symbol: canonical(row.symbol), venue: text(row.venue)?.toUpperCase() || null,
+    status: text(row.status), sourceTimestampUtc: utc(row.source_timestamp_utc),
+    decisionTimestampUtc: utc(row.decision_ts_utc), basis: number(row.basis), relativeVolume: number(row.vol_ratio),
+    elapsedMinutes: number(row.elapsed_min), dominantExcursionPct: number(row.dominant_excursion_pct),
+    adverseExcursionPct: number(row.adverse_excursion_pct), retentionRatio: number(row.retention_ratio),
+    sameSideCloses: number(row.same_side_closes), reasons: arr(row.reason_codes).map(text).filter(Boolean),
+  })).filter((row) => row.id && row.symbol && allowed.has(row.status));
+  const counts = raw.counts && typeof raw.counts === 'object' ? {
+    pending: number(raw.counts.pending) || 0,
+    accepted: number(raw.counts.accepted) || 0,
+    rejected: number(raw.counts.rejected) || 0,
+  } : { pending: 0, accepted: 0, rejected: 0 };
+  return {
+    protocol: text(raw.protocol) || 'H-IMPULSE-ACCEPT-01',
+    mode: text(raw.mode) || 'unavailable', startedAtUtc: utc(raw.started_at_utc), delayMinutes: number(raw.delay_minutes),
+    active: rows.sort((left, right) => (right.sourceTimestampUtc || '').localeCompare(left.sourceTimestampUtc || '')),
+    counts, limitations: arr(raw.limitations).map(text).filter(Boolean),
+  };
+}
+
 function positioning(feed) {
   // Independent shadow projection. It cannot create a Radar event, execution,
   // or a directional recommendation from incomplete public fields.
@@ -225,7 +251,7 @@ function buildModel(feed = {}, now = Date.now()) {
   const overallStatus = !feedFresh ? (archive.totalRecords ? 'legacy_only_stale' : 'unavailable') : verifiedDataCount ? (verifiedDataCount < episodes.length ? 'degraded' : 'healthy') : archive.totalRecords ? 'legacy_only' : 'unavailable';
   const health = { overallStatus, feedGeneratedAtUtc: generatedAtUtc, feedAgeMs, evaluatedAtUtc: new Date(now).toISOString(), feedFresh, missingRequiredFields, episodeCount: episodes.length, verifiedDataCount, legacyRecordCount: archive.totalRecords, legacySourceCounts: Object.fromEntries(archive.sources.map((source) => [source.id, source.count])), affectedModules: rawSources(feed).filter(([, rows]) => rows.length).map(([module]) => module), providers: [...new Set(episodes.flatMap((episode) => episode.rawAlerts.map((raw) => raw.provider)).filter(Boolean))], lastValidSourceTimestampUtc: episodes.filter((episode) => episode.dataQuality.status === 'verified').map((episode) => episode.dataQuality.sourceTimestampUtc).sort().at(-1) || null, lastError: null };
   const rose = arr(feed.rose?.tracks).map((track) => ({ symbol: canonical(track.symbol), timestampUtc: utc(track.first_ts), sourceModule: text(track.source), methodVersion: text(track.methodVersion), observationHorizons: ['6h', '24h'], dataQuality: 'unavailable', missingFields: ['methodVersion', 'sourceTimestampUtc', 'quality attestation'], completionStatus: track.final === true ? 'Завершено по флагу источника' : 'Не завершено по флагу источника', limitations: 'Направленные и результативные поля источника скрыты: контракт абсолютных high/low и качество не опубликованы.' }));
-  return { adapterVersion: POLICY.version, generatedAtUtc, evaluatedAtUtc: new Date(now).toISOString(), systemStatus: overallStatus, interpretationMode: 'NON-DIRECTIONAL', executionMode: 'DISABLED', episodes, nowObservations, focusObservations: terminalFocus(nowObservations, now), positioning: positioningLayer, pumpWatch, pumpArchive: arr(feed.pump_watch).concat(arr(feed.pump_muted)).map((row) => ({ symbol: canonical(row.symbol), timestampUtc: utc(row.ts || row.added_ts), status: 'historical_only', reason: text(row.reason) || 'Состояние не опубликовано' })), validation: validation(feed), health, archive, rose, policy: POLICY, storage: { mode: 'read_only_feed_projection', persistentAuditAvailable: false, rawHistoryComplete: false } };
+  return { adapterVersion: POLICY.version, generatedAtUtc, evaluatedAtUtc: new Date(now).toISOString(), systemStatus: overallStatus, interpretationMode: 'NON-DIRECTIONAL', executionMode: 'DISABLED', episodes, nowObservations, focusObservations: terminalFocus(nowObservations, now), acceptanceReview: acceptanceReview(feed), positioning: positioningLayer, pumpWatch, pumpArchive: arr(feed.pump_watch).concat(arr(feed.pump_muted)).map((row) => ({ symbol: canonical(row.symbol), timestampUtc: utc(row.ts || row.added_ts), status: 'historical_only', reason: text(row.reason) || 'Состояние не опубликовано' })), validation: validation(feed), health, archive, rose, policy: POLICY, storage: { mode: 'read_only_feed_projection', persistentAuditAvailable: false, rawHistoryComplete: false } };
 }
 
-module.exports = { buildModel, normalize, quality, validation, legacyArchive, currentObservations, terminalFocus, positioning, canonical, utc, POLICY, LEGACY_STATUS };
+module.exports = { buildModel, normalize, quality, validation, legacyArchive, currentObservations, terminalFocus, acceptanceReview, positioning, canonical, utc, POLICY, LEGACY_STATUS };

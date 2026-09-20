@@ -114,6 +114,7 @@ flow_collector/data_dom/
 local_structure_outcomes/
 dashboard/site/dist/
 dashboard/impulse_review_active.json
+dashboard/impulse_acceptance_state.json
 backtest_6y/*.txt
 backtest_6y/*.json
 flow_collector/parallel_start.txt

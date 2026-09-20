@@ -131,6 +131,26 @@ test('terminal focus limits raw intake to three fresh deduplicated radar volume 
   assert.equal(model.focusObservations.every((item) => item.sourceModule === 'radar' && item.relativeVolume >= 5), true);
 });
 
+test('acceptance review remains a separate non-directional forward-only queue', () => {
+  const model = buildModel({
+    generated_at: '2026-09-14T15:40:00.000Z',
+    acceptance_review: {
+      protocol: 'H-IMPULSE-ACCEPT-01', mode: 'shadow_forward_only',
+      started_at_utc: '2026-09-14T15:00:00.000Z', delay_minutes: 15,
+      counts: { pending: 1, accepted: 1, rejected: 1 },
+      active: [
+        { event_id: 'accepted', symbol: 'AAAUSDT', venue: 'BYBIT', status: 'accepted_for_manual_review', source_timestamp_utc: '2026-09-14T15:10:00.000Z', basis: 1, vol_ratio: 6, dominant_excursion_pct: 0.5, adverse_excursion_pct: 0.2, retention_ratio: 0.7, same_side_closes: 3, reason_codes: ['closed_m5_acceptance_conditions_met'] },
+        { event_id: 'rejected', symbol: 'BBBUSDT', venue: 'BYBIT', status: 'rejected_for_review', source_timestamp_utc: '2026-09-14T15:11:00.000Z', basis: 1, vol_ratio: 6, reason_codes: ['impulse_not_retained'] },
+      ],
+    },
+  }, now);
+  assert.equal(model.executionMode, 'DISABLED');
+  assert.equal(model.acceptanceReview.mode, 'shadow_forward_only');
+  assert.equal(model.acceptanceReview.active.length, 2);
+  assert.equal(model.acceptanceReview.active[0].symbol, 'BBBUSDT');
+  assert.equal(model.acceptanceReview.active[1].status, 'accepted_for_manual_review');
+});
+
 test('positioning is a separate shadow layer and ignores invalid trade-like cases', () => {
   const model = buildModel({
     generated_at: '2026-09-14T15:40:00.000Z',

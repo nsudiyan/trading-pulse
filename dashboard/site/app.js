@@ -6,7 +6,7 @@
   const esc = (value) => String(value ?? '—').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
   const stamp = (value) => value ? new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'medium', timeZone: 'UTC' }).format(new Date(value)) + ' UTC' : 'не опубликовано';
   const ms = (value) => Number.isFinite(value) ? `${Math.round(value / 1000)} с` : 'не измерено';
-  const title = (value) => ({ research_only: 'RESEARCH ONLY', manual_review: 'MANUAL REVIEW', manual_check: 'РУЧНАЯ ПРОВЕРКА', no_trade: 'NO TRADE', data_unavailable: 'DATA UNAVAILABLE', collecting: 'SHADOW · COLLECTING', ready: 'ИСТОРИЯ ГОТОВА', legacy_provenance_incomplete: 'LEGACY / PROVENANCE INCOMPLETE', legacy_only: 'LEGACY ARCHIVE AVAILABLE', legacy_only_stale: 'LEGACY ARCHIVE · CURRENT FEED STALE', expired: 'EXPIRED', invalidated: 'INVALIDATED', healthy: 'HEALTHY', degraded: 'DEGRADED', unavailable: 'UNAVAILABLE', delayed: 'DELAYED' }[value] || String(value || 'UNAVAILABLE').toUpperCase());
+  const title = (value) => ({ research_only: 'RESEARCH ONLY', manual_review: 'MANUAL REVIEW', manual_check: 'РУЧНАЯ ПРОВЕРКА', accepted_for_manual_review: 'РУЧНАЯ ПРОВЕРКА', rejected_for_review: 'ОТСЕЯНО', pending_closed_m5: 'ЖДЁМ M5', no_trade: 'NO TRADE', data_unavailable: 'DATA UNAVAILABLE', collecting: 'SHADOW · COLLECTING', ready: 'ИСТОРИЯ ГОТОВА', legacy_provenance_incomplete: 'LEGACY / PROVENANCE INCOMPLETE', legacy_only: 'LEGACY ARCHIVE AVAILABLE', legacy_only_stale: 'LEGACY ARCHIVE · CURRENT FEED STALE', expired: 'EXPIRED', invalidated: 'INVALIDATED', healthy: 'HEALTHY', degraded: 'DEGRADED', unavailable: 'UNAVAILABLE', delayed: 'DELAYED' }[value] || String(value || 'UNAVAILABLE').toUpperCase());
   const badge = (value) => `<span class="pill ${esc(value || 'unavailable')}">${esc(title(value))}</span>`;
   const card = (content, cls = '') => `<article class="card ${cls}">${content}</article>`;
   const stat = (label, value) => card(`<p class="kicker">${esc(label)}</p><p class="metric">${esc(value)}</p>`);
@@ -59,9 +59,29 @@
     const focus = Array.isArray(model.focusObservations) ? model.focusObservations : [];
     const rawNote = observations.length ? `<details class="details"><summary>Сырой поток скрыт: ${esc(observations.length)} строк</summary><p class="meta">Он включает старые, повторные и неотсортированные публикации. Он не является списком сделок и не требует открытия каждой монеты.</p></details>` : '';
     return `<section class="terminal-workbench" aria-label="Сейчас открыть в терминале">
-      <div class="workbench-heading"><div><p class="kicker">Короткий список для ручной проверки</p><h2>⚡ СЕЙЧАС ОТКРЫТЬ В ТЕРМИНАЛЕ</h2><p class="subtitle">Не больше трёх свежих радар-наблюдений. Условие: не старше 20 минут, источник — Radar, опубликованный относительный объём ≥ ×5; повторы одной монеты схлопываются.</p></div>${badge('manual_check')}</div>
+      <div class="workbench-heading"><div><p class="kicker">Сырой радарный поток</p><h2>⚡ СЕЙЧАС ОТКРЫТЬ В ТЕРМИНАЛЕ · НОВЫЕ НАБЛЮДЕНИЯ</h2><p class="subtitle">Не больше трёх свежих радар-наблюдений. Это раннее внимание: условие — не старше 20 минут, источник Radar, относительный объём ≥ ×5. Очередь ниже не равна списку качественных сетапов.</p></div>${badge('manual_check')}</div>
       ${focus.length ? `<div class="grid now-observation-grid">${focus.map(nowObservationCard).join('')}</div><p class="meta">Это приоритет внимания, а не сделка и не направление. Открой монету в Tiger Trade: график → фьючерс/спот → стакан → лента.</p>` : '<div class="empty terminal-empty"><strong>Сейчас нет свежего наблюдения, прошедшего фильтр внимания.</strong><br>Не нужно искать сделку: дождись следующего отфильтрованного радар-наблюдения.</div>'}
       ${rawNote}
+    </section>`;
+  }
+
+  function acceptanceReview(model) {
+    const review = model.acceptanceReview || {};
+    const rows = Array.isArray(review.active) ? review.active : [];
+    const accepted = rows.filter((item) => item.status === 'accepted_for_manual_review');
+    const pending = rows.filter((item) => item.status === 'pending_closed_m5');
+    const rejected = rows.filter((item) => item.status === 'rejected_for_review');
+    const reviewCard = (item) => card(`<div class="row"><div><p class="kicker">${esc(item.venue || 'BYBIT')} · ${esc(review.protocol || 'H-IMPULSE-ACCEPT-01')}</p><h3>${esc(item.symbol)}</h3></div>${badge(item.status)}</div>
+      <p class="meta">Событие: ${esc(stamp(item.sourceTimestampUtc))}</p>
+      ${facts([['Отн. объём', item.relativeVolume !== null ? `×${item.relativeVolume}` : '—'], ['Движение M5', item.dominantExcursionPct !== null ? `${item.dominantExcursionPct.toFixed(3)}%` : 'ожидается'], ['Неблагоприятный ход M5', item.adverseExcursionPct !== null ? `${item.adverseExcursionPct.toFixed(3)}%` : 'ожидается'], ['Удержание', item.retentionRatio !== null ? `${Math.round(item.retentionRatio * 100)}%` : 'ожидается'], ['Закрытий в сторону движения', item.sameSideCloses ?? 'ожидается']])}
+      <p class="meta"><strong>${item.status === 'accepted_for_manual_review' ? 'Дальше в Tiger:' : 'Причина:'}</strong> ${esc(item.status === 'accepted_for_manual_review' ? 'сверь фьючерс/спот, спред, ленту и реальное исполнение лимиток.' : (item.reasons || []).join(', ') || 'ожидаются три закрытые свечи M5')}</p>`);
+    return `<section class="acceptance-workbench" aria-label="Теневой фильтр качества движения">
+      <div class="workbench-heading"><div><p class="kicker">Forward-only · отдельный слой, не заменяет Radar</p><h2>✓ ПРОШЛИ ПЕРВИЧНУЮ ПРОВЕРКУ КАЧЕСТВА</h2><p class="subtitle">После события ждём ${esc(review.delayMinutes ?? 15)} минут и три закрытые M5-свечи. Проверяем удержание движения и ранний неблагоприятный ход. Это не направление, не вход и не обещание результата.</p></div>${badge('collecting')}</div>
+      ${facts([['На ожидании', review.counts?.pending ?? 0], ['Прошли в журнале', review.counts?.accepted ?? 0], ['Отсеяны в журнале', review.counts?.rejected ?? 0], ['Старт протокола', stamp(review.startedAtUtc)]])}
+      ${accepted.length ? `<div class="grid now-observation-grid">${accepted.map(reviewCard).join('')}</div><p class="meta">Эти наблюдения можно открыть в Tiger Trade для ручной проверки. Фильтр не публикует сторону движения.</p>` : '<div class="empty terminal-empty"><strong>Пока нет монеты, прошедшей новый теневой фильтр.</strong><br>Это нормально: исторические события не подгружаются задним числом, новые сначала проходят три закрытые M5-свечи.</div>'}
+      ${pending.length ? `<details class="details"><summary>На ожидании закрытия M5: ${esc(pending.length)}</summary><div class="grid">${pending.map(reviewCard).join('')}</div></details>` : ''}
+      ${rejected.length ? `<details class="details"><summary>Отсеяно в текущем 30-минутном окне: ${esc(rejected.length)}</summary><div class="grid">${rejected.map(reviewCard).join('')}</div></details>` : ''}
+      <p class="meta">${esc((review.limitations || []).join(' '))}</p>
     </section>`;
   }
 
@@ -86,6 +106,7 @@
     const unavailable = model.episodes.filter((episode) => episode.status === 'data_unavailable');
     const blocked = model.episodes.filter((episode) => episode.status === 'no_trade');
     return `${pageHeader('Рабочее место', 'Два разных слоя: очередь для ручной проверки терминала и отдельное COT-исследование.')}
+      ${acceptanceReview(model)}
       ${nowObservationQueue(model)}
       ${positioningWorkbench(model)}
       <section class="secondary-workbench" aria-label="Подтверждённые события, история и качество данных">

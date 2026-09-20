@@ -541,6 +541,24 @@ IMPULSE_FIELDS = ["protocol", "logged_ts_utc", "symbol", "signal_ts_utc", "kind"
                   "btc_ret24", "btc_range24", "chg24_at_alert"]
 IMPULSE_ACTIVE_MIN = 15
 
+# H-IMPULSE-ACCEPT-01 — отделённый от legacy entry/impulse-review
+# forward-only слой качества движения. Он сознательно НЕ заменяет Radar и не
+# отправляет торговых инструкций: с момента запуска сохраняются только новые
+# первичные radar metadata-события, а решение появляется после трёх закрытых
+# M5-баров. Так в момент решения используются только уже известные данные, без
+# подгонки по будущему MFE/MAE.
+ACCEPTANCE_PROTOCOL = "H-IMPULSE-ACCEPT-01"
+ACCEPTANCE_STATE_PATH = DIR / "impulse_acceptance_state.json"
+ACCEPTANCE_LOG_PATH = OUT / "impulse_acceptance_reviews.csv"
+ACCEPTANCE_ACTIVE_MIN = 30
+ACCEPTANCE_DELAY_MIN = 15
+ACCEPTANCE_FIELDS = [
+    "protocol", "status", "reason_codes", "recorded_ts_utc", "decision_ts_utc",
+    "event_id", "symbol", "venue", "source_timestamp_utc", "server_received_at_utc",
+    "basis", "vol_ratio", "elapsed_min", "dominant_excursion_pct",
+    "adverse_excursion_pct", "retention_ratio", "same_side_closes",
+]
+
 
 def is_impulse_review_candidate(row: dict) -> bool:
     """Чистая проверка H-IMPULSE-REVIEW-01, без сети и без торгового вывода."""
@@ -560,6 +578,179 @@ def is_impulse_review_candidate(row: dict) -> bool:
         and -0.5 <= last_pct <= 1.0
         and peak_pct <= 1.0
     )
+
+
+def _acceptance_decision(event: dict, bars: list, now: datetime) -> dict | None:
+    """Point-in-time H-IMPULSE-ACCEPT-01 decision after three CLOSED M5 bars.
+
+    This is an attention-quality hypothesis, not a direction or trade rule.
+    ``bars`` must only contain fully closed bars after the source event; caller
+    does not pass current/in-progress candles.  Thresholds are preregistered
+    provisionally and must remain shadow-only until enough forward cases exist.
+    """
+    try:
+        basis = float(event["basis"])
+        ratio = float(event["vol_ratio"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if basis <= 0 or len(bars) < 3:
+        return None
+
+    sample = bars[:3]
+    # Pick the observed dominant excursion only for evaluating whether the
+    # movement held.  ``dominant_sign`` is deliberately not published as a
+    # LONG/SHORT instruction.
+    up_peak = max((high - basis) / basis * 100 for _t, _o, high, _l, _c in sample)
+    down_peak = max((basis - low) / basis * 100 for _t, _o, _h, low, _c in sample)
+    dominant_sign = 1 if up_peak >= down_peak else -1
+    dominant_peak = up_peak if dominant_sign > 0 else down_peak
+    adverse = max(0.0, (down_peak if dominant_sign > 0 else up_peak))
+    signed_closes = [dominant_sign * (close - basis) / basis * 100
+                     for _t, _o, _h, _l, close in sample]
+    same_side = sum(value > 0 for value in signed_closes)
+    retained = signed_closes[-1]
+    retention = retained / dominant_peak if dominant_peak > 0 else 0.0
+
+    reasons = []
+    # H-IMPULSE-ACCEPT-01 provisional, pre-registered gates.  They are not
+    # fitted to RIVER and are intentionally recorded for every rejection.
+    if ratio < 5:
+        reasons.append("volume_below_source_floor")
+    if dominant_peak < 0.25:
+        reasons.append("no_meaningful_closed_m5_excursion")
+    if same_side < 2:
+        reasons.append("insufficient_close_persistence")
+    if retention < 0.55:
+        reasons.append("impulse_not_retained")
+    if adverse > 0.75:
+        reasons.append("early_adverse_excursion_too_large")
+
+    signal_at = parse_naive_utc(event.get("source_timestamp_utc", ""))
+    elapsed = ((now - signal_at).total_seconds() / 60) if signal_at else None
+    return {
+        "protocol": ACCEPTANCE_PROTOCOL,
+        "status": "accepted_for_manual_review" if not reasons else "rejected_for_review",
+        "reason_codes": reasons or ["closed_m5_acceptance_conditions_met"],
+        "decision_ts_utc": now.replace(microsecond=0).isoformat(),
+        "event_id": event.get("event_id"),
+        "symbol": event.get("symbol"),
+        "venue": event.get("venue"),
+        "source_timestamp_utc": event.get("source_timestamp_utc"),
+        "server_received_at_utc": event.get("server_received_at_utc"),
+        "basis": basis,
+        "vol_ratio": ratio,
+        "elapsed_min": round(elapsed, 2) if elapsed is not None else None,
+        "dominant_excursion_pct": round(dominant_peak, 3),
+        "adverse_excursion_pct": round(adverse, 3),
+        "retention_ratio": round(retention, 3),
+        "same_side_closes": same_side,
+    }
+
+
+def update_impulse_acceptance_review(raw_events: list[dict]) -> dict:
+    """Append-only, time-gated shadow journal for fresh Radar observations.
+
+    A fresh state file establishes the protocol start time.  Existing 48-hour
+    events are not backfilled, so an apparent result can never be manufactured
+    from historical events.  Radar collection and the old diary are untouched.
+    """
+    now = utcnow()
+    state = jload(ACCEPTANCE_STATE_PATH, {})
+    if not isinstance(state, dict):
+        state = {}
+    started_at = parse_naive_utc(state.get("started_at_utc", ""))
+    if started_at is None:
+        started_at = now
+        state = {"protocol": ACCEPTANCE_PROTOCOL,
+                 "started_at_utc": started_at.replace(microsecond=0).isoformat(),
+                 "events": {}}
+    events = state.get("events")
+    if not isinstance(events, dict):
+        events = {}
+        state["events"] = events
+
+    # Capture only complete first-party, post-registration Bybit radar events.
+    for raw in raw_events:
+        received = parse_naive_utc(raw.get("serverReceivedAtUtc", ""))
+        source_at = parse_naive_utc(raw.get("sourceTimestampUtc", ""))
+        event_id = raw.get("id")
+        try:
+            basis = float(raw.get("price"))
+            ratio = float(raw.get("vol_ratio"))
+        except (TypeError, ValueError):
+            continue
+        if (not event_id or event_id in events or received is None or source_at is None
+                or received < started_at or raw.get("eventType") != "radar"
+                or raw.get("venue") != "BYBIT" or raw.get("dataQuality") != "verified"
+                or basis <= 0 or ratio < 5):
+            continue
+        events[event_id] = {
+            "event_id": event_id, "symbol": raw.get("symbol"), "venue": raw.get("venue"),
+            "source_timestamp_utc": raw.get("sourceTimestampUtc"),
+            "server_received_at_utc": raw.get("serverReceivedAtUtc"),
+            "basis": basis, "vol_ratio": ratio, "status": "pending_closed_m5",
+        }
+
+    new_decisions = []
+    for event in events.values():
+        if event.get("status") != "pending_closed_m5":
+            continue
+        source_at = parse_naive_utc(event.get("source_timestamp_utc", ""))
+        if source_at is None or now < source_at + timedelta(minutes=ACCEPTANCE_DELAY_MIN):
+            continue
+        try:
+            bars = _fetch_5m_closed(event["symbol"], int(source_at.timestamp() * 1000))
+        except Exception as exc:
+            event["last_fetch_error"] = str(exc)[:160]
+            continue
+        # Event itself is a closed 30m bar.  Exclude any 5m bar ending at/before
+        # its source close so the confirmation is strictly post-event.
+        bars = [bar for bar in bars if bar[0] >= int(source_at.timestamp() * 1000)]
+        decision = _acceptance_decision(event, bars, now)
+        if decision is None:
+            continue
+        event.update(decision)
+        new_decisions.append({"recorded_ts_utc": now.replace(microsecond=0).isoformat(), **decision})
+
+    if new_decisions:
+        write_header = not ACCEPTANCE_LOG_PATH.exists()
+        with open(ACCEPTANCE_LOG_PATH, "a", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=ACCEPTANCE_FIELDS)
+            if write_header:
+                writer.writeheader()
+            writer.writerows(new_decisions)
+
+    # Keep enough decisions to audit a month of radar observations, while
+    # retaining every pending item.  Deterministic time ordering avoids a
+    # symbol-order retention bug.
+    resolved = [item for item in events.values() if item.get("status") != "pending_closed_m5"]
+    pending = [item for item in events.values() if item.get("status") == "pending_closed_m5"]
+    resolved.sort(key=lambda item: item.get("decision_ts_utc") or "", reverse=True)
+    state["events"] = {item["event_id"]: item for item in pending + resolved[:3000]}
+    ACCEPTANCE_STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    active_cutoff = now - timedelta(minutes=ACCEPTANCE_ACTIVE_MIN)
+    active = [item for item in state["events"].values()
+              if (parse_naive_utc(item.get("source_timestamp_utc", "")) or now) >= active_cutoff]
+    active.sort(key=lambda item: item.get("source_timestamp_utc") or "", reverse=True)
+    return {
+        "protocol": ACCEPTANCE_PROTOCOL,
+        "mode": "shadow_forward_only",
+        "started_at_utc": state["started_at_utc"],
+        "delay_minutes": ACCEPTANCE_DELAY_MIN,
+        "active": active,
+        "new_decisions": new_decisions,
+        "counts": {
+            "pending": len(pending),
+            "accepted": sum(item.get("status") == "accepted_for_manual_review" for item in resolved),
+            "rejected": sum(item.get("status") == "rejected_for_review" for item in resolved),
+        },
+        "limitations": [
+            "Теневой протокол: не меняет Radar, старый дневник или уведомления.",
+            "Признаки фиксируются после трёх закрытых M5-баров; MFE/MAE будущих часов не используются.",
+            "Статус accepted_for_manual_review означает только приоритет ручной проверки в Tiger Trade, не направление и не сделку.",
+        ],
+    }
 
 
 def _fetch_5m_closed(symbol: str, start_ms: int) -> list:
@@ -1080,6 +1271,7 @@ def build_feed() -> dict:
                     s_["funding_now"] = fr
     entry_rows = log_entry_candidates(live, mkt)  # прежняя форензика, без пуша
     impulse_review = log_impulse_review_candidates(entry_rows, mkt)
+    acceptance_review = update_impulse_acceptance_review(raw_market_events)
     combos = combos_block(mkt)
     _push_new_combos(combos)               # 🔔 новые связки — пушем на устройства
     # 📓 дневник: новые записи с ЗАМОРОЗКОЙ ожидания в момент появления в зоне
@@ -1098,6 +1290,7 @@ def build_feed() -> dict:
         "combos": combos,
         "sweeps": sweep_block(live),
         "impulse_review": impulse_review,
+        "acceptance_review": acceptance_review,
         "diary": _diary_safe(),
         "forward_movement": forward_movement_block(),
         "positioning": positioning_block(),
@@ -1161,6 +1354,25 @@ def main():
         assert not is_impulse_review_candidate({**base, "vol_ratio": 9.1})
         assert not is_impulse_review_candidate({**base, "dd_pct": -0.51})
         assert not is_impulse_review_candidate({**base, "kind": "awakening"})
+        event = {"event_id": "selfcheck", "symbol": "AAAUSDT", "venue": "BYBIT",
+                 "source_timestamp_utc": "2026-09-14T15:00:00+00:00", "basis": 100,
+                 "vol_ratio": 6}
+        stable_bars = [
+            (0, 100, 100.4, 99.9, 100.3),
+            (1, 100.3, 100.6, 100.2, 100.5),
+            (2, 100.5, 100.8, 100.4, 100.7),
+        ]
+        accepted = _acceptance_decision(event, stable_bars,
+                                        datetime(2026, 9, 14, 15, 15, tzinfo=timezone.utc))
+        assert accepted and accepted["status"] == "accepted_for_manual_review"
+        failed_bars = [
+            (0, 100, 100.6, 99.1, 99.4),
+            (1, 99.4, 99.9, 98.9, 99.3),
+            (2, 99.3, 99.8, 99.0, 99.5),
+        ]
+        rejected = _acceptance_decision(event, failed_bars,
+                                        datetime(2026, 9, 14, 15, 15, tzinfo=timezone.utc))
+        assert rejected and rejected["status"] == "rejected_for_review"
         print("dashboard_feed impulse-review selfcheck OK")
         return 0
 
