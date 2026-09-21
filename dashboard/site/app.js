@@ -10,6 +10,18 @@
   const badge = (value) => `<span class="pill ${esc(value || 'unavailable')}">${esc(title(value))}</span>`;
   const card = (content, cls = '') => `<article class="card ${cls}">${content}</article>`;
   const stat = (label, value) => card(`<p class="kicker">${esc(label)}</p><p class="metric">${esc(value)}</p>`);
+  const LAB_ROUTE = 'smart-money-lab';
+  const routeAliases = new Map([
+    ['smart-money', LAB_ROUTE],
+    ['smartmoney', LAB_ROUTE],
+    ['smart_money_lab', LAB_ROUTE],
+    ['sml', LAB_ROUTE],
+  ]);
+  const canonicalRoute = (hash = location.hash) => {
+    const raw = String(hash || '').replace(/^#\/?/, '').split('/').filter(Boolean)[0] || 'radar';
+    const route = decodeURIComponent(raw).trim().toLowerCase();
+    return routeAliases.get(route) || route;
+  };
   const nav = (route) => document.querySelectorAll('.nav a').forEach((link) => link.toggleAttribute('aria-current', link.getAttribute('href') === `#/${route}`));
 
   function pageHeader(name, description) {
@@ -427,8 +439,8 @@
   }
 
   function render() {
-    const fragments = location.hash.slice(2).split('/').filter(Boolean);
-    const route = fragments[0] || 'radar';
+    const fragments = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
+    const route = canonicalRoute();
     nav(route === 'episode' ? 'radar' : route);
     if (!overview) return;
     if (route === 'radar') main.innerHTML = radar(overview);

@@ -56,6 +56,15 @@ test('smart money lab is a separate multi-timeframe education route without cour
   assert.doesNotMatch(caseCard, /<img|screenshot|\.png/i);
 });
 
+test('direct Smart Money Lab hash is canonical and legacy aliases remain compatible', () => {
+  const routeSection = app.slice(app.indexOf("const LAB_ROUTE = 'smart-money-lab'"), app.indexOf('async function load()'));
+  assert.match(routeSection, /const canonicalRoute/);
+  assert.match(routeSection, /String\(hash \|\| ''\)\.replace/);
+  assert.match(routeSection, /\['smart-money', LAB_ROUTE\]/);
+  assert.match(routeSection, /route === 'smart-money-lab'/);
+  assert.match(html, /href="#\/smart-money-lab">◈ Smart Money Lab/);
+});
+
 test('the first two course strategies are rendered as original, guarded text diagrams', () => {
   const first = body('smartMoneyStrategyOne', 'smartMoneyStrategyTwo');
   const second = body('smartMoneyStrategyTwo', 'smartMoneyStrategyThree');
