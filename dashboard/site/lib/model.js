@@ -210,6 +210,36 @@ function positioning(feed) {
   };
 }
 
+function smartMoneyLab(feed) {
+  // Education-only projection.  Course images are deliberately not carried
+  // through the public feed: a case may publish only original text evidence
+  // and a source-status label. It cannot produce a live signal or execution.
+  const raw = feed.smart_money_lab && typeof feed.smart_money_lab === 'object' ? feed.smart_money_lab : {};
+  const allowedStatus = new Set(['collecting', 'published', 'data_unavailable']);
+  const allowedSourceStatus = new Set(['independently_reviewed', 'course_reference', 'unverified']);
+  const cases = arr(raw.cases).map((row) => {
+    const timeframes = arr(row.timeframes).map((frame) => ({
+      timeframe: text(frame.timeframe), startAtUtc: utc(frame.start_at_utc), endAtUtc: utc(frame.end_at_utc),
+      observation: text(frame.observation), role: text(frame.role),
+    })).filter((frame) => frame.timeframe && frame.startAtUtc && frame.endAtUtc && frame.observation);
+    const evidence = arr(row.visual_evidence).map((item) => ({
+      label: text(item.label), observation: text(item.observation), level: text(item.level),
+    })).filter((item) => item.label && item.observation);
+    return {
+      id: text(row.case_id), asset: canonical(row.asset || row.symbol), exchange: text(row.exchange || row.venue)?.toUpperCase() || null,
+      formation: text(row.formation), title: text(row.title), timeframes, evidence,
+      hypothesis: text(row.entry_hypothesis), invalidation: text(row.invalidation),
+      sourceStatus: text(row.source_status)?.toLowerCase(), sourceLabel: text(row.source_label),
+      reviewedAtUtc: utc(row.reviewed_at_utc),
+    };
+  }).filter((item) => item.id && item.asset && item.exchange && item.formation && item.timeframes.length >= 2 && item.evidence.length && item.hypothesis && item.invalidation && allowedSourceStatus.has(item.sourceStatus));
+  return {
+    status: allowedStatus.has(text(raw.status)?.toLowerCase()) ? text(raw.status).toLowerCase() : 'data_unavailable',
+    cases: cases.sort((left, right) => (right.reviewedAtUtc || '').localeCompare(left.reviewedAtUtc || '')),
+    limitations: arr(raw.limitations).map(text).filter(Boolean),
+  };
+}
+
 function rawSources(feed) { return [['raw_market_events', arr(feed.raw_market_events)], ['live_signals', arr(feed.live_signals)], ['signals_history', arr(feed.signals_history)], ['sweeps', arr(feed.sweeps)], ['combos', arr(feed.combos)], ['impulse_review', arr(feed.impulse_review)], ['diary', arr(feed.diary?.records)]]; }
 function episodeKey(raw, index) { const bucket = raw.detectedAtUtc ? Math.floor(Date.parse(raw.detectedAtUtc) / POLICY.dedupWindowMs) : null; return [raw.venue || 'UNVERIFIED-VENUE', raw.symbol || `unknown-${index}`, raw.eventClass, raw.methodVersion || 'UNVERIFIED-METHOD', bucket]; }
 
@@ -247,11 +277,11 @@ function buildModel(feed = {}, now = Date.now()) {
   const verifiedDataCount = episodes.filter((episode) => episode.dataQuality.status === 'verified').length;
   const archive = legacyArchive(feed);
   const nowObservations = currentObservations(feed);
-  const positioningLayer = positioning(feed);
+  const positioningLayer = positioning(feed), smartMoney = smartMoneyLab(feed);
   const overallStatus = !feedFresh ? (archive.totalRecords ? 'legacy_only_stale' : 'unavailable') : verifiedDataCount ? (verifiedDataCount < episodes.length ? 'degraded' : 'healthy') : archive.totalRecords ? 'legacy_only' : 'unavailable';
   const health = { overallStatus, feedGeneratedAtUtc: generatedAtUtc, feedAgeMs, evaluatedAtUtc: new Date(now).toISOString(), feedFresh, missingRequiredFields, episodeCount: episodes.length, verifiedDataCount, legacyRecordCount: archive.totalRecords, legacySourceCounts: Object.fromEntries(archive.sources.map((source) => [source.id, source.count])), affectedModules: rawSources(feed).filter(([, rows]) => rows.length).map(([module]) => module), providers: [...new Set(episodes.flatMap((episode) => episode.rawAlerts.map((raw) => raw.provider)).filter(Boolean))], lastValidSourceTimestampUtc: episodes.filter((episode) => episode.dataQuality.status === 'verified').map((episode) => episode.dataQuality.sourceTimestampUtc).sort().at(-1) || null, lastError: null };
   const rose = arr(feed.rose?.tracks).map((track) => ({ symbol: canonical(track.symbol), timestampUtc: utc(track.first_ts), sourceModule: text(track.source), methodVersion: text(track.methodVersion), observationHorizons: ['6h', '24h'], dataQuality: 'unavailable', missingFields: ['methodVersion', 'sourceTimestampUtc', 'quality attestation'], completionStatus: track.final === true ? 'Завершено по флагу источника' : 'Не завершено по флагу источника', limitations: 'Направленные и результативные поля источника скрыты: контракт абсолютных high/low и качество не опубликованы.' }));
-  return { adapterVersion: POLICY.version, generatedAtUtc, evaluatedAtUtc: new Date(now).toISOString(), systemStatus: overallStatus, interpretationMode: 'NON-DIRECTIONAL', executionMode: 'DISABLED', episodes, nowObservations, focusObservations: terminalFocus(nowObservations, now), acceptanceReview: acceptanceReview(feed), positioning: positioningLayer, pumpWatch, pumpArchive: arr(feed.pump_watch).concat(arr(feed.pump_muted)).map((row) => ({ symbol: canonical(row.symbol), timestampUtc: utc(row.ts || row.added_ts), status: 'historical_only', reason: text(row.reason) || 'Состояние не опубликовано' })), validation: validation(feed), health, archive, rose, policy: POLICY, storage: { mode: 'read_only_feed_projection', persistentAuditAvailable: false, rawHistoryComplete: false } };
+  return { adapterVersion: POLICY.version, generatedAtUtc, evaluatedAtUtc: new Date(now).toISOString(), systemStatus: overallStatus, interpretationMode: 'NON-DIRECTIONAL', executionMode: 'DISABLED', episodes, nowObservations, focusObservations: terminalFocus(nowObservations, now), acceptanceReview: acceptanceReview(feed), positioning: positioningLayer, smartMoneyLab: smartMoney, pumpWatch, pumpArchive: arr(feed.pump_watch).concat(arr(feed.pump_muted)).map((row) => ({ symbol: canonical(row.symbol), timestampUtc: utc(row.ts || row.added_ts), status: 'historical_only', reason: text(row.reason) || 'Состояние не опубликовано' })), validation: validation(feed), health, archive, rose, policy: POLICY, storage: { mode: 'read_only_feed_projection', persistentAuditAvailable: false, rawHistoryComplete: false } };
 }
 
-module.exports = { buildModel, normalize, quality, validation, legacyArchive, currentObservations, terminalFocus, acceptanceReview, positioning, canonical, utc, POLICY, LEGACY_STATUS };
+module.exports = { buildModel, normalize, quality, validation, legacyArchive, currentObservations, terminalFocus, acceptanceReview, positioning, smartMoneyLab, canonical, utc, POLICY, LEGACY_STATUS };

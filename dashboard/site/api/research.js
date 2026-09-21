@@ -30,6 +30,7 @@ function routeModel(model, path) {
   if (kind === 'data-health') return model.health;
   if (kind === 'archive') return model.archive;
   if (kind === 'positioning') return model.positioning;
+  if (kind === 'smart-money-lab') return model.smartMoneyLab;
   if (kind === 'pumpwatch') return { items: model.pumpWatch, archive: model.pumpArchive, statusSource: 'explicit_backend_states_only' };
   if (kind === 'rose-archive') return { items: model.rose, mode: 'retrospective_event_tracking' };
   if (kind === 'methodology') {

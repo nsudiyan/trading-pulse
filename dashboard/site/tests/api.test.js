@@ -37,3 +37,11 @@ test('positioning route is read-only and fails closed without a published snapsh
   assert.deepEqual(positioning.output.body.shortlist, []);
   assert.deepEqual(positioning.output.body.cases, []);
 });
+
+test('smart money lab route is read-only and exposes only structured cases', async () => {
+  const handler = createHandler(async () => ({ generated_at: '2026-09-14T15:02:00.000Z', smart_money_lab: { status: 'published', cases: [] } }), () => Date.parse('2026-09-14T15:02:30.000Z'));
+  const lab = response(); await handler({ method: 'GET', query: { path: 'smart-money-lab' } }, lab);
+  assert.equal(lab.output.statusCode, 200);
+  assert.equal(lab.output.body.status, 'published');
+  assert.deepEqual(lab.output.body.cases, []);
+});

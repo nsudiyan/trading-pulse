@@ -171,3 +171,21 @@ test('positioning is a separate shadow layer and ignores invalid trade-like case
   assert.equal(model.positioning.snapshots[0].raw.lastPrice, 1);
   assert.equal(model.executionMode, 'DISABLED');
 });
+
+test('smart money lab only projects complete multi-timeframe education cases', () => {
+  const model = buildModel({
+    generated_at: '2026-09-14T15:40:00.000Z',
+    smart_money_lab: {
+      status: 'published',
+      cases: [
+        { case_id: 'valid', asset: 'ABCUSDT', exchange: 'BYBIT', formation: 'Sweep high + M5 structure change', source_status: 'course_reference', source_label: 'Конспект пользователя', reviewed_at_utc: '2026-09-14T15:00:00Z', entry_hypothesis: 'Ждать закрытие M5 ниже отмеченного HL.', invalidation: 'H1 закрепляется выше экстремума.', timeframes: [{ timeframe: '1H', role: 'Контекст', start_at_utc: '2026-09-14T10:00:00Z', end_at_utc: '2026-09-14T11:00:00Z', observation: 'Цена вернулась под прежний максимум.' }, { timeframe: '5M', role: 'Подтверждение', start_at_utc: '2026-09-14T11:00:00Z', end_at_utc: '2026-09-14T11:10:00Z', observation: 'Закрытие ниже последнего HL.' }], visual_evidence: [{ label: 'Уровень', level: 'старый максимум', observation: 'Уровень был отмечен до реакции.' }] },
+        { case_id: 'incomplete', asset: 'BADUSDT', exchange: 'BYBIT', formation: 'Unknown', source_status: 'course_reference', timeframes: [{ timeframe: '1H', start_at_utc: '2026-09-14T10:00:00Z', end_at_utc: '2026-09-14T11:00:00Z', observation: 'one timeframe only' }], visual_evidence: [], entry_hypothesis: 'x', invalidation: 'y' },
+      ],
+    },
+  }, now);
+  assert.equal(model.smartMoneyLab.status, 'published');
+  assert.equal(model.smartMoneyLab.cases.length, 1);
+  assert.equal(model.smartMoneyLab.cases[0].timeframes.length, 2);
+  assert.equal(model.smartMoneyLab.cases[0].sourceStatus, 'course_reference');
+  assert.equal(model.executionMode, 'DISABLED');
+});
