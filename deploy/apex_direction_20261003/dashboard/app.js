@@ -21,7 +21,17 @@ function text(tag, value, className = '') {
   return el;
 }
 function statusName(status) {
-  return ({complete: '72ч завершены', observing: 'Наблюдается', data_gap: 'Пропуск свечей', waiting_next_bar: 'Ожидаем свечу', invalid_reference: 'Ошибка цены', invalid_candle: 'Ошибка свечи', legacy_unmeasured: 'Архив · без расчёта'})[status] || 'Ожидаем данные';
+  return ({complete: '72ч завершены', observing: 'Наблюдается', data_gap: 'Нет данных', waiting_next_bar: 'Ожидаем свечу', legacy_unmeasured: 'Архив · без расчёта'})[status] || 'Нет данных';
+}
+function displayStatus(signal) {
+  // Presentation only: never overwrite the legacy research path_status.
+  if (!signal.movement) return signal.path_status === 'legacy_unmeasured' ? 'legacy_unmeasured' : 'data_gap';
+  return ({tracking: 'observing', complete: 'complete', waiting: 'waiting_next_bar',
+    data_unavailable: 'data_gap', invalid_ohlc: 'data_gap', conflicting_duplicates: 'data_gap'})[signal.movement.status] || 'data_gap';
+}
+function matchesStatus(signal, filter) {
+  const status = displayStatus(signal);
+  return filter === 'all' || status === filter || (filter === 'observing' && status === 'waiting_next_bar');
 }
 function price(value) {return value == null ? '—' : new Intl.NumberFormat('ru-RU', {maximumSignificantDigits: 10}).format(Number(value));}
 
@@ -37,7 +47,7 @@ function renderStats(data) {
 
 function filtered() {
   return state.signals.filter((signal) => {
-    if (state.filter !== 'all' && (signal.path_status || 'waiting_next_bar') !== state.filter) return false;
+    if (!matchesStatus(signal, state.filter)) return false;
     return !state.query || signal.symbol.toLowerCase().includes(state.query);
   });
 }
@@ -58,14 +68,14 @@ function renderList() {
   for (const signal of rows) {
     const card = text('button', '', 'signal-card' + (signal.id === state.selected ? ' active' : ''));
     card.type = 'button';
-    card.setAttribute('aria-label', `${signal.symbol}, ${signal.scenario?.side || 'без направления'}, ${statusName(signal.path_status)}`);
+    card.setAttribute('aria-label', `${signal.symbol}, ${signal.scenario?.side || 'без направления'}, ${statusName(displayStatus(signal))}`);
     const top = text('div', '', 'card-top');
     top.append(text('span', signal.symbol, 'card-symbol'));
     const side = signal.scenario?.side;
     top.append(text('span', side || 'БЕЗ НАПРАВЛЕНИЯ', 'side-badge ' + (side === 'SELL' ? 'sell' : side ? '' : 'overview')));
     card.append(top, text('div', utc(signal.sent_utc), 'card-time'));
     const bottom = text('div', '', 'card-bottom');
-    bottom.append(text('span', statusName(signal.path_status), 'status-badge ' + (signal.path_status || '')));
+    bottom.append(text('span', statusName(displayStatus(signal)), 'status-badge ' + displayStatus(signal)));
     const outcome = text('span', '', 'card-outcome');
     outcome.append(text('span', `Рост ${pct(signal.movement?.max_up_pct)}`, 'positive'));
     outcome.append(text('span', `Падение ${pct(signal.movement?.max_down_pct)}`, 'negative'));
@@ -212,7 +222,7 @@ function renderDetail(signal) {
   const titleBlock = text('div', '');
   titleBlock.append(text('div', `${signal.symbol} · сценарий ${signal.scenario?.side || 'БЕЗ НАПРАВЛЕНИЯ'}`, 'detail-title'),
                     text('div', `${signal.setup_type === 'strong_sweep_review' ? 'Сильный sweep' : 'Свечной обзор'} · Отправлено ${utc(signal.sent_utc)}`, 'detail-sub'));
-  top.append(titleBlock, text('div', statusName(signal.path_status), 'detail-chip')); detail.append(top);
+  top.append(titleBlock, text('div', statusName(displayStatus(signal)), 'detail-chip')); detail.append(top);
   const movement = signal.movement;
   detail.append(text('p', `Направление: ${signal.scenario?.explanation || signal.scenario?.reason || 'нет данных'}. NO-TRADE: это не подтверждённая точка входа.`, 'legacy-note'));
   drawChart(detail, {...signal, curve: movement.curve || [], mfe_pct: movement.max_up_pct, mae_pct: movement.max_down_pct});
