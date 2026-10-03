@@ -384,6 +384,9 @@ def scenario_context(bar, findings, view, sweep=None, gate=None):
     scenario = classify_scenario(findings, contexts, int(bar["end_ms"]), sweep,
                                  zone_observation(gate, int(bar["end_ms"]), bar["close"]))
     scenario["explanation"] = scenario_explanation(scenario)
+    # Immutable descriptive measurement baseline, not an executable entry.
+    scenario["baseline"] = {"method":"event_close_v1", "price":bar["close"],
+                            "event_ms":int(bar["end_ms"])+1, "source":"signal_closed_OHLC"}
     return scenario
 
 

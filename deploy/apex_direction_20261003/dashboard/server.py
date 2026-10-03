@@ -17,6 +17,7 @@ from portfolio import read_portfolio
 from channel import ensure_schema as ensure_channel_schema, read_posts, sync_posts
 from movement import measure, WINDOW_MS
 from provenance_guard import verified_zone
+from horizons import event_horizons
 
 ROOT = Path(__file__).resolve().parent
 STEP_MS = 900_000
@@ -103,6 +104,12 @@ def read_signals(db_path: str, limit: int = 60) -> dict:
                 WHERE symbol=? AND interval='15' AND start_ms>=? AND start_ms<? ORDER BY start_ms""",
                 (item["symbol"], anchor_start, min(anchor_start + WINDOW_MS, now_ms)))]
             item["movement"] = measure(raw_bars, sent_ms, now_ms, item["scenario"].get("side"))
+            baseline = item["scenario"].get("baseline") or {}
+            event_ms = baseline.get("event_ms")
+            event_bars = ([dict(b) for b in db.execute("""SELECT start_ms,end_ms,open,high,low,close FROM candles
+                WHERE symbol=? AND interval='15' AND start_ms>=? AND start_ms<? ORDER BY start_ms""",
+                (item["symbol"], event_ms, min(event_ms+86400000,now_ms)))] if type(event_ms) is int else [])
+            item["event_excursions"] = event_horizons(item["scenario"], event_bars, now_ms)
             signals.append(item)
         stats = db.execute("""SELECT COUNT(*) AS sent,
             SUM(CASE WHEN o.alert_id IS NOT NULL THEN 1 ELSE 0 END) AS measured,
