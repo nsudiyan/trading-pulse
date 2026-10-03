@@ -16,6 +16,7 @@ from aiohttp import web
 from portfolio import read_portfolio
 from channel import ensure_schema as ensure_channel_schema, read_posts, sync_posts
 from movement import measure, WINDOW_MS
+from provenance_guard import verified_zone
 
 ROOT = Path(__file__).resolve().parent
 STEP_MS = 900_000
@@ -83,6 +84,10 @@ def read_signals(db_path: str, limit: int = 60) -> dict:
                 scenario = json.loads(contract_row[0]) if contract_row else None
             except (ValueError, TypeError):
                 scenario = None
+            # v4 marks observations built after fail-closed rollout. Preserve
+            # legacy/v1-v3 history; absence of old metadata is not a false flag.
+            if isinstance(scenario, dict) and scenario.get("version") == "direction-context-v4-provenance-guard" and not verified_zone(scenario):
+                continue
             item["scenario"] = scenario if isinstance(scenario, dict) else {"side": None, "status": "historical_unverified", "reason": "Контекст направления при отправке не сохранён"}
             try:
                 sent = datetime.fromisoformat(row["sent_utc"].replace("Z", "+00:00"))

@@ -2,7 +2,7 @@
 import json
 import math
 
-VERSION = "direction-context-v3-zone-asof"
+VERSION = "direction-context-v4-provenance-guard"
 TF_MS = {"240": 14_400_000, "D": 86_400_000}
 TREND_SIDE = {"рост": "BUY", "снижение": "SELL"}
 

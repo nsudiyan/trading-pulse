@@ -37,6 +37,7 @@ from zones import active_fvgs
 from volume_profile import profile_windows
 from sweeps import recent_sweep
 from strong_sweep import strong_sweep_review
+from provenance_guard import guarded_quality, verified_zone
 from outcomes import ensure_schema as ensure_outcomes_schema, record_candidate, resolve_due
 from followthrough import (ensure_schema as ensure_followthrough_schema,
                            resolve_due as resolve_followthrough)
@@ -849,6 +850,7 @@ class Engine:
                                              cooldown_hours)):
                 quality = {**quality, "send": False, "reason": "cooldown"}
             scenario = scenario_context(bar, findings, view, sweep, gate)
+            quality = guarded_quality(quality, scenario)
             quality_label = ""
             if quality["send"] and self.market.get("quality", {}).get("enabled"):
                 quality_label = ("Отбор: правило пользователя" if quality["reason"] == "user_rule"
@@ -919,6 +921,7 @@ class Engine:
                                            self.config["calendar"], now, self.config["news"],
                                            self.market.get("stale_grace_minutes", 10), gate, sweep, scenario)
             status = ("pending" if quality["send"] else
+                      "suppressed_provenance" if quality["reason"] == "provenance_unverified" else
                       "suppressed_cooldown" if quality["reason"] == "cooldown" else
                       "suppressed_mtf" if quality["reason"].startswith("mtf_") else
                       "suppressed_liquidity" if quality["reason"].startswith("liquidity_") else
@@ -958,6 +961,16 @@ class Engine:
         if not dry_run and not tg.get("enabled"):
             return
         for row in rows:
+            contract_row = self.store.db.execute(
+                "SELECT contract_json FROM signal_scenarios WHERE alert_id=?", (row["id"],)).fetchone()
+            try:
+                contract = json.loads(contract_row[0]) if contract_row else None
+            except (ValueError, TypeError):
+                contract = None
+            if not verified_zone(contract):
+                self.store.db.execute("UPDATE signal_alerts SET status='suppressed_provenance',reason='provenance_unverified' WHERE id=?", (row["id"],))
+                self.store.db.commit()
+                continue
             max_lag = float(self.market.get("max_delivery_lag_minutes", 15))
             if review_is_stale_for_delivery(row["id"], utc_now(), max_lag):
                 self.store.db.execute("""UPDATE signal_alerts
