@@ -2,7 +2,7 @@
 import json
 import math
 
-VERSION = "direction-context-v2-zone-provenance"
+VERSION = "direction-context-v3-zone-asof"
 TF_MS = {"240": 14_400_000, "D": 86_400_000}
 TREND_SIDE = {"рост": "BUY", "снижение": "SELL"}
 
@@ -15,17 +15,26 @@ def zone_observation(gate, event_end_ms, price):
     valid = all(isinstance(v, (int, float)) and math.isfinite(v) and v > 0 for v in geometry.values())
     valid = valid and geometry["swing_low"] < geometry["swing_high"] and math.isclose(
         geometry["swing_mid"], (geometry["swing_low"] + geometry["swing_high"]) / 2)
-    route = (gate or {}).get("reason")
-    verified = bool(zone and route == "strong_sweep_review")
+    route = (gate or {}).get("source_route")
+    provenance = (gate or {}).get("zone_provenance") or {}
+    price_end, geometry_end = provenance.get("price_end_ms"), provenance.get("geometry_end_ms")
+    source_price = provenance.get("price")
+    verified = bool(zone and valid and provenance.get("event_time_verified") and
+        route in ("review_gate", "strong_sweep_review") and
+        provenance.get("source_route") == route and provenance.get("event_end_ms") == event_end_ms and
+        isinstance(price_end, int) and 0 <= event_end_ms-price_end < 900_000 and
+        isinstance(geometry_end, int) and 0 <= event_end_ms-geometry_end < TF_MS["240"] and
+        isinstance(source_price, (int, float)) and math.isfinite(source_price) and source_price > 0)
+    if verified:
+        expected = "discount" if source_price < geometry["swing_mid"] else "premium" if source_price > geometry["swing_mid"] else "equilibrium"
+        verified = zone == expected and provenance.get("geometry") == geometry
     return {"kind": "4h_pivot_range", "zone": zone,
             "status": "reported_with_geometry" if zone and valid else "reported_without_geometry" if zone else "unavailable",
             "source": "existing_selection_gate/Bybit_OHLC" if zone else None,
-            "selection_reason": route,
-            # review_gate does not expose its actual 15m price timestamp, and
-            # its last_15m lookup is not event-time filtered. Do not mislabel
-            # the scenario candle's timestamp/close as this zone's source.
-            "asof_end_ms": event_end_ms if verified else None,
-            "observation_price": price if verified else None,
+            "selection_reason": (gate or {}).get("reason"), "source_route": route,
+            "asof_end_ms": price_end if verified else None,
+            "geometry_end_ms": geometry_end if verified else None,
+            "observation_price": source_price if verified else None,
             "recorded_for_event_end_ms": event_end_ms,
             "event_time_verified": verified,
             "geometry": geometry if valid and zone else None,
