@@ -14,6 +14,7 @@ sys.path[:0] = [str(ROOT / "bot"), str(ROOT / "dashboard")]
 from followthrough import ensure_schema as follow_schema
 from scenario_contract import classify, ensure_schema, save, label, explanation, zone_observation, zone_note
 from movement import measure, STEP_MS
+from provenance_guard import verified_zone
 
 
 class Contracts(unittest.TestCase):
@@ -140,7 +141,7 @@ class Contracts(unittest.TestCase):
         tree = ast.parse((ROOT / "dashboard/server.py").read_text())
         node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "read_signals")
         env = {"sqlite3": sqlite3, "datetime": datetime, "timezone": timezone,
-               "json": json, "measure": measure, "WINDOW_MS": 72 * 3600000,
+               "json": json, "measure": measure, "verified_zone": verified_zone, "WINDOW_MS": 72 * 3600000,
                "STEP_MS": STEP_MS, "MAX_LIMIT": 100, "read_portfolio": lambda db: {}}
         exec(compile(ast.Module(body=[node], type_ignores=[]), "server.py", "exec"), env)
         with tempfile.NamedTemporaryFile(suffix=".sqlite3") as tmp:
@@ -156,9 +157,12 @@ class Contracts(unittest.TestCase):
             for key in ("review:TEST:15:1", "review:OLD:15:2"):
                 db.execute("INSERT INTO signal_alerts VALUES (?,?,?,?,?,?)", (key, "sent", stamp, stamp, "fixture", "review"))
             save(db, "review:TEST:15:1", {"side": "SELL", "status": "scenario"})
+            db.execute("INSERT INTO signal_alerts VALUES (?,?,?,?,?,?)", ("review:BAD:15:3", "sent", stamp, stamp, "fixture invalid v4", "review"))
+            save(db, "review:BAD:15:3", {"version": "direction-context-v4-provenance-guard", "side": "BUY", "zone_observation": {"status":"unavailable", "event_time_verified":False}})
             db.execute("INSERT INTO candles VALUES (?,?,?,?,?,?,?,?)", ("TEST", "15", start, start + STEP_MS - 1, 100, 104, 98, 102))
             db.commit()
             result = env["read_signals"](tmp.name)
+            self.assertNotIn("BAD", [x["symbol"] for x in result["signals"]])
             current = next(x for x in result["signals"] if x["symbol"] == "TEST")
             old = next(x for x in result["signals"] if x["symbol"] == "OLD")
             self.assertEqual(current["scenario"]["side"], "SELL")
