@@ -15,6 +15,7 @@ from followthrough import ensure_schema as follow_schema
 from scenario_contract import classify, ensure_schema, save, label, explanation, zone_observation, zone_note
 from movement import measure, STEP_MS
 from provenance_guard import verified_zone
+from horizons import event_horizons
 
 
 class Contracts(unittest.TestCase):
@@ -141,7 +142,7 @@ class Contracts(unittest.TestCase):
         tree = ast.parse((ROOT / "dashboard/server.py").read_text())
         node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "read_signals")
         env = {"sqlite3": sqlite3, "datetime": datetime, "timezone": timezone,
-               "json": json, "measure": measure, "verified_zone": verified_zone, "WINDOW_MS": 72 * 3600000,
+               "json": json, "measure": measure, "verified_zone": verified_zone, "event_horizons": event_horizons, "WINDOW_MS": 72 * 3600000,
                "STEP_MS": STEP_MS, "MAX_LIMIT": 100, "read_portfolio": lambda db: {}}
         exec(compile(ast.Module(body=[node], type_ignores=[]), "server.py", "exec"), env)
         with tempfile.NamedTemporaryFile(suffix=".sqlite3") as tmp:

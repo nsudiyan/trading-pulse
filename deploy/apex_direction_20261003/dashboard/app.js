@@ -245,6 +245,22 @@ function renderDetail(signal) {
   fact(facts, 'По направлению сценария: MFE / MAE', `${pct(movement.mfe_pct)} / ${pct(movement.mae_pct)}`);
   fact(facts, 'Что измеряем', 'Изменение от фиксированной цены, не PnL и не просадка от локального пика. Исполнение не моделируется.');
   detail.append(facts);
+  const excursions = signal.event_excursions;
+  if (excursions) {
+    detail.append(text('h3', 'Движение от цены сигнала · 1ч / 4ч / 24ч'));
+    if (excursions.status !== 'measured') {
+      detail.append(text('p', excursions.status === 'not_directional' ? 'Нейтральное наблюдение: направленные MFE/MAE не считаются.' : 'Baseline сигнала не сохранён. История не реконструируется.', 'legacy-note'));
+    } else {
+      detail.append(text('p', `Baseline: ${price(excursions.baseline.price)} · событие ${utc(excursions.baseline.event_ms)}. Только целые закрытые 15м после события; не исполнение, не PnL и не peak-to-trough просадка.`, 'legacy-note'));
+      for (const h of excursions.horizons) {
+        const box = text('div', '', 'detail-facts');
+        fact(box, `${h.hours}ч · ${h.status}`, `${utc(h.window_start_ms)} — ${utc(h.window_end_ms)}; свечей ${h.observed_bars}/${h.full_window_bars}`);
+        fact(box, 'MFE · максимум по направлению', `${pct(h.mfe_pct)} · цена ${price(h.mfe_price)}`);
+        fact(box, 'MAE · максимум против направления', `${pct(h.mae_pct)} · цена ${price(h.mae_price)}`);
+        detail.append(box);
+      }
+    }
+  }
   const archived = text('details', '', 'alert-details');
   archived.append(text('summary', 'Открыть исходный алерт'), text('pre', signal.text || 'Текст недоступен'));
   detail.append(archived);
