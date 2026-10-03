@@ -237,6 +237,10 @@ function renderDetail(signal) {
   fact(facts, 'Отсчёт: open первой полной 15м после отправки', `${price(movement.anchor_price)} · ${utc(movement.anchor_start_ms)}`);
   fact(facts, 'Источник / статус', `${movement.source} · ${movement.timeframe} · ${movement.status}`);
   fact(facts, 'Происхождение зоны', zone?.source ? `${zone.source} · ${zone.status} · ${zone.asof_end_ms == null ? 'время источника неизвестно' : utc(zone.asof_end_ms + 1)}` : 'Нет сохранённых данных; историческая зона не восстановлена задним числом');
+  if (zone?.source_route) {
+    fact(facts, 'Канал / цена зоны', `${zone.source_route} · ${price(zone.observation_price)} · ${zone.asof_end_ms == null ? 'время неизвестно' : utc(zone.asof_end_ms + 1)}`);
+    fact(facts, 'Геометрия 4ч', zone.geometry ? `${price(zone.geometry.swing_low)} — ${price(zone.geometry.swing_high)}; середина ${price(zone.geometry.swing_mid)}; ${zone.geometry_end_ms == null ? 'время неизвестно' : utc(zone.geometry_end_ms + 1)}` : 'Нет данных');
+  }
   fact(facts, 'Последняя закрытая свеча', movement.last_closed_ms == null ? 'Нет данных' : utc(movement.last_closed_ms + 1));
   fact(facts, 'По направлению сценария: MFE / MAE', `${pct(movement.mfe_pct)} / ${pct(movement.mae_pct)}`);
   fact(facts, 'Что измеряем', 'Изменение от фиксированной цены, не PnL и не просадка от локального пика. Исполнение не моделируется.');
