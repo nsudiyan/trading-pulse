@@ -12,7 +12,7 @@ import tempfile
 ROOT = Path(__file__).parent
 sys.path[:0] = [str(ROOT / "bot"), str(ROOT / "dashboard")]
 from followthrough import ensure_schema as follow_schema
-from scenario_contract import classify, ensure_schema, save, label, explanation
+from scenario_contract import classify, ensure_schema, save, label, explanation, zone_observation, zone_note
 from movement import measure, STEP_MS
 
 
@@ -24,7 +24,7 @@ class Contracts(unittest.TestCase):
         for arg in node.args.args:
             arg.annotation = None
         env = {"datetime": datetime, "timezone": timezone, "scenario_label": label,
-               "scenario_explanation": explanation, "LABELS": {"15": "15м"}, "TF_ORDER": (), "BTC_SYMBOLS": set()}
+               "scenario_explanation": explanation, "zone_note": zone_note, "LABELS": {"15": "15м"}, "TF_ORDER": (), "BTC_SYMBOLS": set()}
         exec(compile(ast.Module(body=[node], type_ignores=[]), "market.py", "exec"), env)
         class News:
             def recent(self, *args):
@@ -35,6 +35,59 @@ class Contracts(unittest.TestCase):
             self.assertIn("сценарий " + (side or "БЕЗ НАПРАВЛЕНИЯ"), message)
             self.assertLessEqual(len(message), 3900)
             self.assertIn("NO-TRADE", message)
+            self.assertIn("Классификатор BUY/SELL зону не проверяет", message)
+
+    def test_trigger_trend_zone_matrix_is_observational(self):
+        # Presentation contract intentionally does not implement an unvalidated
+        # zone trading gate. This tests all 90 combinations and its disclosure.
+        for trigger, h4, day, raw_zone in itertools.product(("up", "down"), ("рост", "снижение", None), ("рост", "снижение", None), ("premium", "discount", "equilibrium", "INSIDE_VA", None)):
+            contexts = {"240": {"trend": h4, "end_ms": 999}, "D": {"trend": day, "end_ms": 999}}
+            zone = zone_observation({"zone": raw_zone}, 999, 100)
+            result = classify([{"code": "structure_" + trigger}], contexts, 999, zone=zone)
+            expected = "BUY" if trigger == "up" and h4 == day == "рост" else "SELL" if trigger == "down" and h4 == day == "снижение" else None
+            self.assertEqual(result["side"], expected)
+            self.assertFalse(result["zone_is_direction_gate"])
+            self.assertFalse(result["entry_confirmed"])
+            self.assertEqual(zone["zone"], raw_zone if raw_zone in ("premium", "discount", "equilibrium") else None)
+
+    def test_zone_provenance(self):
+        full = zone_observation({"zone": "discount", "swing_low": 90, "swing_high": 110, "swing_mid": 100}, 999, 95)
+        self.assertEqual(full["status"], "reported_with_geometry")
+        self.assertFalse(full["is_volume_profile_zone"])
+        self.assertIsNone(full["asof_end_ms"])
+        self.assertIsNone(full["observation_price"])
+        self.assertFalse(full["event_time_verified"])
+        sweep = zone_observation({"reason": "strong_sweep_review", "zone": "discount"}, 999, 95)
+        self.assertTrue(sweep["event_time_verified"])
+        self.assertEqual(sweep["asof_end_ms"], 999)
+        self.assertEqual(sweep["observation_price"], 95)
+        bad = zone_observation({"zone": "premium", "swing_low": 90, "swing_high": 110, "swing_mid": 999}, 999, 105)
+        self.assertEqual(bad["status"], "reported_without_geometry")
+        self.assertIsNone(bad["geometry"])
+        self.assertEqual(zone_observation({"price_zone": "INSIDE_VA"},999,100)["status"], "unavailable")
+
+    def test_flat_path(self):
+        bar = {"start_ms": STEP_MS, "end_ms": 2*STEP_MS-1, "open": 100, "high": 100, "low": 100, "close": 100}
+        for side in ("BUY", "SELL", None):
+            r = measure([bar], 1, 2*STEP_MS, side)
+            self.assertEqual([r[k] for k in ("return_pct", "max_up_pct", "max_down_pct")], [0, 0, 0])
+            self.assertEqual(r["mfe_pct"], None if side is None else 0)
+
+    def test_incremental_replay_missing_recovery_and_no_future(self):
+        first = self.bars()[0]
+        second = {"start_ms": 2*STEP_MS, "end_ms": 3*STEP_MS-1, "open": 102, "high": 106, "low": 99, "close": 105}
+        self.assertEqual(measure([first], 1, STEP_MS)["status"], "waiting")
+        a = measure([first, second], 1, 2*STEP_MS, "BUY")
+        self.assertEqual(len(a["curve"]), 1)
+        self.assertAlmostEqual(a["max_up_pct"], 4)
+        self.assertEqual(measure([first], 1, 3*STEP_MS)["status"], "data_unavailable")
+        b = measure([first, second], 1, 3*STEP_MS, "BUY")
+        self.assertEqual(b["status"], "tracking")
+        self.assertEqual(b["anchor_price"], a["anchor_price"])
+        self.assertAlmostEqual(b["return_pct"], 5)
+        self.assertAlmostEqual(b["max_up_pct"], 6)
+        self.assertAlmostEqual(b["max_down_pct"], -2)
+        self.assertEqual(measure([first, second, second], 1, 3*STEP_MS), measure([first, second], 1, 3*STEP_MS))
 
     def test_direction_matrix(self):
         for trigger, h4, day in itertools.product(("up", "down"), ("рост", "снижение", None), ("рост", "снижение", None)):

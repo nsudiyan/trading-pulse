@@ -225,6 +225,8 @@ function renderDetail(signal) {
   top.append(titleBlock, text('div', statusName(displayStatus(signal)), 'detail-chip')); detail.append(top);
   const movement = signal.movement;
   detail.append(text('p', `Направление: ${signal.scenario?.explanation || signal.scenario?.reason || 'нет данных'}. NO-TRADE: это не подтверждённая точка входа.`, 'legacy-note'));
+  const zone = signal.scenario?.zone_observation;
+  detail.append(text('p', `Зона 4ч pivot-range (reported): ${zone?.zone || 'нет сохранённых данных'}. ${zone?.event_time_verified ? 'Цена закрытой сигнальной 15м.' : 'Время исходной цены не подтверждено.'} Это не Volume Profile. Классификатор BUY/SELL зону не проверяет; исходный канал отбора может её учитывать. Направление — наблюдение, не вход.`, 'legacy-note'));
   drawChart(detail, {...signal, curve: movement.curve || [], mfe_pct: movement.max_up_pct, mae_pct: movement.max_down_pct});
   const metrics = text('div', '', 'detail-metrics');
   for (const [name, value, cls] of [['Макс. рост от отсчёта', pct(movement.max_up_pct), 'positive'], ['Макс. падение от отсчёта', pct(movement.max_down_pct), 'negative'], ['Последнее закрытие от отсчёта', pct(movement.return_pct), 'neutral']]) {
@@ -234,6 +236,7 @@ function renderDetail(signal) {
   const facts = text('div', '', 'detail-facts');
   fact(facts, 'Отсчёт: open первой полной 15м после отправки', `${price(movement.anchor_price)} · ${utc(movement.anchor_start_ms)}`);
   fact(facts, 'Источник / статус', `${movement.source} · ${movement.timeframe} · ${movement.status}`);
+  fact(facts, 'Происхождение зоны', zone?.source ? `${zone.source} · ${zone.status} · ${zone.asof_end_ms == null ? 'время источника неизвестно' : utc(zone.asof_end_ms + 1)}` : 'Нет сохранённых данных; историческая зона не восстановлена задним числом');
   fact(facts, 'Последняя закрытая свеча', movement.last_closed_ms == null ? 'Нет данных' : utc(movement.last_closed_ms + 1));
   fact(facts, 'По направлению сценария: MFE / MAE', `${pct(movement.mfe_pct)} / ${pct(movement.mae_pct)}`);
   fact(facts, 'Что измеряем', 'Изменение от фиксированной цены, не PnL и не просадка от локального пика. Исполнение не моделируется.');

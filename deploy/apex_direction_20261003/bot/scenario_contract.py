@@ -1,15 +1,50 @@
 """Presentation-only directional scenario. Never an execution signal or new gate."""
 import json
+import math
 
-VERSION = "direction-context-v1"
+VERSION = "direction-context-v2-zone-provenance"
 TF_MS = {"240": 14_400_000, "D": 86_400_000}
 TREND_SIDE = {"рост": "BUY", "снижение": "SELL"}
 
 
-def classify(findings, contexts, event_end_ms, sweep=None):
+def zone_observation(gate, event_end_ms, price):
+    """Capture the existing gate's pivot zone; never translate a VP zone into it."""
+    raw = (gate or {}).get("zone")
+    zone = raw if raw in ("premium", "discount", "equilibrium") else None
+    geometry = {key: (gate or {}).get(key) for key in ("swing_low", "swing_high", "swing_mid")}
+    valid = all(isinstance(v, (int, float)) and math.isfinite(v) and v > 0 for v in geometry.values())
+    valid = valid and geometry["swing_low"] < geometry["swing_high"] and math.isclose(
+        geometry["swing_mid"], (geometry["swing_low"] + geometry["swing_high"]) / 2)
+    route = (gate or {}).get("reason")
+    verified = bool(zone and route == "strong_sweep_review")
+    return {"kind": "4h_pivot_range", "zone": zone,
+            "status": "reported_with_geometry" if zone and valid else "reported_without_geometry" if zone else "unavailable",
+            "source": "existing_selection_gate/Bybit_OHLC" if zone else None,
+            "selection_reason": route,
+            # review_gate does not expose its actual 15m price timestamp, and
+            # its last_15m lookup is not event-time filtered. Do not mislabel
+            # the scenario candle's timestamp/close as this zone's source.
+            "asof_end_ms": event_end_ms if verified else None,
+            "observation_price": price if verified else None,
+            "recorded_for_event_end_ms": event_end_ms,
+            "event_time_verified": verified,
+            "geometry": geometry if valid and zone else None,
+            "is_volume_profile_zone": False, "is_direction_gate": False}
+
+
+def zone_note(scenario):
+    zone = (scenario or {}).get("zone_observation") or {}
+    name = zone.get("zone") or "нет сохранённых данных"
+    timing = "цена закрытой сигнальной 15м" if zone.get("event_time_verified") else "время исходной цены не подтверждено"
+    return f"Зона 4ч pivot-range (reported): {name}; {timing}. Это не Volume Profile. Классификатор BUY/SELL зону не проверяет; исходный канал отбора может её учитывать. Направление — наблюдение, не вход."
+
+
+def classify(findings, contexts, event_end_ms, sweep=None, zone=None):
     result = {"version": VERSION, "side": None, "status": "unconfirmed",
               "reason": "no_directional_trigger", "entry_confirmed": False,
-              "event_end_ms": event_end_ms, "contexts": contexts}
+              "event_end_ms": event_end_ms, "contexts": contexts,
+              "zone_observation": zone or zone_observation(None, event_end_ms, None),
+              "zone_is_direction_gate": False}
     directions = {"BUY" if x["code"] == "structure_up" else "SELL"
                   for x in findings if x.get("code") in ("structure_up", "structure_down")}
     if sweep and sweep.get("direction") in ("BUY", "SELL"):
