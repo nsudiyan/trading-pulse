@@ -27,7 +27,7 @@ from microstructure import TradeFlow, VisibleBook, turnover_deviation
 from structure import detect_structure_findings
 from scenario_contract import (classify as classify_scenario, label as scenario_label,
                                ensure_schema as ensure_scenario_schema, save as save_scenario,
-                               explanation as scenario_explanation)
+                               explanation as scenario_explanation, zone_observation, zone_note)
 from btc_context import alt_btc_context, BTC_SYMBOLS
 from quality import notification_quality
 from setup_layers import (specification_progress, review_gate, timeframe_metrics,
@@ -374,13 +374,14 @@ def format_signal(symbol: str, rule: dict, snapshot: dict, news: Store,
     return "\n".join(lines)[:3900]
 
 
-def scenario_context(bar, findings, view, sweep=None):
+def scenario_context(bar, findings, view, sweep=None, gate=None):
     contexts = {}
     for tf in ("240", "D"):
         bars = [b for b in view.bars.get((bar["symbol"], tf), []) if b["end_ms"] <= bar["end_ms"]]
         contexts[tf] = {"end_ms": bars[-1]["end_ms"] if bars else None,
                         "trend": timeframe_metrics(bars, tf)["trend"] if bars else None}
-    scenario = classify_scenario(findings, contexts, int(bar["end_ms"]), sweep)
+    scenario = classify_scenario(findings, contexts, int(bar["end_ms"]), sweep,
+                                 zone_observation(gate, int(bar["end_ms"]), bar["close"]))
     scenario["explanation"] = scenario_explanation(scenario)
     return scenario
 
@@ -401,7 +402,7 @@ def format_review_alert(bar: dict, findings: list[dict], rule_hits: list[dict],
     closed = datetime.fromtimestamp((bar["end_ms"] + 1) / 1000, timezone.utc)
     heading = f"🔎 {symbol} · закрылась {LABELS[interval]}"
     heading += f" · сценарий {scenario_label(scenario)}"
-    lines = [heading, "Статус направления: " + scenario_explanation(scenario)]
+    lines = [heading, "Статус направления: " + scenario_explanation(scenario), zone_note(scenario)]
     if gate and gate["send"]:
         pattern = (f"{sweep['code']} {sweep['direction']} @ {sweep['level']:g}"
                    if sweep else "паттерн не подтверждён")
@@ -500,6 +501,7 @@ def format_compact_alert(bar: dict, findings: list[dict], tf_findings: dict,
             else "свечной обзор для проверки")
     lines = [f"🔎 {symbol} · сценарий {side} · {kind}",
              "Статус направления: " + scenario_explanation(scenario),
+             zone_note(scenario),
              f"Свеча: {LABELS[bar['interval']]} · {closed:%Y-%m-%d %H:%M} UTC",
              f"Анализ: {now:%Y-%m-%d %H:%M:%S} UTC",
              f"OHLC: {bar['open']:g} / {bar['high']:g} / {bar['low']:g} / {bar['close']:g}"]
@@ -846,7 +848,7 @@ class Engine:
                     review_cooldown_conflict(self.store.db, bar["symbol"], now,
                                              cooldown_hours)):
                 quality = {**quality, "send": False, "reason": "cooldown"}
-            scenario = scenario_context(bar, findings, view, sweep)
+            scenario = scenario_context(bar, findings, view, sweep, gate)
             quality_label = ""
             if quality["send"] and self.market.get("quality", {}).get("enabled"):
                 quality_label = ("Отбор: правило пользователя" if quality["reason"] == "user_rule"
