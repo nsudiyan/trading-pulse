@@ -220,13 +220,17 @@ function renderDetail(signal) {
   }
   const top = text('div', '', 'detail-top');
   const titleBlock = text('div', '');
-  titleBlock.append(text('div', `${signal.symbol} · сценарий ${signal.scenario?.side || 'БЕЗ НАПРАВЛЕНИЯ'}`, 'detail-title'),
+  const side = signal.scenario?.side;
+  const directionTitle = side === 'BUY' ? `📈 BUY ${signal.symbol} [LINEAR]` :
+                         side === 'SELL' ? `📉 SELL ${signal.symbol} [LINEAR]` :
+                         `🔎 ${signal.symbol} [LINEAR] · NO-TRADE`;
+  titleBlock.append(text('div', directionTitle, 'detail-title'),
                     text('div', `${signal.setup_type === 'strong_sweep_review' ? 'Сильный sweep' : 'Свечной обзор'} · Отправлено ${utc(signal.sent_utc)}`, 'detail-sub'));
   top.append(titleBlock, text('div', statusName(displayStatus(signal)), 'detail-chip')); detail.append(top);
   const movement = signal.movement;
   detail.append(text('p', `Направление: ${signal.scenario?.explanation || signal.scenario?.reason || 'нет данных'}. NO-TRADE: это не подтверждённая точка входа.`, 'legacy-note'));
   const zone = signal.scenario?.zone_observation;
-  detail.append(text('p', `Зона 4ч pivot-range (reported): ${zone?.zone || 'нет сохранённых данных'}. ${zone?.event_time_verified ? 'Цена закрытой сигнальной 15м.' : 'Время исходной цены не подтверждено.'} Это не Volume Profile. Классификатор BUY/SELL зону не проверяет; исходный канал отбора может её учитывать. Направление — наблюдение, не вход.`, 'legacy-note'));
+  detail.append(text('p', `Зона 4ч pivot-range: ${zone?.zone || 'нет сохранённых данных'}. ${zone?.event_time_verified ? 'Цена закрытой сигнальной 15м.' : 'Время исходной цены не подтверждено.'} Для направления требуется BOS + тренд закрытой 4ч + соответствующая зона. Это сценарий, не точка входа.`, 'legacy-note'));
   drawChart(detail, {...signal, curve: movement.curve || [], mfe_pct: movement.max_up_pct, mae_pct: movement.max_down_pct});
   const metrics = text('div', '', 'detail-metrics');
   for (const [name, value, cls] of [['Макс. рост от отсчёта', pct(movement.max_up_pct), 'positive'], ['Макс. падение от отсчёта', pct(movement.max_down_pct), 'negative'], ['Последнее закрытие от отсчёта', pct(movement.return_pct), 'neutral']]) {

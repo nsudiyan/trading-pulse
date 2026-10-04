@@ -27,7 +27,8 @@ from microstructure import TradeFlow, VisibleBook, turnover_deviation
 from structure import detect_structure_findings
 from scenario_contract import (classify as classify_scenario, label as scenario_label,
                                ensure_schema as ensure_scenario_schema, save as save_scenario,
-                               explanation as scenario_explanation, zone_observation, zone_note)
+                               explanation as scenario_explanation, zone_observation, zone_note,
+                               alert_heading, apply_direction_gate)
 from btc_context import alt_btc_context, BTC_SYMBOLS
 from quality import notification_quality
 from setup_layers import (specification_progress, review_gate, timeframe_metrics,
@@ -400,12 +401,12 @@ def format_review_alert(bar: dict, findings: list[dict], rule_hits: list[dict],
                         stale_grace_minutes: int = 10,
                         gate: dict | None = None,
                         sweep: dict | None = None,
-                        scenario: dict | None = None) -> str:
+                        scenario: dict | None = None,
+                        category: str = "linear") -> str:
     """One review message per closed candle, including every observed fact."""
     symbol, interval = bar["symbol"], bar["interval"]
     closed = datetime.fromtimestamp((bar["end_ms"] + 1) / 1000, timezone.utc)
-    heading = f"🔎 {symbol} · закрылась {LABELS[interval]}"
-    heading += f" · сценарий {scenario_label(scenario)}"
+    heading = f"{alert_heading(symbol, scenario, category)} · закрылась {LABELS[interval]}"
     lines = [heading, "Статус направления: " + scenario_explanation(scenario), zone_note(scenario)]
     if gate and gate["send"]:
         pattern = (f"{sweep['code']} {sweep['direction']} @ {sweep['level']:g}"
@@ -503,7 +504,7 @@ def format_compact_alert(bar: dict, findings: list[dict], tf_findings: dict,
     side = scenario_label(scenario)
     kind = ("сильный sweep для проверки" if quality["reason"] == "strong_sweep_review"
             else "свечной обзор для проверки")
-    lines = [f"🔎 {symbol} · сценарий {side} · {kind}",
+    lines = [f"{alert_heading(symbol, scenario, category)} · {kind}",
              "Статус направления: " + scenario_explanation(scenario),
              zone_note(scenario),
              f"Свеча: {LABELS[bar['interval']]} · {closed:%Y-%m-%d %H:%M} UTC",
@@ -853,7 +854,10 @@ class Engine:
                                              cooldown_hours)):
                 quality = {**quality, "send": False, "reason": "cooldown"}
             scenario = scenario_context(bar, findings, view, sweep, gate)
+            # The same BOS/4h/zone rule covers generic quality and the
+            # strong_sweep_review fallback because both converge here.
             quality = guarded_quality(quality, scenario)
+            quality = apply_direction_gate(quality, scenario)
             quality_label = ""
             if quality["send"] and self.market.get("quality", {}).get("enabled"):
                 quality_label = ("Отбор: правило пользователя" if quality["reason"] == "user_rule"
@@ -922,8 +926,10 @@ class Engine:
                                            rule_snapshots, micro, view, btc_lines, spec_lines,
                                            session_lines, quality_label, self.store,
                                            self.config["calendar"], now, self.config["news"],
-                                           self.market.get("stale_grace_minutes", 10), gate, sweep, scenario)
+                                           self.market.get("stale_grace_minutes", 10), gate, sweep, scenario,
+                                           self.market.get("symbol_categories", {}).get(bar["symbol"], "linear"))
             status = ("pending" if quality["send"] else
+                      "suppressed_direction" if quality["reason"] == "suppressed_direction:conflict" else
                       "suppressed_provenance" if quality["reason"] == "provenance_unverified" else
                       "suppressed_cooldown" if quality["reason"] == "cooldown" else
                       "suppressed_mtf" if quality["reason"].startswith("mtf_") else
@@ -940,9 +946,7 @@ class Engine:
             if quality["send"]:
                 # Preserve the pre-existing research cohort/method. The new
                 # presentation contract is stored separately, never backfilled.
-                side = (sweep["direction"] if sweep else
-                        "BUY" if gate and gate.get("direction") == "рост" else
-                        "SELL" if gate and gate.get("direction") == "снижение" else None)
+                side = scenario.get("side")
                 record_candidate(self.store.db, key, bar, side)
             save_confluence_states()
             self.store.db.execute("INSERT OR IGNORE INTO analyzed_bars VALUES (?,?,?,?)",

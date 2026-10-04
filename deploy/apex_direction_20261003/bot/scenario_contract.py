@@ -2,9 +2,9 @@
 import json
 import math
 
-VERSION = "direction-context-v4-provenance-guard"
-TF_MS = {"240": 14_400_000, "D": 86_400_000}
-TREND_SIDE = {"рост": "BUY", "снижение": "SELL"}
+VERSION = "direction-context-v5-bos-4h-zone"
+TF_MS = {"240": 14_400_000}
+TREND_SIDE = {"рост": "BULLISH", "снижение": "BEARISH"}
 
 
 def zone_observation(gate, event_end_ms, price):
@@ -45,35 +45,42 @@ def zone_note(scenario):
     zone = (scenario or {}).get("zone_observation") or {}
     name = zone.get("zone") or "нет сохранённых данных"
     timing = "цена закрытой сигнальной 15м" if zone.get("event_time_verified") else "время исходной цены не подтверждено"
-    return f"Зона 4ч pivot-range (reported): {name}; {timing}. Это не Volume Profile. Классификатор BUY/SELL зону не проверяет; исходный канал отбора может её учитывать. Направление — наблюдение, не вход."
+    return f"Зона 4ч pivot-range: {name}; {timing}. Для направления требуется BOS + тренд закрытой 4ч + соответствующая зона. Это сценарий, не точка входа."
 
 
 def classify(findings, contexts, event_end_ms, sweep=None, zone=None):
     result = {"version": VERSION, "side": None, "status": "unconfirmed",
-              "reason": "no_directional_trigger", "entry_confirmed": False,
+              "reason": "suppressed_direction:conflict", "entry_confirmed": False,
               "event_end_ms": event_end_ms, "contexts": contexts,
               "zone_observation": zone or zone_observation(None, event_end_ms, None),
-              "zone_is_direction_gate": False}
+              "zone_is_direction_gate": True}
+    # structure_up/down also includes CHoCH and unclassified first breaks.
+    # The user's matrix is explicitly BOS-based, so do not promote those to
+    # BOS_UP/BOS_DOWN just because the close crossed a pivot.
     directions = {"BUY" if x["code"] == "structure_up" else "SELL"
-                  for x in findings if x.get("code") in ("structure_up", "structure_down")}
-    if sweep and sweep.get("direction") in ("BUY", "SELL"):
-        directions.add(sweep["direction"])
-    if len(directions) > 1:
-        return {**result, "status": "conflict", "reason": "conflicting_triggers"}
-    if not directions:
-        return result
+                  for x in findings
+                  if x.get("code") in ("structure_up", "structure_down")
+                  and str(x.get("name", "")).startswith("BOS:")}
+    if len(directions) != 1:
+        return {**result, "status": "suppressed", "reason": "suppressed_direction:conflict"}
     side = next(iter(directions))
-    for tf, duration in TF_MS.items():
-        ctx = contexts.get(tf) or {}
-        end = ctx.get("end_ms")
-        if not isinstance(end, int) or not 0 <= event_end_ms - end < duration:
-            return {**result, "reason": "missing_or_stale_" + tf}
-        context_side = TREND_SIDE.get(ctx.get("trend"))
-        if context_side is None:
-            return {**result, "reason": "non_directional_" + tf}
-        if context_side != side:
-            return {**result, "status": "conflict", "reason": "trigger_conflicts_" + tf}
-    return {**result, "side": side, "status": "scenario", "reason": "trigger_and_4h_1d_agree"}
+    ctx = contexts.get("240") or {}
+    end = ctx.get("end_ms")
+    if not isinstance(end, int) or not 0 <= event_end_ms - end < TF_MS["240"]:
+        return {**result, "status": "suppressed", "reason": "suppressed_direction:conflict"}
+    context_side = TREND_SIDE.get(ctx.get("trend"))
+    observed_zone = result["zone_observation"]
+    # A raw zone label is not enough: direction requires the immutable,
+    # event-time-verified 4h geometry captured for this exact candle.
+    from provenance_guard import verified_zone
+    if not verified_zone(result) or observed_zone.get("zone") not in ("discount", "premium"):
+        return {**result, "status": "suppressed", "reason": "suppressed_direction:conflict"}
+    zone_name = observed_zone["zone"]
+    if side == "BUY" and context_side == "BULLISH" and zone_name == "discount":
+        return {**result, "side": "BUY", "status": "scenario", "reason": "bos_up_4h_bullish_discount"}
+    if side == "SELL" and context_side == "BEARISH" and zone_name == "premium":
+        return {**result, "side": "SELL", "status": "scenario", "reason": "bos_down_4h_bearish_premium"}
+    return {**result, "status": "suppressed", "reason": "suppressed_direction:conflict"}
 
 
 def label(scenario):
@@ -81,17 +88,34 @@ def label(scenario):
     return side if side in ("BUY", "SELL") else "БЕЗ НАПРАВЛЕНИЯ"
 
 
+def alert_heading(symbol, scenario, category="linear"):
+    """Compact direction heading; this is an observation, not an entry signal."""
+    market = "INVERSE" if category == "inverse" else "LINEAR"
+    side = (scenario or {}).get("side")
+    if side == "BUY":
+        return f"📈 BUY {symbol} [{market}]"
+    if side == "SELL":
+        return f"📉 SELL {symbol} [{market}]"
+    return f"🔎 {symbol} [{market}] · NO-TRADE"
+
+
+def apply_direction_gate(quality, scenario):
+    """Shared final direction gate for generic and strong-sweep observations."""
+    if quality.get("send") and (scenario or {}).get("side") not in ("BUY", "SELL"):
+        return {**quality, "send": False, "reason": "suppressed_direction:conflict"}
+    return quality
+
+
 def explanation(scenario):
     code = (scenario or {}).get("reason", "missing")
-    return {"trigger_and_4h_1d_agree": "событие и закрытые 4ч/1д согласованы; только сценарий",
+    return {"bos_up_4h_bullish_discount": "BOS вверх + бычий тренд закрытой 4ч + discount; сценарий, не вход",
+            "bos_down_4h_bearish_premium": "BOS вниз + медвежий тренд закрытой 4ч + premium; сценарий, не вход",
+            "suppressed_direction:conflict": "BUY/SELL подавлен: BOS, закрытая 4ч или зона не совпали с матрицей",
             "conflicting_triggers": "события дают противоположные направления",
             "no_directional_trigger": "направленный триггер не подтверждён",
             "missing_or_stale_240": "нет свежей закрытой 4ч свечи",
-            "missing_or_stale_D": "нет свежей закрытой дневной свечи",
             "non_directional_240": "4ч контекст не имеет направления",
-            "non_directional_D": "дневной контекст не имеет направления",
-            "trigger_conflicts_240": "событие противоречит 4ч контексту",
-            "trigger_conflicts_D": "событие противоречит дневному контексту"}.get(code, "нет данных")
+            "trigger_conflicts_240": "событие противоречит 4ч контексту"}.get(code, "направление подавлено матрицей BOS/4ч/зона")
 
 
 def ensure_schema(db):

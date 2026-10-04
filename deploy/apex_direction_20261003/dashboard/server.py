@@ -85,9 +85,11 @@ def read_signals(db_path: str, limit: int = 60) -> dict:
                 scenario = json.loads(contract_row[0]) if contract_row else None
             except (ValueError, TypeError):
                 scenario = None
-            # v4 marks observations built after fail-closed rollout. Preserve
+            # v4/v5 mark observations built after fail-closed rollout. Preserve
             # legacy/v1-v3 history; absence of old metadata is not a false flag.
-            if isinstance(scenario, dict) and scenario.get("version") == "direction-context-v4-provenance-guard" and not verified_zone(scenario):
+            if (isinstance(scenario, dict) and scenario.get("version") in {
+                    "direction-context-v4-provenance-guard", "direction-context-v5-bos-4h-zone"}
+                    and not verified_zone(scenario)):
                 continue
             item["scenario"] = scenario if isinstance(scenario, dict) else {"side": None, "status": "historical_unverified", "reason": "Контекст направления при отправке не сохранён"}
             try:
