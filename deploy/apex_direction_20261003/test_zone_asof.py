@@ -23,7 +23,8 @@ class ZoneAsOf(unittest.TestCase):
             'swing_low':90 if bars else None,'swing_high':110 if bars else None,'swing_mid':100 if bars else None}
         functions(ROOT/'bot/setup_layers.py', {'asof_series','zone_snapshot','review_gate'}, self.env)
         self.env.update(equal_level_sweep=lambda bars: {'direction':'BUY','end_ms':bars[-1]['end_ms']},
-            asia_range_sweep=lambda *a:None, prior_volume_ratio=lambda bars:3,
+            asia_range_sweep=lambda *a:None,
+            sweep_activity_ratio=lambda bars, category:3,
             quote_volume_24h=lambda *a,**k:100000000, finding_family=lambda *a:'fixture')
         functions(ROOT/'bot/strong_sweep.py', {'strong_sweep_review'}, self.env)
         self.bar={'start_ms':0,'end_ms':899999,'open':95,'high':95,'low':95,'close':95,'volume':1,'turnover':95}

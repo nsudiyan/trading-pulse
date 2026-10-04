@@ -33,11 +33,14 @@ from btc_context import alt_btc_context, BTC_SYMBOLS
 from quality import notification_quality
 from setup_layers import (specification_progress, review_gate, timeframe_metrics,
                           quote_volume_24h)
-from sessions import closed_asia_range, session_at
+from sessions import closed_asia_range
+from alert_policy import (format_msk, session_at, session_label,
+                          timeframe_alert_policy)
+from btc_gate import btc_45m_gate
+from level_age import level_alert_text
+from setup_chain import ensure_schema as ensure_setup_chain_schema, process_closed_bar
 from zones import active_fvgs
 from volume_profile import profile_windows
-from sweeps import recent_sweep
-from strong_sweep import strong_sweep_review
 from provenance_guard import guarded_quality, verified_zone
 from outcomes import ensure_schema as ensure_outcomes_schema, record_candidate, resolve_due
 from followthrough import (ensure_schema as ensure_followthrough_schema,
@@ -356,13 +359,13 @@ def evaluate_confluence(rule: dict, symbol: str, view: CandleSnapshot,
 
 def format_signal(symbol: str, rule: dict, snapshot: dict, news: Store,
                   calendar: dict, now: datetime, news_config: dict) -> str:
-    lines = [f"📊 {symbol} · {rule['id']}", f"Анализ UTC: {now.isoformat()}",
+    lines = [f"📊 {symbol} · {rule['id']}",
+             f"Анализ: {format_msk(int(now.timestamp() * 1000), full=True)}",
              f"Условие: {rule['metric']} {rule['operator']} {rule['value']}"]
     for interval in snapshot:
         item = snapshot[interval]
         bar = item.get("bar")
-        closed = (datetime.fromtimestamp((bar["end_ms"] + 1) / 1000, timezone.utc)
-                  .strftime("%Y-%m-%d %H:%M UTC") if bar else "—")
+        closed = format_msk(bar["end_ms"] + 1) if bar else "—"
         value = f" ({item['value']:.4g})" if "value" in item else ""
         lines.append(f"{LABELS[interval]}: {item['status']}{value}; свеча до {closed}")
     items = news.recent(symbol, news_config.get("context_hours", 4),
@@ -376,15 +379,18 @@ def format_signal(symbol: str, rule: dict, snapshot: dict, news: Store,
     return "\n".join(lines)[:3900]
 
 
-def scenario_context(bar, findings, view, sweep=None, gate=None):
+def scenario_context(bar, findings, view, sweep=None, gate=None, setup=None):
     contexts = {}
     for tf in ("240", "D"):
         bars = [b for b in view.bars.get((bar["symbol"], tf), []) if b["end_ms"] <= bar["end_ms"]]
         contexts[tf] = {"end_ms": bars[-1]["end_ms"] if bars else None,
                         "trend": timeframe_metrics(bars, tf)["trend"] if bars else None}
     scenario = classify_scenario(findings, contexts, int(bar["end_ms"]), sweep,
-                                 zone_observation(gate, int(bar["end_ms"]), bar["close"]))
+                                 zone_observation(gate, int(bar["end_ms"]), bar["close"]),
+                                 event_timeframe=bar["interval"], setup=setup)
     scenario["explanation"] = scenario_explanation(scenario)
+    scenario["event_time_msk"] = format_msk(int(bar["end_ms"]) + 1)
+    scenario["session_msk"] = session_at(int(bar["end_ms"]) + 1)
     # Immutable descriptive measurement baseline, not an executable entry.
     scenario["baseline"] = {"method":"event_close_v1", "price":bar["close"],
                             "event_ms":int(bar["end_ms"])+1, "source":"signal_closed_OHLC"}
@@ -405,19 +411,37 @@ def format_review_alert(bar: dict, findings: list[dict], rule_hits: list[dict],
                         category: str = "linear") -> str:
     """One review message per closed candle, including every observed fact."""
     symbol, interval = bar["symbol"], bar["interval"]
-    closed = datetime.fromtimestamp((bar["end_ms"] + 1) / 1000, timezone.utc)
+    closed_ms = int(bar["end_ms"]) + 1
+    closed = datetime.fromtimestamp(closed_ms / 1000, timezone.utc)
     heading = f"{alert_heading(symbol, scenario, category)} · закрылась {LABELS[interval]}"
     lines = [heading, "Статус направления: " + scenario_explanation(scenario), zone_note(scenario)]
     if gate and gate["send"]:
         pattern = (f"{sweep['code']} {sweep['direction']} @ {sweep['level']:g}"
+                   + sweep_activity_text(sweep)
                    if sweep else "паттерн не подтверждён")
         lines.extend([f"📊 Почему: 4ч/15м согласованы; {gate['count']}/5 ТФ; "
                       f"4ч зона {gate['zone']}; {pattern}.",
                       "📍 Действие: проверить график самостоятельно; "
                       "точка входа, стоп и цели не подтверждены."])
-    lines.extend([f"Свеча закрыта UTC: {closed.strftime('%Y-%m-%d %H:%M:%S')}",
-             f"Анализ UTC: {now.strftime('%Y-%m-%d %H:%M:%S')}",
+    lines.extend([f"Свеча закрыта: {format_msk(closed_ms)}",
+             f"Анализ: {format_msk(int(now.timestamp() * 1000), full=True)}",
              f"OHLC: {bar['open']:g} / {bar['high']:g} / {bar['low']:g} / {bar['close']:g}"])
+    level_line = level_alert_text((scenario or {}).get("level_observation"))
+    if level_line:
+        lines.append(level_line)
+    sequence = (scenario or {}).get("setup_sequence") or {}
+    if sequence.get("status") == "confirmed":
+        s, c = sequence["sweep"], sequence["choch"]
+        lines.append(
+            f"Подтверждено: {s['code']} {s['direction']} {s['level']:g} "
+            f"({format_msk(int(s['end_ms']) + 1)}) → CHoCH {c['level']:g} "
+            f"+ буфер {c['buffer']:g} ({format_msk(c['event_ms'])}; "
+            f"{sequence['bars_waited']}/{sequence['heuristics']['max_wait_bars']} свечей).")
+        lines.append(
+            f"Хвост/тело {s['wick_body_ratio']:.2f}×; глубина "
+            f"{s['penetration_bps']:.1f} bps;"
+            + sweep_activity_text(s, sequence.get("timeframe", bar["interval"])))
+        lines.append("Прокол уровня не доказывает исполнение стопов; вход, стоп и цели не подтверждены.")
     lines.extend(btc_lines)
     lines.extend(session_lines)
     lines.extend(spec_lines)
@@ -426,9 +450,8 @@ def format_review_alert(bar: dict, findings: list[dict], rule_hits: list[dict],
     lines.append(f"Контекст {len(tf_findings)} таймфреймов (EMA и свечные признаки):")
     for tf in tf_findings:
         latest = candles.latest(symbol, tf)
-        tf_closed = (datetime.fromtimestamp((latest["end_ms"] + 1) / 1000, timezone.utc)
-                     .strftime("%m-%d %H:%M UTC") if latest else "нет")
-        stale = (latest is not None and int(closed.timestamp() * 1000) - latest["end_ms"]
+        tf_closed = format_msk(latest["end_ms"] + 1) if latest else "нет"
+        stale = (latest is not None and closed_ms - (latest["end_ms"] + 1)
                  > INTERVALS[tf] + stale_grace_minutes * 60_000)
         suffix = "; устарело" if stale else ""
         names = ", ".join(item["name"] for item in tf_findings[tf][:3]) or "нет признаков"
@@ -491,6 +514,20 @@ def format_review_alert(bar: dict, findings: list[dict], rule_hits: list[dict],
     return body[:3900 - len(footer) - 1] + "\n" + footer
 
 
+def sweep_activity_text(sweep: dict | None, timeframe: str = "15") -> str:
+    """Explain the native notional and same-timeframe closed-bar threshold."""
+    if not sweep or sweep.get("volume_ratio") is None:
+        return ""
+    basis = ("оборот в котируемой валюте" if sweep.get("volume_basis") == "quote_turnover"
+             else "объём контрактов в котируемой валюте")
+    ratio_min = sweep.get("activity_ratio_min")
+    threshold = f" · порог {ratio_min:.2f}×" if isinstance(ratio_min, (int, float)) else ""
+    quote_24h = sweep.get("quote_24h")
+    quote = f" · предшествующий оборот 24ч {quote_24h:,.0f}" if isinstance(quote_24h, (int, float)) else ""
+    return (f" · {basis} {sweep['volume_ratio']:.2f}× MA14 {LABELS.get(timeframe, timeframe)}"
+            f" (14 предыдущих закрытых свечей){threshold}{quote}")
+
+
 def format_compact_alert(bar: dict, findings: list[dict], tf_findings: dict,
                          view: Candles, btc_lines: list[str], session_lines: list[str],
                          spec_lines: list[str], micro: dict,
@@ -500,20 +537,39 @@ def format_compact_alert(bar: dict, findings: list[dict], tf_findings: dict,
                          category: str, scenario: dict | None = None) -> str:
     """Facts first; no invented execution levels or OHLCV volume-at-price claims."""
     symbol, end_ms = bar["symbol"], int(bar["end_ms"])
-    closed = datetime.fromtimestamp((end_ms + 1) / 1000, timezone.utc)
+    closed_ms = end_ms + 1
+    closed = datetime.fromtimestamp(closed_ms / 1000, timezone.utc)
     side = scenario_label(scenario)
-    kind = ("сильный sweep для проверки" if quality["reason"] == "strong_sweep_review"
+    kind = ("sweep → CHoCH подтверждён · наблюдение для проверки"
+            if quality["reason"] == "sweep_choch_confirmed"
             else "свечной обзор для проверки")
     lines = [f"{alert_heading(symbol, scenario, category)} · {kind}",
              "Статус направления: " + scenario_explanation(scenario),
              zone_note(scenario),
-             f"Свеча: {LABELS[bar['interval']]} · {closed:%Y-%m-%d %H:%M} UTC",
-             f"Анализ: {now:%Y-%m-%d %H:%M:%S} UTC",
+             f"Свеча: {LABELS[bar['interval']]} · {format_msk(closed_ms)}",
+             f"Анализ: {format_msk(int(now.timestamp() * 1000), full=True)}",
              f"OHLC: {bar['open']:g} / {bar['high']:g} / {bar['low']:g} / {bar['close']:g}"]
+    level_line = level_alert_text((scenario or {}).get("level_observation"))
+    if level_line:
+        lines.append(level_line)
+    sequence = (scenario or {}).get("setup_sequence") or {}
+    if sequence.get("status") == "confirmed":
+        s = sequence["sweep"]
+        c = sequence["choch"]
+        lines.append(
+            f"Последовательность: {s['code']} {s['direction']} на {s['level']:g} "
+            f"({format_msk(int(s['end_ms']) + 1)}) → CHoCH закрытием за "
+            f"{c['level']:g} + буфер {c['buffer']:g} "
+            f"({format_msk(c['event_ms'])}; {sequence['bars_waited']}/"
+            f"{sequence['heuristics']['max_wait_bars']} свечей).")
+        lines.append(
+            f"Фильтры sweep: хвост/тело {s['wick_body_ratio']:.2f}×; "
+            f"глубина {s['penetration_bps']:.1f} bps; "
+            + sweep_activity_text(s, sequence.get("timeframe", bar["interval"])).lstrip(" · "))
+        lines.append("Это прокси по закрытым OHLCV, не доказательство исполнения стопов.")
     if sweep:
-        ratio = sweep.get("volume_ratio")
-        lines.append(f"Паттерн: {sweep['code']} · {sweep['direction']} · уровень {sweep['level']:g}"
-                     + (f" · объём {ratio:.2f}× MA14" if ratio is not None else ""))
+        lines.append(f"Sweep: {sweep['code']} · {sweep['direction']} · уровень {sweep['level']:g}"
+                     + sweep_activity_text(sweep, bar["interval"]))
         lines.append("Прокол и возврат цены подтверждены закрытой свечой; исполнение стопов не наблюдается.")
     else:
         lines.append("Sweep на закрытой свече не подтверждён; обзор без точки входа.")
@@ -529,15 +585,14 @@ def format_compact_alert(bar: dict, findings: list[dict], tf_findings: dict,
     lines.append("Таймфреймы (EMA20/50/200, только закрытые свечи):")
     for tf in TF_ORDER:
         latest = view.latest(symbol, tf)
-        stamp = (datetime.fromtimestamp((latest["end_ms"] + 1) / 1000, timezone.utc)
-                 .strftime("%m-%d %H:%M UTC") if latest else "нет данных")
+        stamp = format_msk(latest["end_ms"] + 1) if latest else "нет данных"
         direction = (gate.get("trends", {}).get(tf) if gate else None)
         if direction is None and latest:
             direction = timeframe_metrics(view.bars.get((symbol, tf), []), tf)["trend"]
         names = ", ".join(item["name"] for item in tf_findings.get(tf, [])[:2]) or "нет признаков"
         lines.append(f"• {LABELS[tf]}: {direction or 'нет данных'}; {names}; {stamp}")
     lines.extend(btc_lines[:5])
-    lines.extend(session_lines[:2])
+    lines.extend(session_lines[:3])
     lines.extend(spec_lines[:3])
     lines.extend(line for line in spec_lines[3:] if line.startswith(("VP range:", "4ч FVG")))
     flow = micro.get("flow")
@@ -574,6 +629,7 @@ class Engine:
         ensure_outcomes_schema(self.store.db)
         ensure_followthrough_schema(self.store.db)
         ensure_scenario_schema(self.store.db)
+        ensure_setup_chain_schema(self.store.db)
         self.candles.load(self.market["symbols"], self.market["intervals"])
         self.micro_cfg = config.get("microstructure", {})
         self.micro_symbols = (set(self.micro_cfg.get("symbols", []))
@@ -646,15 +702,39 @@ class Engine:
                                             bar["end_ms"])
             findings_cfg = self.market.get("findings", {})
             structure_cfg = self.market.get("structure", {})
-            tf_findings = {
-                tf: ((detect_bar_findings(view.bars[bar["symbol"], tf], findings_cfg)
-                      if findings_cfg.get("enabled", True) else [])
-                     + (detect_structure_findings(view.bars[bar["symbol"], tf],
-                                                  structure_cfg)
-                        if structure_cfg.get("enabled", False) else []))
-                for tf in self.market["intervals"]
-            }
+            tf_findings = {}
+            for tf in self.market["intervals"]:
+                tf_items = (detect_bar_findings(view.bars[bar["symbol"], tf], findings_cfg)
+                            if findings_cfg.get("enabled", True) else [])
+                if structure_cfg.get("enabled", False):
+                    tf_items.extend({**item, "timeframe": tf}
+                                    for item in detect_structure_findings(
+                                        view.bars[bar["symbol"], tf], structure_cfg))
+                tf_findings[tf] = tf_items
             findings = list(tf_findings[bar["interval"]])
+            chain_cfg = self.market.get("quality", {}).get("sweep_choch", {})
+            chain_result = process_closed_bar(
+                self.store.db, bar["symbol"], bar["interval"],
+                view.bars.get((bar["symbol"], bar["interval"]), []),
+                h4_bars=view.bars.get((bar["symbol"], "240"), []),
+                hourly_bars=view.bars.get((bar["symbol"], "60"), []),
+                bars_15m=view.bars.get((bar["symbol"], "15"), []),
+                category=self.market.get("symbol_categories", {}).get(bar["symbol"], "linear"),
+                min_quote_24h=float(chain_cfg.get(
+                    "min_quote_turnover_24h",
+                    self.market.get("quality", {}).get("min_quote_turnover_24h", 50_000_000))),
+                max_wait_bars=int(chain_cfg.get("max_wait_bars", 8)),
+                min_wick_body_ratio=float(chain_cfg.get("min_wick_body_ratio", 0.5)),
+                min_penetration_bps=float(chain_cfg.get("min_penetration_bps", 5.0)))
+            setup = chain_result if chain_result.get("status") == "confirmed" else None
+            if setup:
+                ch = setup["choch"]
+                findings.append({"code": "sweep_choch_confirmed",
+                                 "name": f"Sweep → CHoCH подтверждён ({setup['direction']})",
+                                 "evidence": f"{setup['sweep']['code']} → закрытие за swing "
+                                             f"{ch['level']:g} + буфер {ch['buffer']:g}; "
+                                             f"ожидание {setup['bars_waited']} свечей",
+                                 "source": "Bybit OHLC"})
             findings.extend(observations(self.config.get("external_observations", {}),
                                          bar["symbol"], bar["interval"],
                                          bar["start_ms"], now))
@@ -783,14 +863,26 @@ class Engine:
             key = f"review:{bar['symbol']}:{bar['interval']}:{bar['start_ms']}"
             quality = notification_quality(bar["symbol"], findings, rule_hits,
                                            self.market.get("quality", {}))
+            if setup:
+                # The sequential, volume-qualified sweep→CHoCH is itself the
+                # setup gate; it replaces the unrelated four-family attention
+                # threshold, while liquidity, MTF/zone, cooldown, session and
+                # BTC guards below remain in force.
+                quality = {"send": True, "families": {"sweep", "choch", "volume"},
+                           "reason": "sweep_choch_confirmed"}
             gate = None
-            sweep = None
+            sweep = setup["sweep"] if setup else None
             profiles = None
             gate_cfg = self.market.get("quality", {}).get("mtf_gate", {})
-            if quality["send"] and gate_cfg.get("enabled", False):
+            if quality["send"] and (gate_cfg.get("enabled", False) or setup):
                 gate = review_gate(view, bar["symbol"], bar["end_ms"],
-                                   require_zone=gate_cfg.get("require_4h_zone", True))
-                if not gate["send"]:
+                                   require_zone=True if setup else gate_cfg.get("require_4h_zone", True))
+                # For strict sweep→CHoCH setups, review_gate supplies the
+                # immutable 4h zone/provenance snapshot. Its legacy extra
+                # 15m/1D/1W alignment rules must not replace the user's
+                # explicit direction matrix (sequence + 4h trend + zone).
+                # Keep that additional gate only for the legacy generic path.
+                if not gate["send"] and not setup:
                     quality = {**quality, "send": False,
                                "reason": "mtf_" + gate["reason"]}
             min_quote = float(self.market.get("quality", {}).get("min_quote_turnover_24h", 0))
@@ -803,20 +895,8 @@ class Engine:
                     quality = {**quality, "send": False, "reason": "liquidity_unavailable"}
                 elif quote < min_quote:
                     quality = {**quality, "send": False, "reason": "liquidity_below_threshold"}
-            if quality["send"] and gate and gate_cfg.get("require_sweep", False):
-                side = "BUY" if gate["direction"] == "рост" else "SELL"
-                sweep = recent_sweep(view, bar["symbol"], bar["end_ms"], side)
-                if not sweep:
-                    overview_floor = int(gate_cfg.get("overview_min_aligned_tfs", 0))
-                    if overview_floor and gate["count"] >= overview_floor:
-                        # Earlier user preference keeps exceptionally strong
-                        # chart overviews visible. They remain explicitly
-                        # non-entry alerts when no sweep is confirmed.
-                        quality = {**quality, "reason": "strong_overview_no_sweep"}
-                    else:
-                        quality = {**quality, "send": False,
-                                   "reason": "setup_no_confirmed_sweep"}
-            if quality["send"] and gate and gate_cfg.get("require_profile", False):
+            if (quality["send"] and gate and gate_cfg.get("require_profile", False)
+                    and not setup):
                 atr_4h = timeframe_metrics(
                     view.bars.get((bar["symbol"], "240"), []), "240")["atr"]
                 profiles = profile_windows(view, bar["symbol"], bar["end_ms"], atr_4h,
@@ -837,27 +917,33 @@ class Engine:
                     (gate["direction"] == "снижение" and
                      funding < float(macro_cfg.get("min_short_rate", -0.00005)))):
                     quality = {**quality, "send": False, "reason": "macro_btc_funding_guard"}
-            sweep_cfg = self.market.get("quality", {}).get("strong_sweep_review", {})
-            if (not quality["send"] and bar["interval"] == "15" and
-                    sweep_cfg.get("enabled", False)):
-                category = self.market.get("symbol_categories", {}).get(bar["symbol"], "linear")
-                candidate = strong_sweep_review(view, bar["symbol"], bar["end_ms"],
-                                                findings, category=category,
-                                                config=sweep_cfg)
-                if candidate["send"]:
-                    gate, sweep = candidate, candidate["sweep"]
-                    quality = {"send": True, "families": candidate["families"],
-                               "reason": "strong_sweep_review"}
             cooldown_hours = float(self.market.get("quality", {}).get("cooldown_hours", 0))
             if (quality["send"] and quality["reason"] != "user_rule" and
                     review_cooldown_conflict(self.store.db, bar["symbol"], now,
                                              cooldown_hours)):
                 quality = {**quality, "send": False, "reason": "cooldown"}
-            scenario = scenario_context(bar, findings, view, sweep, gate)
-            # The same BOS/4h/zone rule covers generic quality and the
-            # strong_sweep_review fallback because both converge here.
+            scenario = scenario_context(bar, findings, view, sweep, gate, setup)
+            # Every alert route reaches the same persistent sequence, 4h
+            # context/zone, provenance, session and BTC gates.
             quality = guarded_quality(quality, scenario)
             quality = apply_direction_gate(quality, scenario)
+            close_ms = bar["end_ms"] + 1
+            btc_view = self.candles.snapshot_at("BTCUSDT", self.market["intervals"],
+                                                bar["end_ms"])
+            final_filters = None
+            if quality["send"]:
+                timeframe_ok, suppression_reason = timeframe_alert_policy(
+                    bar["interval"], close_ms)
+                final_filters = {"session": session_at(close_ms), "btc": None}
+                if not timeframe_ok:
+                    quality = {**quality, "send": False, "reason": suppression_reason}
+                else:
+                    final_filters["btc"] = btc_45m_gate(
+                        bar["symbol"], scenario.get("side"),
+                        btc_view.bars.get(("BTCUSDT", "15"), []), close_ms)
+                    if not final_filters["btc"]["passed"]:
+                        quality = {**quality, "send": False,
+                                   "reason": final_filters["btc"]["reason"]}
             quality_label = ""
             if quality["send"] and self.market.get("quality", {}).get("enabled"):
                 quality_label = ("Отбор: правило пользователя" if quality["reason"] == "user_rule"
@@ -872,8 +958,6 @@ class Engine:
             if gate and quality["send"]:
                 quality_label += (f"\nBTC funding (тикер Bybit): {funding:+.6f}"
                                   if funding is not None else "\nBTC funding: нет данных на момент свечи")
-            btc_view = self.candles.snapshot_at("BTCUSDT", self.market["intervals"],
-                                                bar["end_ms"])
             btc_lines = alt_btc_context(bar["symbol"], bar["end_ms"], view,
                                         btc_view, self.config.get("btc_context", {}))
             spec_lines = specification_progress(
@@ -905,8 +989,18 @@ class Engine:
                         f"касаний {nearest['tests']} [Bybit OHLC]")
                 else:
                     spec_lines.append("4ч FVG (последние 100 свечей): активных нет [Bybit OHLC]")
-            close_ms = bar["end_ms"] + 1
-            session_lines = [f"Сессия UTC: {session_at(close_ms)} (справочно)"]
+            session_lines = [f"Сессия МСК: {session_label(session_at(close_ms))}"]
+            if quality["send"] and final_filters and final_filters.get("btc"):
+                btc_result = final_filters["btc"]
+                if btc_result["reason"] == "btc_not_applicable":
+                    session_lines.append("BTC-фильтр 45м: не применяется к BTC")
+                elif btc_result["reason"] == "btc_no_data":
+                    session_lines.append("BTC-фильтр 45м: нет точных закрытых данных; пропуск по fail-open")
+                elif btc_result["reason"] == "not_directional":
+                    session_lines.append("BTC-фильтр 45м: нет направления для проверки")
+                else:
+                    session_lines.append(
+                        f"BTC-фильтр 45м: пройден; движение {btc_result['move_pct']:+.2f}%")
             asia = closed_asia_range(view.bars.get((bar["symbol"], "60"), []),
                                      close_ms)
             if asia:
@@ -932,9 +1026,11 @@ class Engine:
                       "suppressed_direction" if quality["reason"] == "suppressed_direction:conflict" else
                       "suppressed_provenance" if quality["reason"] == "provenance_unverified" else
                       "suppressed_cooldown" if quality["reason"] == "cooldown" else
+                      "suppressed_session" if quality["reason"].startswith("suppressed_session:") else
+                      "suppressed_btc_gate" if quality["reason"].startswith("suppressed_btc_gate:") else
                       "suppressed_mtf" if quality["reason"].startswith("mtf_") else
                       "suppressed_liquidity" if quality["reason"].startswith("liquidity_") else
-                      "suppressed_setup" if quality["reason"].startswith("setup_") else
+                      "suppressed_setup" if quality["reason"].startswith(("setup_", "suppressed_setup")) else
                       "suppressed_macro" if quality["reason"].startswith("macro_") else
                       "suppressed")
             inserted = self.store.db.execute("""

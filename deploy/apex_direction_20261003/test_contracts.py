@@ -18,6 +18,8 @@ from scenario_contract import (classify, ensure_schema, save, label, explanation
 from movement import measure, STEP_MS
 from provenance_guard import verified_zone
 from horizons import event_horizons
+from alert_policy import format_msk
+from level_age import observe_level_age, level_alert_text
 
 
 class Contracts(unittest.TestCase):
@@ -29,21 +31,30 @@ class Contracts(unittest.TestCase):
             arg.annotation = None
         env = {"datetime": datetime, "timezone": timezone, "scenario_label": label,
                "alert_heading": alert_heading,
-               "scenario_explanation": explanation, "zone_note": zone_note, "LABELS": {"15": "15м"}, "TF_ORDER": (), "BTC_SYMBOLS": set()}
+               "scenario_explanation": explanation, "zone_note": zone_note,
+               "format_msk": format_msk,
+               "level_alert_text": level_alert_text,
+               "LABELS": {"15": "15м"}, "TF_ORDER": (), "BTC_SYMBOLS": set()}
         exec(compile(ast.Module(body=[node], type_ignores=[]), "market.py", "exec"), env)
         class News:
             def recent(self, *args):
                 return []
         bar = {"symbol": "TEST", "interval": "15", "end_ms": 999, "open": 100, "high": 101, "low": 99, "close": 100}
         for side in ("BUY", "SELL", None):
-            message = env["format_compact_alert"](bar, [], {}, None, [], [], ["x" * 4000], {}, News(), {}, datetime.now(timezone.utc), None, None, None, {"reason": "fixture"}, "linear", {"side": side})
+            scenario = {"side": side, "level_observation": {
+                "status": "fresh", "timeframe": "15m", "level_price": 100,
+                "age_text": "45м 🟢 свежий (3 свечи)"}}
+            message = env["format_compact_alert"](bar, [], {}, None, [], [], ["x" * 4000], {}, News(), {}, datetime(2026, 10, 2, 8, 0, tzinfo=timezone.utc), None, None, None, {"reason": "fixture"}, "linear", scenario)
             expected_heading = ("📈 BUY TEST [LINEAR]" if side == "BUY" else
                                 "📉 SELL TEST [LINEAR]" if side == "SELL" else
                                 "🔎 TEST [LINEAR] · NO-TRADE")
             self.assertIn(expected_heading, message)
             self.assertLessEqual(len(message), 3900)
             self.assertIn("NO-TRADE", message)
-            self.assertIn("Для направления требуется BOS + тренд закрытой 4ч", message)
+            self.assertIn("BUY/SELL требует закрытую последовательность sweep → CHoCH", message)
+            self.assertIn("Свеча: 15м · 01.01 03:00 МСК", message)
+            self.assertIn("Анализ: 02.10.2026 11:00 МСК", message)
+            self.assertIn("Уровень BOS 15m: 100 · возраст 45м 🟢 свежий (3 свечи)", message)
 
     def verified_zone(self, zone_name, event=999):
         geometry = {"swing_low": 90, "swing_high": 110, "swing_mid": 100}
@@ -55,13 +66,34 @@ class Contracts(unittest.TestCase):
                                     "geometry": geometry}}
         return zone_observation(gate, event, price)
 
+    def confirmed_setup(self, direction="BUY", event=999, known_ms=None):
+        start = event + 1 - 900_000
+        sweep_start = start - 900_000
+        known = sweep_start if known_ms is None else known_ms
+        level = 100.0
+        threshold = 100.1 if direction == "BUY" else 99.9
+        close = 101.0 if direction == "BUY" else 99.0
+        return {"status": "confirmed", "direction": direction, "timeframe": "15",
+                "sweep": {"code": "equal_level_sweep", "direction": direction,
+                          "level": 99.0 if direction == "BUY" else 101.0,
+                          "start_ms": sweep_start, "end_ms": start - 1,
+                          "swept_extreme": 98.0 if direction == "BUY" else 102.0},
+                "choch": {"level": level, "level_known_ms": known, "buffer": 0.1,
+                          "threshold": threshold, "close_price": close,
+                          "event_ms": event + 1, "source_pivot_ms": known - 180_000},
+                "bars_waited": 2, "heuristics": {"max_wait_bars": 8}}
+
     def test_user_direction_matrix_all_conflicts_suppressed(self):
+        event = 1_000_000_000_000
         trend_states = ("рост", "снижение", "смешанная", None)
         for trigger, h4, zone_name in itertools.product(
                 ("up", "down"), trend_states, ("discount", "premium", "equilibrium")):
-            contexts = {"240": {"trend": h4, "end_ms": 999}}
-            zone = self.verified_zone(zone_name)
-            result = classify([{"code": "structure_" + trigger, "name": "BOS: fixture"}], contexts, 999, zone=zone)
+            contexts = {"240": {"trend": h4, "end_ms": event}}
+            zone = self.verified_zone(zone_name, event)
+            direction = "BUY" if trigger == "up" else "SELL"
+            result = classify([], contexts, event, zone=zone,
+                              event_timeframe="15",
+                              setup=self.confirmed_setup(direction, event))
             expected = ("BUY" if trigger == "up" and h4 == "рост" and zone_name == "discount"
                         else "SELL" if trigger == "down" and h4 == "снижение" and zone_name == "premium"
                         else None)
@@ -71,42 +103,92 @@ class Contracts(unittest.TestCase):
             if expected:
                 self.assertEqual(result["status"], "scenario")
             else:
-                self.assertEqual(result["reason"], "suppressed_direction:conflict")
+                    self.assertEqual(result["reason"], "suppressed_direction:conflict")
 
-    def test_missing_bos_or_unverified_zone_suppresses(self):
-        context = {"240": {"trend": "рост", "end_ms": 999}}
-        self.assertEqual(classify([], context, 999, zone=self.verified_zone("discount"))["reason"],
+    def test_level_age_filter_is_event_time_and_fails_closed(self):
+        event = 1_000_000_000_000
+        context = {"240": {"trend": "рост", "end_ms": event}}
+        zone = self.verified_zone("discount", event)
+        fresh_setup = self.confirmed_setup("BUY", event, event - 30 * 60_000)
+        fresh = classify([], context, event, zone=zone, event_timeframe="15",
+                         setup=fresh_setup)
+        self.assertEqual(fresh["side"], "BUY")
+        self.assertEqual(fresh["level_observation"]["status"], "fresh")
+        stale = classify([], context, event, zone=zone, event_timeframe="15",
+                         setup=self.confirmed_setup("BUY", event, event - 241 * 60_000))
+        self.assertIsNone(stale["side"])
+        self.assertEqual(stale["reason"], "suppressed_stale_level:15m:241m")
+        missing_setup = self.confirmed_setup("BUY", event)
+        missing_setup["choch"]["level_known_ms"] = None
+        missing = classify([], context, event, zone=zone, event_timeframe="15",
+                           setup=missing_setup)
+        self.assertEqual(missing["reason"], "suppressed_setup:invalid_contract")
+        self.assertEqual(apply_direction_gate({"send": True}, stale)["reason"],
+                         "suppressed_stale_level:15m:241m")
+
+    def test_timeframe_and_level_age_policies_are_wired_to_market_pipeline(self):
+        tree = ast.parse((ROOT / "bot/market.py").read_text())
+        engine_bar = next(node for node in ast.walk(tree)
+                          if isinstance(node, ast.AsyncFunctionDef) and node.name == "on_bar")
+        calls = {node.func.id for node in ast.walk(engine_bar)
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
+        self.assertIn("timeframe_alert_policy", calls)
+        self.assertIn("apply_direction_gate", calls)
+        scenario_builder = next(node for node in ast.walk(tree)
+                                if isinstance(node, ast.FunctionDef)
+                                and node.name == "scenario_context")
+        self.assertIn("event_timeframe", ast.unparse(scenario_builder))
+        self.assertIn("level_alert_text", ast.unparse(tree))
+
+    def test_missing_sequence_or_unverified_zone_suppresses(self):
+        event = 1_000_000_000_000
+        context = {"240": {"trend": "рост", "end_ms": event}}
+        self.assertEqual(classify([], context, event, zone=self.verified_zone("discount", event))["reason"],
+                         "suppressed_setup:sweep_choch_required")
+        raw = zone_observation({"zone": "discount"}, event, 95)
+        self.assertEqual(classify([], context, event, zone=raw,
+                                 setup=self.confirmed_setup(event=event))["reason"],
                          "suppressed_direction:conflict")
-        raw = zone_observation({"zone": "discount"}, 999, 95)
-        self.assertEqual(classify([{"code": "structure_up", "name": "BOS: fixture"}], context, 999, zone=raw)["reason"],
-                         "suppressed_direction:conflict")
-        for name in ("CHoCH: fixture", "Пробой структуры: fixture"):
-            result = classify([{"code": "structure_up", "name": name}], context, 999,
-                              zone=self.verified_zone("discount"))
-            self.assertIsNone(result["side"])
-            self.assertEqual(result["reason"], "suppressed_direction:conflict")
+        result = classify([{"code": "structure_up", "name": "BOS: fixture"}], context, event,
+                          zone=self.verified_zone("discount", event))
+        self.assertIsNone(result["side"])
+        self.assertEqual(result["reason"], "suppressed_setup:sweep_choch_required")
 
     def test_shared_final_gate_and_directional_headings(self):
-        for route in ("generic", "strong_sweep_review"):
+        for route in ("generic", "user_rule"):
             result = apply_direction_gate({"send": True, "reason": route}, {"side": None})
             self.assertEqual(result, {"send": False, "reason": "suppressed_direction:conflict"})
         self.assertEqual(apply_direction_gate({"send": True}, {"side": "BUY"}), {"send": True})
         self.assertEqual(alert_heading("ETHUSDT", {"side": "BUY"}), "📈 BUY ETHUSDT [LINEAR]")
         self.assertEqual(alert_heading("ETHUSD", {"side": "SELL"}, "inverse"), "📉 SELL ETHUSD [INVERSE]")
 
-    def test_generic_and_strong_sweep_converge_on_same_direction_gate(self):
+    def test_all_notification_routes_share_the_sequence_gate(self):
         tree = ast.parse((ROOT / "bot/market.py").read_text())
-        routed = []
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                names = {call.func.id for call in ast.walk(node)
-                         if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)}
-                if {"strong_sweep_review", "scenario_context", "apply_direction_gate"} <= names:
-                    routed.append(node)
-        self.assertEqual(len(routed), 1)
-        self.assertEqual(sum(1 for call in ast.walk(routed[0])
-                             if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
-                             and call.func.id == "apply_direction_gate"), 1)
+        engine_bar = next(node for node in ast.walk(tree)
+                          if isinstance(node, ast.AsyncFunctionDef) and node.name == "on_bar")
+        calls = {call.func.id for call in ast.walk(engine_bar)
+                 if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)}
+        self.assertIn("process_closed_bar", calls)
+        self.assertIn("scenario_context", calls)
+        self.assertIn("apply_direction_gate", calls)
+
+    def test_legacy_mtf_alignment_does_not_override_confirmed_chain_matrix(self):
+        tree = ast.parse((ROOT / "bot/market.py").read_text())
+        engine_bar = next(node for node in ast.walk(tree)
+                          if isinstance(node, ast.AsyncFunctionDef) and node.name == "on_bar")
+        source = ast.unparse(engine_bar)
+        tests = {ast.unparse(node.test) for node in ast.walk(engine_bar)
+                 if isinstance(node, ast.If)}
+        self.assertIn("not gate['send'] and (not setup)", tests)
+        self.assertIn("quality['send'] and gate and gate_cfg.get('require_profile', False) and (not setup)", tests)
+        # The setup route still captures review_gate's event-time zone snapshot;
+        # the scenario contract applies the actual 4h trend/zone direction matrix.
+        self.assertIn('require_zone=True if setup else', source)
+        contract = ast.parse((ROOT / "bot/scenario_contract.py").read_text())
+        classify_source = ast.unparse(next(node for node in contract.body
+            if isinstance(node, ast.FunctionDef) and node.name == "classify"))
+        self.assertIn("context_side == 'BULLISH' and (zone_name == 'discount')", classify_source)
+        self.assertIn("context_side == 'BEARISH' and (zone_name == 'premium')", classify_source)
 
     def test_both_telegram_formatters_use_the_same_direction_heading(self):
         tree = ast.parse((ROOT / "bot/market.py").read_text())
@@ -158,10 +240,14 @@ class Contracts(unittest.TestCase):
         self.assertEqual(measure([first, second, second], 1, 3*STEP_MS), measure([first, second], 1, 3*STEP_MS))
 
     def test_direction_matrix(self):
+        event = 1_000_000_000_000
         for trigger, h4, zone_name in itertools.product(("up", "down"), ("рост", "снижение", None), ("premium", "discount", "equilibrium")):
-            contexts = {"240": {"trend": h4, "end_ms": 999}}
-            result = classify([{"code": "structure_" + trigger, "name": "BOS: fixture"}], contexts, 999,
-                              zone=self.verified_zone(zone_name))
+            contexts = {"240": {"trend": h4, "end_ms": event}}
+            direction = "BUY" if trigger == "up" else "SELL"
+            result = classify([], contexts, event,
+                              zone=self.verified_zone(zone_name, event),
+                              event_timeframe="15",
+                              setup=self.confirmed_setup(direction, event))
             expected = ("BUY" if trigger == "up" and h4 == "рост" and zone_name == "discount"
                         else "SELL" if trigger == "down" and h4 == "снижение" and zone_name == "premium"
                         else None)
@@ -174,7 +260,7 @@ class Contracts(unittest.TestCase):
 
     def test_conflicting_triggers(self):
         scenario = classify([{"code": "structure_up"}], {}, 999, {"direction": "SELL"})
-        self.assertEqual(scenario["reason"], "suppressed_direction:conflict")
+        self.assertEqual(scenario["reason"], "suppressed_setup:sweep_choch_required")
 
     def test_immutable(self):
         db = sqlite3.connect(":memory:")
@@ -232,11 +318,23 @@ class Contracts(unittest.TestCase):
             save(db, "review:BAD:15:3", {"version": "direction-context-v4-provenance-guard", "side": "BUY", "zone_observation": {"status":"unavailable", "event_time_verified":False}})
             db.execute("INSERT INTO signal_alerts VALUES (?,?,?,?,?,?)", ("review:BAD5:15:4", "sent", stamp, stamp, "fixture invalid v5", "review"))
             save(db, "review:BAD5:15:4", {"version": "direction-context-v5-bos-4h-zone", "side": "BUY", "zone_observation": {"status":"unavailable", "event_time_verified":False}})
+            db.execute("INSERT INTO signal_alerts VALUES (?,?,?,?,?,?)", ("review:BAD6:15:5", "sent", stamp, stamp, "fixture invalid v6", "review"))
+            save(db, "review:BAD6:15:5", {"version": "direction-context-v6-level-age-moscow-policy", "side": "BUY", "zone_observation": {"status":"unavailable", "event_time_verified":False}})
+            db.execute("INSERT INTO signal_alerts VALUES (?,?,?,?,?,?)", ("review:CHAIN:15:6", "sent", stamp, stamp, "fixture chain", "sweep_choch_confirmed"))
+            save(db, "review:CHAIN:15:6", {"version": "sweep-choch-v1-level-age-moscow-policy",
+                 "side": "BUY", "setup_sequence": {"status": "confirmed"},
+                 "baseline": {"method": "event_close_v1", "price": 100,
+                              "event_ms": start, "source": "fixture"}})
+            db.execute("""INSERT INTO signal_outcomes
+                (alert_id,symbol,side,signal_interval,close_ms,reference_close)
+                VALUES (?,?,?,?,?,?)""", ("review:CHAIN:15:6", "CHAIN", "BUY",
+                "15", start, 100))
             db.execute("INSERT INTO candles VALUES (?,?,?,?,?,?,?,?)", ("TEST", "15", start, start + STEP_MS - 1, 100, 104, 98, 102))
             db.commit()
             result = env["read_signals"](tmp.name)
             self.assertNotIn("BAD", [x["symbol"] for x in result["signals"]])
             self.assertNotIn("BAD5", [x["symbol"] for x in result["signals"]])
+            self.assertNotIn("BAD6", [x["symbol"] for x in result["signals"]])
             current = next(x for x in result["signals"] if x["symbol"] == "TEST")
             old = next(x for x in result["signals"] if x["symbol"] == "OLD")
             self.assertEqual(current["scenario"]["side"], "SELL")
@@ -244,6 +342,11 @@ class Contracts(unittest.TestCase):
             self.assertAlmostEqual(current["movement"]["max_up_pct"], 4)
             self.assertEqual(old["scenario"]["status"], "historical_unverified")
             self.assertEqual(old["movement"]["status"], "data_unavailable")
+            chain = next(x for x in result["signals"] if x["symbol"] == "CHAIN")
+            self.assertEqual(chain["setup_type"], "sweep_choch_confirmed")
+            self.assertEqual(result["strategy_stats"]["sent"], 1)
+            self.assertEqual(result["strategy_stats"]["measured"], 1)
+            self.assertEqual(result["strategy_stats"]["awaiting_measurement"], 0)
             db.close()
 
 
