@@ -359,7 +359,8 @@ def evaluate_confluence(rule: dict, symbol: str, view: CandleSnapshot,
 
 def format_signal(symbol: str, rule: dict, snapshot: dict, news: Store,
                   calendar: dict, now: datetime, news_config: dict) -> str:
-    lines = [f"📊 {symbol} · {rule['id']}", f"Анализ UTC: {now.isoformat()}",
+    lines = [f"📊 {symbol} · {rule['id']}",
+             f"Анализ: {format_msk(int(now.timestamp() * 1000), full=True)}",
              f"Условие: {rule['metric']} {rule['operator']} {rule['value']}"]
     for interval in snapshot:
         item = snapshot[interval]
@@ -422,7 +423,7 @@ def format_review_alert(bar: dict, findings: list[dict], rule_hits: list[dict],
                       "📍 Действие: проверить график самостоятельно; "
                       "точка входа, стоп и цели не подтверждены."])
     lines.extend([f"Свеча закрыта: {format_msk(closed_ms)}",
-             f"Анализ UTC: {now.strftime('%Y-%m-%d %H:%M:%S')}",
+             f"Анализ: {format_msk(int(now.timestamp() * 1000), full=True)}",
              f"OHLC: {bar['open']:g} / {bar['high']:g} / {bar['low']:g} / {bar['close']:g}"])
     level_line = level_alert_text((scenario or {}).get("level_observation"))
     if level_line:
@@ -517,7 +518,7 @@ def format_compact_alert(bar: dict, findings: list[dict], tf_findings: dict,
              "Статус направления: " + scenario_explanation(scenario),
              zone_note(scenario),
              f"Свеча: {LABELS[bar['interval']]} · {format_msk(closed_ms)}",
-             f"Анализ: {now:%Y-%m-%d %H:%M:%S} UTC",
+             f"Анализ: {format_msk(int(now.timestamp() * 1000), full=True)}",
              f"OHLC: {bar['open']:g} / {bar['high']:g} / {bar['low']:g} / {bar['close']:g}"]
     level_line = level_alert_text((scenario or {}).get("level_observation"))
     if level_line:

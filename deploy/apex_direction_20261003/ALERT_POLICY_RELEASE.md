@@ -33,8 +33,9 @@ matrix and `entry_confirmed=false` remain unchanged.
 
 The immutable scenario contract advances to
 `direction-context-v6-level-age-moscow-policy`; prior records and outcomes are
-not rewritten. The dashboard's original UTC acknowledgement/outcome fields stay
-UTC and are explicitly distinct from the signal candle's Moscow event time.
+not rewritten. Dashboard card, measurement, and event timestamps are rendered
+in Moscow time. Archived raw alert text remains unchanged and can retain its
+original explicitly labeled UTC timestamps.
 
 Validation is synthetic software testing only. A passing suite does not prove
 live delivery or trading performance. Deployment requires live service/API and

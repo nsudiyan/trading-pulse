@@ -3,11 +3,11 @@ const $ = (id) => document.getElementById(id);
 const number = new Intl.NumberFormat('ru-RU', {maximumFractionDigits: 2});
 const money = new Intl.NumberFormat('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2});
 
-function utc(value) {
+function mskFull(value) {
   if (value == null) return '—';
   const date = typeof value === 'number' ? new Date(value) : new Date(value);
   if (Number.isNaN(date.getTime())) return '—';
-  return new Intl.DateTimeFormat('ru-RU', {timeZone: 'UTC', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'}).format(date) + ' UTC';
+  return new Intl.DateTimeFormat('ru-RU', {timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'}).format(date) + ' МСК';
 }
 function msk(value) {
   if (value == null) return '—';
@@ -48,7 +48,7 @@ function renderStats(data) {
   $('stat-complete').textContent = number.format(s.complete || 0);
   $('stat-mfe').textContent = s.complete ? pct(s.avg_mfe_pct) : '—';
   $('stat-mae').textContent = s.complete ? pct(s.avg_mae_pct) : '—';
-  $('updated-at').textContent = utc(data.generated_at_utc);
+  $('updated-at').textContent = mskFull(data.generated_at_utc);
 }
 
 function filtered() {
@@ -79,7 +79,7 @@ function renderList() {
     top.append(text('span', signal.symbol, 'card-symbol'));
     const side = signal.scenario?.side;
     top.append(text('span', side || 'БЕЗ НАПРАВЛЕНИЯ', 'side-badge ' + (side === 'SELL' ? 'sell' : side ? '' : 'overview')));
-    card.append(top, text('div', utc(signal.sent_utc), 'card-time'));
+    card.append(top, text('div', mskFull(signal.sent_utc), 'card-time'));
     const bottom = text('div', '', 'card-bottom');
     bottom.append(text('span', statusName(displayStatus(signal)), 'status-badge ' + displayStatus(signal)));
     const outcome = text('span', '', 'card-outcome');
@@ -107,7 +107,7 @@ function renderPortfolio(model) {
   $('portfolio-return').className = hasData ? (model.return_pct >= 0 ? 'positive' : 'negative') : '';
   $('portfolio-drawdown').className = hasData ? 'negative' : '';
   $('portfolio-period').textContent = hasData
-    ? `${utc(model.curve[0].at_ms)} — ${utc(model.curve.at(-1).at_ms)}` : 'Ожидаем первый измеренный сигнал';
+    ? `${mskFull(model.curve[0].at_ms)} — ${mskFull(model.curve.at(-1).at_ms)}` : 'Ожидаем первый измеренный сигнал';
   $('portfolio-rule').textContent = `Старт: ${number.format(model?.initial_usdt ?? 1000)} USDT · ${number.format(model?.fixed_notional_usdt ?? 100)} USDT на алерт · максимум ${model?.max_concurrent ?? 10} одновременно · удержание 72 часа · без комиссий и проскальзывания. В модели: ${model?.admitted ?? 0}; ожидают свечу: ${model?.pending ?? 0}; пропуски данных: ${model?.excluded_data_gaps ?? 0}; отклонено по лимиту: ${model?.skipped_capacity ?? 0}.`;
   const host = $('portfolio-chart');
   host.replaceChildren();
@@ -133,11 +133,11 @@ function renderPortfolio(model) {
   const ddPath = curve.map((p, i) => `${i ? 'L' : 'M'} ${x(p).toFixed(1)} ${yDD(p.drawdown_pct).toFixed(1)}`).join(' ');
   svg.append(svgNode('path', {d: equityPath, fill: 'none', stroke: model.pnl_usdt >= 0 ? '#44e5cf' : '#ff797f', 'stroke-width': 3, 'stroke-linejoin': 'round'}));
   svg.append(svgNode('path', {d: ddPath, fill: 'none', stroke: '#ff797f', 'stroke-width': 2, 'stroke-linejoin': 'round'}));
-  for (const [y, label, color] of [[28, `ПОРТФЕЛЬ · ${money.format(model.equity_usdt)} USDT`, '#c8d9e9'], [220, `ПРОСАДКА · ${pct(model.max_drawdown_pct)}`, '#ff9fa5'], [323, utc(curve[0].at_ms), '#8297b2']]) {
+  for (const [y, label, color] of [[28, `ПОРТФЕЛЬ · ${money.format(model.equity_usdt)} USDT`, '#c8d9e9'], [220, `ПРОСАДКА · ${pct(model.max_drawdown_pct)}`, '#ff9fa5'], [323, mskFull(curve[0].at_ms), '#8297b2']]) {
     const t = svgNode('text', {x: 65, y, fill: color, 'font-size': 11}); t.textContent = label; svg.append(t);
   }
   const endLabel = svgNode('text', {x: 920, y: 323, 'text-anchor': 'end', fill: '#8297b2', 'font-size': 11});
-  endLabel.textContent = utc(curve.at(-1).at_ms); svg.append(endLabel);
+  endLabel.textContent = mskFull(curve.at(-1).at_ms); svg.append(endLabel);
   host.append(svg);
 }
 function renderChannel(data) {
@@ -154,7 +154,7 @@ function renderChannel(data) {
     const card = text('article', '', 'channel-card');
     const heading = text('div', '', 'channel-card-head');
     heading.append(text('strong', names[post.category] || names.other),
-                   text('time', utc(post.sent_utc)));
+                   text('time', mskFull(post.sent_utc)));
     const body = text('pre', post.text, 'channel-card-body');
     const link = text('a', `Открыть в Telegram · #${post.message_id}`, 'channel-link');
     link.href = post.url;
@@ -216,7 +216,7 @@ function renderDetail(signal) {
     detail.append(empty); return;
   }
   if (!signal.movement) {
-    const title = text('div', `${signal.symbol} · обзор · ${utc(signal.sent_utc)}`, 'detail-title');
+    const title = text('div', `${signal.symbol} · обзор · ${mskFull(signal.sent_utc)}`, 'detail-title');
     const note = text('p', 'Это сообщение действительно отправлено в Telegram до запуска учёта исходов. Направление и цена отсчёта не были сохранены, поэтому доходность, просадка и 72-часовой результат для него не рассчитываются.', 'legacy-note');
     const archived = text('details', '', 'alert-details');
     archived.open = true;
@@ -231,7 +231,7 @@ function renderDetail(signal) {
                          side === 'SELL' ? `📉 SELL ${signal.symbol} [LINEAR]` :
                          `🔎 ${signal.symbol} [LINEAR] · NO-TRADE`;
   titleBlock.append(text('div', directionTitle, 'detail-title'),
-                    text('div', `${signal.setup_type === 'strong_sweep_review' ? 'Сильный sweep' : 'Свечной обзор'} · Отправлено ${utc(signal.sent_utc)}`, 'detail-sub'));
+                    text('div', `${signal.setup_type === 'strong_sweep_review' ? 'Сильный sweep' : 'Свечной обзор'} · Отправлено ${mskFull(signal.sent_utc)}`, 'detail-sub'));
   top.append(titleBlock, text('div', statusName(displayStatus(signal)), 'detail-chip')); detail.append(top);
   const movement = signal.movement;
   detail.append(text('p', `Направление: ${signal.scenario?.explanation || signal.scenario?.reason || 'нет данных'}. NO-TRADE: это не подтверждённая точка входа.`, 'legacy-note'));
@@ -255,14 +255,14 @@ function renderDetail(signal) {
       : 'Время подтверждения уровня неизвестно';
     fact(facts, `BOS ${level.timeframe || ''} · уровень / возраст`, `${price(level.level_price)} · ${freshness}`);
   }
-  fact(facts, 'Отсчёт: open первой полной 15м после отправки', `${price(movement.anchor_price)} · ${utc(movement.anchor_start_ms)}`);
+  fact(facts, 'Отсчёт: open первой полной 15м после отправки', `${price(movement.anchor_price)} · ${mskFull(movement.anchor_start_ms)}`);
   fact(facts, 'Источник / статус', `${movement.source} · ${movement.timeframe} · ${movement.status}`);
-  fact(facts, 'Происхождение зоны', zone?.source ? `${zone.source} · ${zone.status} · ${zone.asof_end_ms == null ? 'время источника неизвестно' : utc(zone.asof_end_ms + 1)}` : 'Нет сохранённых данных; историческая зона не восстановлена задним числом');
+  fact(facts, 'Происхождение зоны', zone?.source ? `${zone.source} · ${zone.status} · ${zone.asof_end_ms == null ? 'время источника неизвестно' : mskFull(zone.asof_end_ms + 1)}` : 'Нет сохранённых данных; историческая зона не восстановлена задним числом');
   if (zone?.source_route) {
-    fact(facts, 'Канал / цена зоны', `${zone.source_route} · ${price(zone.observation_price)} · ${zone.asof_end_ms == null ? 'время неизвестно' : utc(zone.asof_end_ms + 1)}`);
-    fact(facts, 'Геометрия 4ч', zone.geometry ? `${price(zone.geometry.swing_low)} — ${price(zone.geometry.swing_high)}; середина ${price(zone.geometry.swing_mid)}; ${zone.geometry_end_ms == null ? 'время неизвестно' : utc(zone.geometry_end_ms + 1)}` : 'Нет данных');
+    fact(facts, 'Канал / цена зоны', `${zone.source_route} · ${price(zone.observation_price)} · ${zone.asof_end_ms == null ? 'время неизвестно' : mskFull(zone.asof_end_ms + 1)}`);
+    fact(facts, 'Геометрия 4ч', zone.geometry ? `${price(zone.geometry.swing_low)} — ${price(zone.geometry.swing_high)}; середина ${price(zone.geometry.swing_mid)}; ${zone.geometry_end_ms == null ? 'время неизвестно' : mskFull(zone.geometry_end_ms + 1)}` : 'Нет данных');
   }
-  fact(facts, 'Последняя закрытая свеча', movement.last_closed_ms == null ? 'Нет данных' : utc(movement.last_closed_ms + 1));
+  fact(facts, 'Последняя закрытая свеча', movement.last_closed_ms == null ? 'Нет данных' : mskFull(movement.last_closed_ms + 1));
   fact(facts, 'По направлению сценария: MFE / MAE', `${pct(movement.mfe_pct)} / ${pct(movement.mae_pct)}`);
   fact(facts, 'Что измеряем', 'Изменение от фиксированной цены, не PnL и не просадка от локального пика. Исполнение не моделируется.');
   detail.append(facts);
@@ -272,10 +272,10 @@ function renderDetail(signal) {
     if (excursions.status !== 'measured') {
       detail.append(text('p', excursions.status === 'not_directional' ? 'Нейтральное наблюдение: направленные MFE/MAE не считаются.' : 'Baseline сигнала не сохранён. История не реконструируется.', 'legacy-note'));
     } else {
-      detail.append(text('p', `Baseline: ${price(excursions.baseline.price)} · событие ${utc(excursions.baseline.event_ms)}. Только целые закрытые 15м после события; не исполнение, не PnL и не peak-to-trough просадка.`, 'legacy-note'));
+      detail.append(text('p', `Baseline: ${price(excursions.baseline.price)} · событие ${mskFull(excursions.baseline.event_ms)}. Только целые закрытые 15м после события; не исполнение, не PnL и не peak-to-trough просадка.`, 'legacy-note'));
       for (const h of excursions.horizons) {
         const box = text('div', '', 'detail-facts');
-        fact(box, `${h.hours}ч · ${h.status}`, `${utc(h.window_start_ms)} — ${utc(h.window_end_ms)}; свечей ${h.observed_bars}/${h.full_window_bars}`);
+        fact(box, `${h.hours}ч · ${h.status}`, `${mskFull(h.window_start_ms)} — ${mskFull(h.window_end_ms)}; свечей ${h.observed_bars}/${h.full_window_bars}`);
         fact(box, 'MFE · максимум по направлению', `${pct(h.mfe_pct)} · цена ${price(h.mfe_price)}`);
         fact(box, 'MAE · максимум против направления', `${pct(h.mae_pct)} · цена ${price(h.mae_price)}`);
         detail.append(box);

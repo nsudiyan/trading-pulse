@@ -44,7 +44,7 @@ class Contracts(unittest.TestCase):
             scenario = {"side": side, "level_observation": {
                 "status": "fresh", "timeframe": "15m", "level_price": 100,
                 "age_text": "45м 🟢 свежий (3 свечи)"}}
-            message = env["format_compact_alert"](bar, [], {}, None, [], [], ["x" * 4000], {}, News(), {}, datetime.now(timezone.utc), None, None, None, {"reason": "fixture"}, "linear", scenario)
+            message = env["format_compact_alert"](bar, [], {}, None, [], [], ["x" * 4000], {}, News(), {}, datetime(2026, 10, 2, 8, 0, tzinfo=timezone.utc), None, None, None, {"reason": "fixture"}, "linear", scenario)
             expected_heading = ("📈 BUY TEST [LINEAR]" if side == "BUY" else
                                 "📉 SELL TEST [LINEAR]" if side == "SELL" else
                                 "🔎 TEST [LINEAR] · NO-TRADE")
@@ -53,6 +53,7 @@ class Contracts(unittest.TestCase):
             self.assertIn("NO-TRADE", message)
             self.assertIn("Для направления требуется BOS + тренд закрытой 4ч", message)
             self.assertIn("Свеча: 15м · 01.01 03:00 МСК", message)
+            self.assertIn("Анализ: 02.10.2026 11:00 МСК", message)
             self.assertIn("Уровень BOS 15m: 100 · возраст 45м 🟢 свежий (3 свечи)", message)
 
     def verified_zone(self, zone_name, event=999):
