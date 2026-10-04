@@ -12,7 +12,9 @@ import tempfile
 ROOT = Path(__file__).parent
 sys.path[:0] = [str(ROOT / "bot"), str(ROOT / "dashboard")]
 from followthrough import ensure_schema as follow_schema
-from scenario_contract import classify, ensure_schema, save, label, explanation, zone_observation, zone_note
+from scenario_contract import (classify, ensure_schema, save, label, explanation,
+                               zone_observation, zone_note, alert_heading,
+                               apply_direction_gate)
 from movement import measure, STEP_MS
 from provenance_guard import verified_zone
 from horizons import event_horizons
@@ -26,6 +28,7 @@ class Contracts(unittest.TestCase):
         for arg in node.args.args:
             arg.annotation = None
         env = {"datetime": datetime, "timezone": timezone, "scenario_label": label,
+               "alert_heading": alert_heading,
                "scenario_explanation": explanation, "zone_note": zone_note, "LABELS": {"15": "15м"}, "TF_ORDER": (), "BTC_SYMBOLS": set()}
         exec(compile(ast.Module(body=[node], type_ignores=[]), "market.py", "exec"), env)
         class News:
@@ -34,23 +37,86 @@ class Contracts(unittest.TestCase):
         bar = {"symbol": "TEST", "interval": "15", "end_ms": 999, "open": 100, "high": 101, "low": 99, "close": 100}
         for side in ("BUY", "SELL", None):
             message = env["format_compact_alert"](bar, [], {}, None, [], [], ["x" * 4000], {}, News(), {}, datetime.now(timezone.utc), None, None, None, {"reason": "fixture"}, "linear", {"side": side})
-            self.assertIn("сценарий " + (side or "БЕЗ НАПРАВЛЕНИЯ"), message)
+            expected_heading = ("📈 BUY TEST [LINEAR]" if side == "BUY" else
+                                "📉 SELL TEST [LINEAR]" if side == "SELL" else
+                                "🔎 TEST [LINEAR] · NO-TRADE")
+            self.assertIn(expected_heading, message)
             self.assertLessEqual(len(message), 3900)
             self.assertIn("NO-TRADE", message)
-            self.assertIn("Классификатор BUY/SELL зону не проверяет", message)
+            self.assertIn("Для направления требуется BOS + тренд закрытой 4ч", message)
 
-    def test_trigger_trend_zone_matrix_is_observational(self):
-        # Presentation contract intentionally does not implement an unvalidated
-        # zone trading gate. This tests all 90 combinations and its disclosure.
-        for trigger, h4, day, raw_zone in itertools.product(("up", "down"), ("рост", "снижение", None), ("рост", "снижение", None), ("premium", "discount", "equilibrium", "INSIDE_VA", None)):
-            contexts = {"240": {"trend": h4, "end_ms": 999}, "D": {"trend": day, "end_ms": 999}}
-            zone = zone_observation({"zone": raw_zone}, 999, 100)
-            result = classify([{"code": "structure_" + trigger}], contexts, 999, zone=zone)
-            expected = "BUY" if trigger == "up" and h4 == day == "рост" else "SELL" if trigger == "down" and h4 == day == "снижение" else None
-            self.assertEqual(result["side"], expected)
-            self.assertFalse(result["zone_is_direction_gate"])
-            self.assertFalse(result["entry_confirmed"])
-            self.assertEqual(zone["zone"], raw_zone if raw_zone in ("premium", "discount", "equilibrium") else None)
+    def verified_zone(self, zone_name, event=999):
+        geometry = {"swing_low": 90, "swing_high": 110, "swing_mid": 100}
+        price = {"discount": 95, "premium": 105, "equilibrium": 100}[zone_name]
+        gate = {"zone": zone_name, **geometry, "source_route": "review_gate",
+                "zone_provenance": {"event_time_verified": True, "source_route": "review_gate",
+                                    "event_end_ms": event, "price_end_ms": event,
+                                    "geometry_end_ms": event, "price": price,
+                                    "geometry": geometry}}
+        return zone_observation(gate, event, price)
+
+    def test_user_direction_matrix_all_conflicts_suppressed(self):
+        trend_states = ("рост", "снижение", "смешанная", None)
+        for trigger, h4, zone_name in itertools.product(
+                ("up", "down"), trend_states, ("discount", "premium", "equilibrium")):
+            contexts = {"240": {"trend": h4, "end_ms": 999}}
+            zone = self.verified_zone(zone_name)
+            result = classify([{"code": "structure_" + trigger, "name": "BOS: fixture"}], contexts, 999, zone=zone)
+            expected = ("BUY" if trigger == "up" and h4 == "рост" and zone_name == "discount"
+                        else "SELL" if trigger == "down" and h4 == "снижение" and zone_name == "premium"
+                        else None)
+            self.assertEqual(result["side"], expected, (trigger, h4, zone_name))
+            self.assertEqual(result["entry_confirmed"], False)
+            self.assertTrue(result["zone_is_direction_gate"])
+            if expected:
+                self.assertEqual(result["status"], "scenario")
+            else:
+                self.assertEqual(result["reason"], "suppressed_direction:conflict")
+
+    def test_missing_bos_or_unverified_zone_suppresses(self):
+        context = {"240": {"trend": "рост", "end_ms": 999}}
+        self.assertEqual(classify([], context, 999, zone=self.verified_zone("discount"))["reason"],
+                         "suppressed_direction:conflict")
+        raw = zone_observation({"zone": "discount"}, 999, 95)
+        self.assertEqual(classify([{"code": "structure_up", "name": "BOS: fixture"}], context, 999, zone=raw)["reason"],
+                         "suppressed_direction:conflict")
+        for name in ("CHoCH: fixture", "Пробой структуры: fixture"):
+            result = classify([{"code": "structure_up", "name": name}], context, 999,
+                              zone=self.verified_zone("discount"))
+            self.assertIsNone(result["side"])
+            self.assertEqual(result["reason"], "suppressed_direction:conflict")
+
+    def test_shared_final_gate_and_directional_headings(self):
+        for route in ("generic", "strong_sweep_review"):
+            result = apply_direction_gate({"send": True, "reason": route}, {"side": None})
+            self.assertEqual(result, {"send": False, "reason": "suppressed_direction:conflict"})
+        self.assertEqual(apply_direction_gate({"send": True}, {"side": "BUY"}), {"send": True})
+        self.assertEqual(alert_heading("ETHUSDT", {"side": "BUY"}), "📈 BUY ETHUSDT [LINEAR]")
+        self.assertEqual(alert_heading("ETHUSD", {"side": "SELL"}, "inverse"), "📉 SELL ETHUSD [INVERSE]")
+
+    def test_generic_and_strong_sweep_converge_on_same_direction_gate(self):
+        tree = ast.parse((ROOT / "bot/market.py").read_text())
+        routed = []
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                names = {call.func.id for call in ast.walk(node)
+                         if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)}
+                if {"strong_sweep_review", "scenario_context", "apply_direction_gate"} <= names:
+                    routed.append(node)
+        self.assertEqual(len(routed), 1)
+        self.assertEqual(sum(1 for call in ast.walk(routed[0])
+                             if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                             and call.func.id == "apply_direction_gate"), 1)
+
+    def test_both_telegram_formatters_use_the_same_direction_heading(self):
+        tree = ast.parse((ROOT / "bot/market.py").read_text())
+        formatters = {node.name: node for node in tree.body
+                      if isinstance(node, ast.FunctionDef)
+                      and node.name in {"format_review_alert", "format_compact_alert"}}
+        self.assertEqual(set(formatters), {"format_review_alert", "format_compact_alert"})
+        for node in formatters.values():
+            self.assertTrue(any(isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                                and call.func.id == "alert_heading" for call in ast.walk(node)))
 
     def test_zone_provenance(self):
         full = zone_observation({"zone": "discount", "swing_low": 90, "swing_high": 110, "swing_mid": 100}, 999, 95)
@@ -92,10 +158,13 @@ class Contracts(unittest.TestCase):
         self.assertEqual(measure([first, second, second], 1, 3*STEP_MS), measure([first, second], 1, 3*STEP_MS))
 
     def test_direction_matrix(self):
-        for trigger, h4, day in itertools.product(("up", "down"), ("рост", "снижение", None), ("рост", "снижение", None)):
-            contexts = {"240": {"trend": h4, "end_ms": 999}, "D": {"trend": day, "end_ms": 999}}
-            result = classify([{"code": "structure_" + trigger}], contexts, 999)
-            expected = "BUY" if trigger == "up" and h4 == day == "рост" else "SELL" if trigger == "down" and h4 == day == "снижение" else None
+        for trigger, h4, zone_name in itertools.product(("up", "down"), ("рост", "снижение", None), ("premium", "discount", "equilibrium")):
+            contexts = {"240": {"trend": h4, "end_ms": 999}}
+            result = classify([{"code": "structure_" + trigger, "name": "BOS: fixture"}], contexts, 999,
+                              zone=self.verified_zone(zone_name))
+            expected = ("BUY" if trigger == "up" and h4 == "рост" and zone_name == "discount"
+                        else "SELL" if trigger == "down" and h4 == "снижение" and zone_name == "premium"
+                        else None)
             self.assertEqual(result["side"], expected)
             self.assertFalse(result["entry_confirmed"])
 
@@ -104,7 +173,8 @@ class Contracts(unittest.TestCase):
             self.assertIsNone(classify([{"code": "structure_up"}], {"240": {"trend": "рост", "end_ms": end}}, 1000)["side"])
 
     def test_conflicting_triggers(self):
-        self.assertEqual(classify([{"code": "structure_up"}], {}, 999, {"direction": "SELL"})["status"], "conflict")
+        scenario = classify([{"code": "structure_up"}], {}, 999, {"direction": "SELL"})
+        self.assertEqual(scenario["reason"], "suppressed_direction:conflict")
 
     def test_immutable(self):
         db = sqlite3.connect(":memory:")
@@ -160,10 +230,13 @@ class Contracts(unittest.TestCase):
             save(db, "review:TEST:15:1", {"side": "SELL", "status": "scenario"})
             db.execute("INSERT INTO signal_alerts VALUES (?,?,?,?,?,?)", ("review:BAD:15:3", "sent", stamp, stamp, "fixture invalid v4", "review"))
             save(db, "review:BAD:15:3", {"version": "direction-context-v4-provenance-guard", "side": "BUY", "zone_observation": {"status":"unavailable", "event_time_verified":False}})
+            db.execute("INSERT INTO signal_alerts VALUES (?,?,?,?,?,?)", ("review:BAD5:15:4", "sent", stamp, stamp, "fixture invalid v5", "review"))
+            save(db, "review:BAD5:15:4", {"version": "direction-context-v5-bos-4h-zone", "side": "BUY", "zone_observation": {"status":"unavailable", "event_time_verified":False}})
             db.execute("INSERT INTO candles VALUES (?,?,?,?,?,?,?,?)", ("TEST", "15", start, start + STEP_MS - 1, 100, 104, 98, 102))
             db.commit()
             result = env["read_signals"](tmp.name)
             self.assertNotIn("BAD", [x["symbol"] for x in result["signals"]])
+            self.assertNotIn("BAD5", [x["symbol"] for x in result["signals"]])
             current = next(x for x in result["signals"] if x["symbol"] == "TEST")
             old = next(x for x in result["signals"] if x["symbol"] == "OLD")
             self.assertEqual(current["scenario"]["side"], "SELL")
