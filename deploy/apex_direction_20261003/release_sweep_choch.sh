@@ -22,7 +22,7 @@ done
 SSH=(ssh -i "$KEY" -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
 SCP=(scp -i "$KEY" -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
 "${SSH[@]}" "$HOST" "install -d -o root -g root -m 0755 '$STAGE'"
-tar -cf - -C "$BUNDLE" "${FILES[@]}" | "${SSH[@]}" "$HOST" "tar -xf - -C '$STAGE'"
+COPYFILE_DISABLE=1 tar -cf - -C "$BUNDLE" "${FILES[@]}" | "${SSH[@]}" "$HOST" "tar -xf - -C '$STAGE'"
 
 ARGS=("$STAGE" "$BACKUP")
 for rel in "${FILES[@]}"; do
@@ -138,7 +138,12 @@ systemctl restart news-chart-bot.service
 systemctl restart apex-dashboard.service
 systemctl is-active --quiet news-chart-bot.service || fail "Bybit bot failed post-restart health"
 systemctl is-active --quiet apex-dashboard.service || fail "APEX dashboard failed post-restart health"
-curl -fsS --max-time 10 http://127.0.0.1:5083/ -o /dev/null || fail "dashboard page check failed"
+ready=0
+for attempt in $(seq 1 30); do
+  if curl -fsS --max-time 3 http://127.0.0.1:5083/ -o /dev/null; then ready=1; break; fi
+  sleep 1
+done
+(( ready )) || fail "dashboard did not become ready within 30 seconds"
 curl -fsS --max-time 10 http://127.0.0.1:5083/app.js -o /tmp/apex-sweep-choch-app.js || fail "dashboard asset check failed"
 curl -fsS --max-time 10 http://127.0.0.1:5083/api/signals?limit=2 -o /tmp/apex-sweep-choch-api.json || fail "dashboard API check failed"
 PYTHONPATH="$APP" "$PY" - <<'PY'
