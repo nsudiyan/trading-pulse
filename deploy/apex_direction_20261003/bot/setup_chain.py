@@ -135,7 +135,9 @@ def activity_threshold(quote_24h: float) -> float:
         return 2.0
     if quote_24h >= 100_000_000:
         return 1.8
-    return 1.5
+    # Preserve the explicit minimum in the supplied sweep spec for every
+    # instrument; liquidity tiers may only make the filter stricter.
+    return 1.8
 
 
 def _atr14(bars: list[dict], interval: str) -> float | None:

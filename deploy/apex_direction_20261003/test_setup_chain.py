@@ -169,7 +169,7 @@ class SetupChainTests(unittest.TestCase):
         self.assertEqual(setup_chain.activity_threshold(1_000_000_000), 2.5)
         self.assertEqual(setup_chain.activity_threshold(500_000_000), 2.0)
         self.assertEqual(setup_chain.activity_threshold(100_000_000), 1.8)
-        self.assertEqual(setup_chain.activity_threshold(99_999_999), 1.5)
+        self.assertEqual(setup_chain.activity_threshold(99_999_999), 1.8)
 
 
 if __name__ == "__main__":
