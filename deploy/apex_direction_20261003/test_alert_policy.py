@@ -30,9 +30,11 @@ class AlertPolicyTests(unittest.TestCase):
 
     def test_alert_timeframes_use_the_configured_moscow_windows(self):
         # 08:00 UTC = 11:00 MSK, the inclusive London KZ boundary.
-        for tf in ("15", "60", "D"):
+        for tf in ("15", "60"):
             self.assertEqual(timeframe_alert_policy(tf, ms("2026-10-02T08:00:00")),
                              (True, None))
+        self.assertEqual(timeframe_alert_policy("D", ms("2026-10-02T08:00:00")),
+                         (False, "suppressed_timeframe:1D"))
         # 4H is permitted in every configured session except 20:00–04:00 MSK.
         self.assertEqual(timeframe_alert_policy("240", ms("2026-10-02T00:00:00")),
                          (False, "suppressed_session:4H:dead_zone"))
@@ -61,14 +63,15 @@ class AlertPolicyTests(unittest.TestCase):
         self.assertEqual(timeframe_alert_policy("60", ms("2026-10-02T15:00:00")),
                          (False, "suppressed_session:1H:ny_pm"))
         self.assertEqual(timeframe_alert_policy("D", ms("2026-10-02T10:00:00")),
-                         (False, "suppressed_session:1D:london_close"))
+                         (False, "suppressed_timeframe:1D"))
 
     def test_bybit_daily_close_moscow_implication(self):
         # Bybit crypto D candles close at 00:00 UTC = 03:00 Moscow; this
-        # configured close-time Kill Zone rule therefore blocks direct D alerts.
+        # daily bars are context-only and the timeframe gate blocks direct alerts.
         close = ms("2026-10-02T00:00:00")
         self.assertEqual(session_at(close), "DEAD_ZONE")
-        self.assertFalse(timeframe_alert_policy("D", close)[0])
+        self.assertEqual(timeframe_alert_policy("D", close),
+                         (False, "suppressed_timeframe:1D"))
 
     def test_level_age_bands_and_hard_cutoff(self):
         self.assertEqual(format_level_age(45, "15"), "45м 🟢 свежий (3 свечи)")

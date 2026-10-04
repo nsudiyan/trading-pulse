@@ -57,9 +57,10 @@ function matchesStatus(signal, filter) {
 function price(value) {return value == null ? '—' : new Intl.NumberFormat('ru-RU', {maximumSignificantDigits: 10}).format(Number(value));}
 
 function renderStats(data) {
-  const s = data.stats || {};
+  const s = data.strategy_stats || data.stats || {};
+  const allTime = data.stats || {};
   $('stat-sent').textContent = number.format(s.sent || 0);
-  $('stat-sent-note').textContent = `${number.format(s.measured || 0)} с расчётом · ${number.format(s.legacy_unmeasured || 0)} старых обзоров без расчёта`;
+  $('stat-sent-note').textContent = `${number.format(s.measured || 0)} в выборке · всего в истории ${number.format(allTime.sent || 0)}; старая логика не входит в средние`;
   $('stat-complete').textContent = number.format(s.complete || 0);
   $('stat-mfe').textContent = s.complete ? pct(s.avg_mfe_pct) : '—';
   $('stat-mae').textContent = s.complete ? pct(s.avg_mae_pct) : '—';
@@ -243,16 +244,31 @@ function renderDetail(signal) {
   const top = text('div', '', 'detail-top');
   const titleBlock = text('div', '');
   const side = signal.scenario?.side;
+  const chain = signal.scenario?.setup_sequence;
+  const chainConfirmed = chain?.status === 'confirmed';
   const directionTitle = side === 'BUY' ? `📈 BUY ${signal.symbol} [LINEAR]` :
                          side === 'SELL' ? `📉 SELL ${signal.symbol} [LINEAR]` :
                          `🔎 ${signal.symbol} [LINEAR] · NO-TRADE`;
+  const setupTitle = chainConfirmed ? 'Sweep → CHoCH · сценарий для проверки' :
+                     signal.setup_type === 'strong_sweep_review' ? 'Исторический strong sweep' :
+                     'Исторический свечной обзор';
   titleBlock.append(text('div', directionTitle, 'detail-title'),
-                    text('div', `${signal.setup_type === 'strong_sweep_review' ? 'Сильный sweep' : 'Свечной обзор'} · Отправлено ${mskFull(signal.sent_utc)}`, 'detail-sub'));
+                    text('div', `${setupTitle} · Отправлено ${mskFull(signal.sent_utc)}`, 'detail-sub'));
   top.append(titleBlock, text('div', statusName(displayStatus(signal)), 'detail-chip')); detail.append(top);
   const movement = signal.movement;
   detail.append(text('p', `Направление: ${signal.scenario?.explanation || signal.scenario?.reason || 'нет данных'}. NO-TRADE: это не подтверждённая точка входа.`, 'legacy-note'));
   const zone = signal.scenario?.zone_observation;
-  detail.append(text('p', `Зона 4ч pivot-range: ${zone?.zone || 'нет сохранённых данных'}. ${zone?.event_time_verified ? 'Цена закрытой сигнальной 15м.' : 'Время исходной цены не подтверждено.'} Для направления требуется BOS + тренд закрытой 4ч + соответствующая зона. Это сценарий, не точка входа.`, 'legacy-note'));
+  detail.append(text('p', `Зона 4ч pivot-range: ${zone?.zone || 'нет сохранённых данных'}. ${zone?.event_time_verified ? 'Цена закрытой сигнальной свечи.' : 'Время исходной цены не подтверждено.'} Это контекст, не самостоятельный триггер.`, 'legacy-note'));
+  if (chainConfirmed) {
+    const sweep = chain.sweep || {};
+    const choch = chain.choch || {};
+    detail.append(text('p', `Подтверждённая последовательность: ${sweep.code || 'sweep'} (${sweep.direction}) → CHoCH ${chain.direction}. Уровень sweep ${price(sweep.level)}; CHoCH ${price(choch.level)} с буфером ${price(choch.buffer)}; подтверждение через ${chain.bars_waited}/${chain.heuristics?.max_wait_bars ?? '—'} закрытых свечей. Прокол, объём и закрытие — наблюдаемые прокси, не доказательство исполнения стопов.`, 'legacy-note'));
+    detail.append(text('p', `Новая модель: обязательны sweep → более поздний CHoCH, тренд 4ч и подтверждённая зона.`, 'legacy-note'));
+  } else if (signal.scenario?.version !== 'sweep-choch-v1-level-age-moscow-policy' && side) {
+    detail.append(text('p', `Исторический ${side} создан по прежней версии до обязательной последовательности sweep → CHoCH. Не смешивай его с новой выборкой и не считай доказательством качества новой модели.`, 'legacy-note'));
+  } else {
+    detail.append(text('p', `NO-TRADE: подтверждённой последовательности sweep → более поздний CHoCH нет.`, 'legacy-note'));
+  }
   drawChart(detail, {...signal, curve: movement.curve || [], mfe_pct: movement.max_up_pct, mae_pct: movement.max_down_pct});
   const metrics = text('div', '', 'detail-metrics');
   for (const [name, value, cls] of [['Макс. рост от отсчёта', pct(movement.max_up_pct), 'positive'], ['Макс. падение от отсчёта', pct(movement.max_down_pct), 'negative'], ['Последнее закрытие от отсчёта', pct(movement.return_pct), 'neutral']]) {
@@ -269,7 +285,7 @@ function renderDetail(signal) {
     const freshness = level.status === 'fresh' || level.status === 'stale'
       ? `${level.age_text || 'возраст вычислен'} · ${level.status === 'fresh' ? 'допущен фильтром' : 'устарел'}`
       : 'Время подтверждения уровня неизвестно';
-    fact(facts, `BOS ${level.timeframe || ''} · уровень / возраст`, `${price(level.level_price)} · ${freshness}`);
+    fact(facts, `${level.kind || 'BOS'} ${level.timeframe || ''} · уровень / возраст`, `${price(level.level_price)} · ${freshness}`);
   }
   fact(facts, 'Отсчёт: open первой полной 15м после отправки', `${price(movement.anchor_price)} · ${mskFull(movement.anchor_start_ms)}`);
   fact(facts, 'Источник / статус', `${movement.source} · ${movement.timeframe} · ${movement.status}`);

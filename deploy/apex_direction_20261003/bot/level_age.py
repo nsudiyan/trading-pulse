@@ -107,4 +107,5 @@ def level_alert_text(observation: dict | None) -> str | None:
         return None
     timeframe = observation.get("timeframe", "уровень")
     age_text = observation.get("age_text") or "возраст неизвестен"
-    return f"Уровень BOS {timeframe}: {price:g} · возраст {age_text}"
+    kind = observation.get("kind", "BOS")
+    return f"Уровень {kind} {timeframe}: {price:g} · возраст {age_text}"

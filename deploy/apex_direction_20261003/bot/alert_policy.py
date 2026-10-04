@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 MSK = timezone(timedelta(hours=3), "MSK")
-ALLOWED_ALERT_TIMEFRAMES = frozenset({"15", "60", "240", "D"})
+ALLOWED_ALERT_TIMEFRAMES = frozenset({"15", "60", "240"})
 KILL_ZONES = frozenset({"LONDON_KZ", "NY_KZ"})
 NON_DEAD_ZONES = frozenset({"ASIA", "LONDON_KZ", "LONDON_CLOSE",
                              "NY_KZ", "NY_PM"})
@@ -60,7 +60,7 @@ def timeframe_alert_policy(timeframe: str, candle_close_ms: int) -> tuple[bool, 
         label = _TF_LABELS.get(interval, interval)
         return False, f"suppressed_timeframe:{label}"
     session = session_at(candle_close_ms)
-    allowed = (KILL_ZONES if interval in {"15", "60", "D"}
+    allowed = (KILL_ZONES if interval in {"15", "60"}
                else NON_DEAD_ZONES)
     if session not in allowed:
         label = _TF_LABELS.get(interval, interval)

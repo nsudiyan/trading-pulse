@@ -93,6 +93,9 @@ def read_signals(db_path: str, limit: int = 60) -> dict:
                     and not verified_zone(scenario)):
                 continue
             item["scenario"] = scenario if isinstance(scenario, dict) else {"side": None, "status": "historical_unverified", "reason": "Контекст направления при отправке не сохранён"}
+            if (item["scenario"].get("version") == "sweep-choch-v1-level-age-moscow-policy" and
+                    (item["scenario"].get("setup_sequence") or {}).get("status") == "confirmed"):
+                item["setup_type"] = "sweep_choch_confirmed"
             try:
                 sent = datetime.fromisoformat(row["sent_utc"].replace("Z", "+00:00"))
                 if sent.tzinfo is None:
@@ -125,9 +128,29 @@ def read_signals(db_path: str, limit: int = 60) -> dict:
             LEFT JOIN signal_outcomes o ON o.alert_id=a.id
             LEFT JOIN signal_followthrough f ON f.alert_id=a.id
             WHERE a.status='sent' AND a.id LIKE 'review:%'""").fetchone()
+        strategy_stats = db.execute("""SELECT COUNT(*) AS sent,
+            SUM(CASE WHEN o.alert_id IS NOT NULL THEN 1 ELSE 0 END) AS measured,
+            SUM(CASE WHEN o.alert_id IS NULL THEN 1 ELSE 0 END) AS awaiting_measurement,
+            SUM(CASE WHEN f.status='complete' THEN 1 ELSE 0 END) AS complete,
+            AVG(CASE WHEN f.status='complete' THEN f.mfe_pct END) AS avg_mfe_pct,
+            AVG(CASE WHEN f.status='complete' THEN f.mae_pct END) AS avg_mae_pct,
+            AVG(CASE WHEN f.status='complete' THEN f.last_return_pct END) AS avg_last_return_pct
+            FROM signal_alerts a
+            LEFT JOIN signal_outcomes o ON o.alert_id=a.id
+            LEFT JOIN signal_followthrough f ON f.alert_id=a.id
+            WHERE a.status='sent' AND a.id LIKE 'review:%'
+              AND EXISTS (SELECT 1 FROM signal_scenarios s WHERE s.alert_id=a.id
+                AND CASE WHEN json_valid(s.contract_json)
+                  THEN json_extract(s.contract_json,'$.version') END=?
+                AND CASE WHEN json_valid(s.contract_json)
+                  THEN json_extract(s.contract_json,'$.setup_sequence.status') END='confirmed'
+                AND CASE WHEN json_valid(s.contract_json)
+                  THEN json_extract(s.contract_json,'$.side') END IN ('BUY','SELL'))""",
+            ("sweep-choch-v1-level-age-moscow-policy",)).fetchone()
         return {"generated_at_utc": datetime.now(timezone.utc).isoformat(),
                 "measurement": "first_full_15m_open_after_telegram_send",
                 "window_hours": 72, "signals": signals, "stats": dict(stats),
+                "strategy_stats": dict(strategy_stats),
                 "portfolio": read_portfolio(db)}
     finally:
         db.close()
