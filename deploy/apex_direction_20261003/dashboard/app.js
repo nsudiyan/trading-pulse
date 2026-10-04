@@ -29,6 +29,21 @@ function text(tag, value, className = '') {
 function statusName(status) {
   return ({complete: '72ч завершены', observing: 'Наблюдается', data_gap: 'Нет данных', waiting_next_bar: 'Ожидаем свечу', legacy_unmeasured: 'Архив · без расчёта'})[status] || 'Нет данных';
 }
+function movementLabels(signal) {
+  const movement = signal.movement || {};
+  const side = signal.scenario?.side;
+  if (side === 'BUY' || side === 'SELL') {
+    return [
+      `MFE по сценарию ${pct(movement.mfe_pct)}`,
+      `MAE против сценария ${pct(movement.mae_pct)}`,
+    ];
+  }
+  // Legacy reviews have no reliable direction: show only the raw price path.
+  return [
+    `Рост цены ${pct(movement.max_up_pct)}`,
+    `Падение цены ${pct(movement.max_down_pct)}`,
+  ];
+}
 function displayStatus(signal) {
   // Presentation only: never overwrite the legacy research path_status.
   if (!signal.movement) return signal.path_status === 'legacy_unmeasured' ? 'legacy_unmeasured' : 'data_gap';
@@ -83,8 +98,9 @@ function renderList() {
     const bottom = text('div', '', 'card-bottom');
     bottom.append(text('span', statusName(displayStatus(signal)), 'status-badge ' + displayStatus(signal)));
     const outcome = text('span', '', 'card-outcome');
-    outcome.append(text('span', `Рост ${pct(signal.movement?.max_up_pct)}`, 'positive'));
-    outcome.append(text('span', `Падение ${pct(signal.movement?.max_down_pct)}`, 'negative'));
+    const [favorable, adverse] = movementLabels(signal);
+    outcome.append(text('span', favorable, 'positive'));
+    outcome.append(text('span', adverse, 'negative'));
     bottom.append(outcome); card.append(bottom);
     card.addEventListener('click', () => {state.selected = signal.id; renderList();});
     list.append(card);
