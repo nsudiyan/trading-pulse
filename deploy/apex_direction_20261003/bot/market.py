@@ -41,8 +41,8 @@ from level_age import level_alert_text
 from zones import active_fvgs
 from volume_profile import profile_windows
 from sweeps import recent_sweep
+from sweep_gate import confirm_sweep_activity
 from strong_sweep import strong_sweep_review
-from sweep_gate import confirm_sweep_volume
 from provenance_guard import guarded_quality, verified_zone
 from outcomes import ensure_schema as ensure_outcomes_schema, record_candidate, resolve_due
 from followthrough import (ensure_schema as ensure_followthrough_schema,
@@ -419,8 +419,7 @@ def format_review_alert(bar: dict, findings: list[dict], rule_hits: list[dict],
     lines = [heading, "Статус направления: " + scenario_explanation(scenario), zone_note(scenario)]
     if gate and gate["send"]:
         pattern = (f"{sweep['code']} {sweep['direction']} @ {sweep['level']:g}"
-                   + (f" · объём {sweep['volume_ratio']:.2f}× MA14"
-                      if sweep and sweep.get("volume_ratio") is not None else "")
+                   + sweep_activity_text(sweep)
                    if sweep else "паттерн не подтверждён")
         lines.extend([f"📊 Почему: 4ч/15м согласованы; {gate['count']}/5 ТФ; "
                       f"4ч зона {gate['zone']}; {pattern}.",
@@ -504,6 +503,16 @@ def format_review_alert(bar: dict, findings: list[dict], rule_hits: list[dict],
     return body[:3900 - len(footer) - 1] + "\n" + footer
 
 
+def sweep_activity_text(sweep: dict | None) -> str:
+    """Explain the notional field used by the shared 15m sweep activity gate."""
+    if not sweep or sweep.get("volume_ratio") is None:
+        return ""
+    basis = ("оборот в котируемой валюте" if sweep.get("volume_basis") == "quote_turnover"
+             else "объём контрактов в котируемой валюте")
+    return (f" · {basis} {sweep['volume_ratio']:.2f}× MA14 "
+            "(14 предыдущих закрытых 15m свечей)")
+
+
 def format_compact_alert(bar: dict, findings: list[dict], tf_findings: dict,
                          view: Candles, btc_lines: list[str], session_lines: list[str],
                          spec_lines: list[str], micro: dict,
@@ -528,9 +537,8 @@ def format_compact_alert(bar: dict, findings: list[dict], tf_findings: dict,
     if level_line:
         lines.append(level_line)
     if sweep:
-        ratio = sweep.get("volume_ratio")
         lines.append(f"Паттерн: {sweep['code']} · {sweep['direction']} · уровень {sweep['level']:g}"
-                     + (f" · объём {ratio:.2f}× MA14" if ratio is not None else ""))
+                     + sweep_activity_text(sweep))
         lines.append("Прокол и возврат цены подтверждены закрытой свечой; исполнение стопов не наблюдается.")
     else:
         lines.append("Sweep на закрытой свече не подтверждён; обзор без точки входа.")
@@ -823,11 +831,14 @@ class Engine:
             if quality["send"] and gate and gate_cfg.get("require_sweep", False):
                 side = "BUY" if gate["direction"] == "рост" else "SELL"
                 sweep = recent_sweep(view, bar["symbol"], bar["end_ms"], side)
-                sweep_volume_reason = None
+                sweep_activity_reason = None
                 if sweep:
                     sweep_cfg = self.market.get("quality", {}).get("strong_sweep_review", {})
-                    sweep, sweep_volume_reason = confirm_sweep_volume(
+                    category = self.market.get("symbol_categories", {}).get(
+                        bar["symbol"], "linear")
+                    sweep, sweep_activity_reason = confirm_sweep_activity(
                         sweep, view.bars.get((bar["symbol"], "15"), []),
+                        category,
                         float(sweep_cfg.get("min_volume_ratio", 2.5)))
                 if not sweep:
                     overview_floor = int(gate_cfg.get("overview_min_aligned_tfs", 0))
@@ -838,8 +849,8 @@ class Engine:
                         quality = {**quality, "reason": "strong_overview_no_sweep"}
                     else:
                         quality = {**quality, "send": False,
-                                   "reason": (f"setup_{sweep_volume_reason}"
-                                              if sweep_volume_reason else
+                                   "reason": (f"setup_{sweep_activity_reason}"
+                                              if sweep_activity_reason else
                                               "setup_no_confirmed_sweep")}
             if quality["send"] and gate and gate_cfg.get("require_profile", False):
                 atr_4h = timeframe_metrics(
