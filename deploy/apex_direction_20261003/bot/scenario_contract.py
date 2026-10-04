@@ -1,8 +1,9 @@
 """Presentation-only directional scenario. Never an execution signal or new gate."""
 import json
 import math
+from level_age import observe_level_age, timeframe_key
 
-VERSION = "direction-context-v5-bos-4h-zone"
+VERSION = "direction-context-v6-level-age-moscow-policy"
 TF_MS = {"240": 14_400_000}
 TREND_SIDE = {"рост": "BULLISH", "снижение": "BEARISH"}
 
@@ -48,7 +49,8 @@ def zone_note(scenario):
     return f"Зона 4ч pivot-range: {name}; {timing}. Для направления требуется BOS + тренд закрытой 4ч + соответствующая зона. Это сценарий, не точка входа."
 
 
-def classify(findings, contexts, event_end_ms, sweep=None, zone=None):
+def classify(findings, contexts, event_end_ms, sweep=None, zone=None,
+             event_timeframe=None):
     result = {"version": VERSION, "side": None, "status": "unconfirmed",
               "reason": "suppressed_direction:conflict", "entry_confirmed": False,
               "event_end_ms": event_end_ms, "contexts": contexts,
@@ -57,12 +59,29 @@ def classify(findings, contexts, event_end_ms, sweep=None, zone=None):
     # structure_up/down also includes CHoCH and unclassified first breaks.
     # The user's matrix is explicitly BOS-based, so do not promote those to
     # BOS_UP/BOS_DOWN just because the close crossed a pivot.
+    bos_findings = [x for x in findings
+                    if x.get("code") in ("structure_up", "structure_down")
+                    and str(x.get("name", "")).startswith("BOS:")
+                    and (event_timeframe is None or x.get("timeframe") in (None, event_timeframe))]
     directions = {"BUY" if x["code"] == "structure_up" else "SELL"
-                  for x in findings
-                  if x.get("code") in ("structure_up", "structure_down")
-                  and str(x.get("name", "")).startswith("BOS:")}
+                  for x in bos_findings}
     if len(directions) != 1:
         return {**result, "status": "suppressed", "reason": "suppressed_direction:conflict"}
+    if event_timeframe is not None:
+        if len(bos_findings) != 1:
+            return {**result, "status": "suppressed", "reason": "suppressed_direction:conflict"}
+        trigger = bos_findings[0]
+        timeframe = timeframe_key(trigger.get("timeframe") or event_timeframe)
+        level = observe_level_age(trigger.get("level_known_ms"), event_end_ms,
+                                  timeframe, trigger.get("level_price"))
+        result["level_observation"] = level
+        if level["status"] == "unknown":
+            return {**result, "status": "suppressed",
+                    "reason": f"suppressed_stale_level:{timeframe}:unknown"}
+        if not level["is_fresh"]:
+            age = int(level["age_minutes"])
+            return {**result, "status": "suppressed",
+                    "reason": f"suppressed_stale_level:{timeframe}:{age}m"}
     side = next(iter(directions))
     ctx = contexts.get("240") or {}
     end = ctx.get("end_ms")
@@ -102,12 +121,17 @@ def alert_heading(symbol, scenario, category="linear"):
 def apply_direction_gate(quality, scenario):
     """Shared final direction gate for generic and strong-sweep observations."""
     if quality.get("send") and (scenario or {}).get("side") not in ("BUY", "SELL"):
-        return {**quality, "send": False, "reason": "suppressed_direction:conflict"}
+        reason = (scenario or {}).get("reason", "suppressed_direction:conflict")
+        if not str(reason).startswith("suppressed_stale_level:"):
+            reason = "suppressed_direction:conflict"
+        return {**quality, "send": False, "reason": reason}
     return quality
 
 
 def explanation(scenario):
     code = (scenario or {}).get("reason", "missing")
+    if str(code).startswith("suppressed_stale_level:"):
+        return "BUY/SELL подавлен: уровень BOS устарел или время подтверждения уровня неизвестно"
     return {"bos_up_4h_bullish_discount": "BOS вверх + бычий тренд закрытой 4ч + discount; сценарий, не вход",
             "bos_down_4h_bearish_premium": "BOS вниз + медвежий тренд закрытой 4ч + premium; сценарий, не вход",
             "suppressed_direction:conflict": "BUY/SELL подавлен: BOS, закрытая 4ч или зона не совпали с матрицей",

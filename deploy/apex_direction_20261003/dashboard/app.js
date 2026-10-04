@@ -9,6 +9,12 @@ function utc(value) {
   if (Number.isNaN(date.getTime())) return '—';
   return new Intl.DateTimeFormat('ru-RU', {timeZone: 'UTC', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'}).format(date) + ' UTC';
 }
+function msk(value) {
+  if (value == null) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat('ru-RU', {timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'}).format(date) + ' МСК';
+}
 function pct(value, signed = true) {
   if (value == null || !Number.isFinite(Number(value))) return '—';
   const n = Number(value);
@@ -238,6 +244,17 @@ function renderDetail(signal) {
   }
   detail.append(metrics);
   const facts = text('div', '', 'detail-facts');
+  const eventMs = signal.scenario?.baseline?.event_ms;
+  fact(facts, 'Закрытие сигнальной свечи', signal.scenario?.event_time_msk || msk(eventMs));
+  const sessionNames = {ASIA: 'Азия', LONDON_KZ: 'London KZ', LONDON_CLOSE: 'London Close', NY_KZ: 'New York KZ', NY_PM: 'New York PM', DEAD_ZONE: 'вне активных окон'};
+  fact(facts, 'Сессия в момент сигнала', sessionNames[signal.scenario?.session_msk] || '—');
+  const level = signal.scenario?.level_observation;
+  if (level) {
+    const freshness = level.status === 'fresh' || level.status === 'stale'
+      ? `${level.age_text || 'возраст вычислен'} · ${level.status === 'fresh' ? 'допущен фильтром' : 'устарел'}`
+      : 'Время подтверждения уровня неизвестно';
+    fact(facts, `BOS ${level.timeframe || ''} · уровень / возраст`, `${price(level.level_price)} · ${freshness}`);
+  }
   fact(facts, 'Отсчёт: open первой полной 15м после отправки', `${price(movement.anchor_price)} · ${utc(movement.anchor_start_ms)}`);
   fact(facts, 'Источник / статус', `${movement.source} · ${movement.timeframe} · ${movement.status}`);
   fact(facts, 'Происхождение зоны', zone?.source ? `${zone.source} · ${zone.status} · ${zone.asof_end_ms == null ? 'время источника неизвестно' : utc(zone.asof_end_ms + 1)}` : 'Нет сохранённых данных; историческая зона не восстановлена задним числом');

@@ -18,6 +18,8 @@ from scenario_contract import (classify, ensure_schema, save, label, explanation
 from movement import measure, STEP_MS
 from provenance_guard import verified_zone
 from horizons import event_horizons
+from alert_policy import format_msk
+from level_age import observe_level_age, level_alert_text
 
 
 class Contracts(unittest.TestCase):
@@ -29,14 +31,20 @@ class Contracts(unittest.TestCase):
             arg.annotation = None
         env = {"datetime": datetime, "timezone": timezone, "scenario_label": label,
                "alert_heading": alert_heading,
-               "scenario_explanation": explanation, "zone_note": zone_note, "LABELS": {"15": "15м"}, "TF_ORDER": (), "BTC_SYMBOLS": set()}
+               "scenario_explanation": explanation, "zone_note": zone_note,
+               "format_msk": format_msk,
+               "level_alert_text": level_alert_text,
+               "LABELS": {"15": "15м"}, "TF_ORDER": (), "BTC_SYMBOLS": set()}
         exec(compile(ast.Module(body=[node], type_ignores=[]), "market.py", "exec"), env)
         class News:
             def recent(self, *args):
                 return []
         bar = {"symbol": "TEST", "interval": "15", "end_ms": 999, "open": 100, "high": 101, "low": 99, "close": 100}
         for side in ("BUY", "SELL", None):
-            message = env["format_compact_alert"](bar, [], {}, None, [], [], ["x" * 4000], {}, News(), {}, datetime.now(timezone.utc), None, None, None, {"reason": "fixture"}, "linear", {"side": side})
+            scenario = {"side": side, "level_observation": {
+                "status": "fresh", "timeframe": "15m", "level_price": 100,
+                "age_text": "45м 🟢 свежий (3 свечи)"}}
+            message = env["format_compact_alert"](bar, [], {}, None, [], [], ["x" * 4000], {}, News(), {}, datetime.now(timezone.utc), None, None, None, {"reason": "fixture"}, "linear", scenario)
             expected_heading = ("📈 BUY TEST [LINEAR]" if side == "BUY" else
                                 "📉 SELL TEST [LINEAR]" if side == "SELL" else
                                 "🔎 TEST [LINEAR] · NO-TRADE")
@@ -44,6 +52,8 @@ class Contracts(unittest.TestCase):
             self.assertLessEqual(len(message), 3900)
             self.assertIn("NO-TRADE", message)
             self.assertIn("Для направления требуется BOS + тренд закрытой 4ч", message)
+            self.assertIn("Свеча: 15м · 01.01 03:00 МСК", message)
+            self.assertIn("Уровень BOS 15m: 100 · возраст 45м 🟢 свежий (3 свечи)", message)
 
     def verified_zone(self, zone_name, event=999):
         geometry = {"swing_low": 90, "swing_high": 110, "swing_mid": 100}
@@ -72,6 +82,39 @@ class Contracts(unittest.TestCase):
                 self.assertEqual(result["status"], "scenario")
             else:
                 self.assertEqual(result["reason"], "suppressed_direction:conflict")
+
+    def test_level_age_filter_is_event_time_and_fails_closed(self):
+        event = 1_000_000_000_000
+        context = {"240": {"trend": "рост", "end_ms": event}}
+        zone = self.verified_zone("discount", event)
+        bos = {"code": "structure_up", "name": "BOS: fixture", "timeframe": "15",
+               "level_price": 100, "level_known_ms": event - 240 * 60_000}
+        fresh = classify([bos], context, event, zone=zone, event_timeframe="15")
+        self.assertEqual(fresh["side"], "BUY")
+        self.assertEqual(fresh["level_observation"]["status"], "fresh")
+        stale = classify([{**bos, "level_known_ms": event - 241 * 60_000}],
+                         context, event, zone=zone, event_timeframe="15")
+        self.assertIsNone(stale["side"])
+        self.assertEqual(stale["reason"], "suppressed_stale_level:15m:241m")
+        missing = classify([{k: v for k, v in bos.items() if k != "level_known_ms"}],
+                           context, event, zone=zone, event_timeframe="15")
+        self.assertEqual(missing["reason"], "suppressed_stale_level:15m:unknown")
+        self.assertEqual(apply_direction_gate({"send": True}, stale)["reason"],
+                         "suppressed_stale_level:15m:241m")
+
+    def test_timeframe_and_level_age_policies_are_wired_to_market_pipeline(self):
+        tree = ast.parse((ROOT / "bot/market.py").read_text())
+        engine_bar = next(node for node in ast.walk(tree)
+                          if isinstance(node, ast.AsyncFunctionDef) and node.name == "on_bar")
+        calls = {node.func.id for node in ast.walk(engine_bar)
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
+        self.assertIn("timeframe_alert_policy", calls)
+        self.assertIn("apply_direction_gate", calls)
+        scenario_builder = next(node for node in ast.walk(tree)
+                                if isinstance(node, ast.FunctionDef)
+                                and node.name == "scenario_context")
+        self.assertIn("event_timeframe", ast.unparse(scenario_builder))
+        self.assertIn("level_alert_text", ast.unparse(tree))
 
     def test_missing_bos_or_unverified_zone_suppresses(self):
         context = {"240": {"trend": "рост", "end_ms": 999}}
@@ -232,11 +275,14 @@ class Contracts(unittest.TestCase):
             save(db, "review:BAD:15:3", {"version": "direction-context-v4-provenance-guard", "side": "BUY", "zone_observation": {"status":"unavailable", "event_time_verified":False}})
             db.execute("INSERT INTO signal_alerts VALUES (?,?,?,?,?,?)", ("review:BAD5:15:4", "sent", stamp, stamp, "fixture invalid v5", "review"))
             save(db, "review:BAD5:15:4", {"version": "direction-context-v5-bos-4h-zone", "side": "BUY", "zone_observation": {"status":"unavailable", "event_time_verified":False}})
+            db.execute("INSERT INTO signal_alerts VALUES (?,?,?,?,?,?)", ("review:BAD6:15:5", "sent", stamp, stamp, "fixture invalid v6", "review"))
+            save(db, "review:BAD6:15:5", {"version": "direction-context-v6-level-age-moscow-policy", "side": "BUY", "zone_observation": {"status":"unavailable", "event_time_verified":False}})
             db.execute("INSERT INTO candles VALUES (?,?,?,?,?,?,?,?)", ("TEST", "15", start, start + STEP_MS - 1, 100, 104, 98, 102))
             db.commit()
             result = env["read_signals"](tmp.name)
             self.assertNotIn("BAD", [x["symbol"] for x in result["signals"]])
             self.assertNotIn("BAD5", [x["symbol"] for x in result["signals"]])
+            self.assertNotIn("BAD6", [x["symbol"] for x in result["signals"]])
             current = next(x for x in result["signals"] if x["symbol"] == "TEST")
             old = next(x for x in result["signals"] if x["symbol"] == "OLD")
             self.assertEqual(current["scenario"]["side"], "SELL")
