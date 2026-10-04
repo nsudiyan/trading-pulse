@@ -9,6 +9,9 @@ from datetime import datetime, timedelta, timezone
 
 MSK = timezone(timedelta(hours=3), "MSK")
 ALLOWED_ALERT_TIMEFRAMES = frozenset({"15", "60", "240", "D"})
+KILL_ZONES = frozenset({"LONDON_KZ", "NY_KZ"})
+NON_DEAD_ZONES = frozenset({"ASIA", "LONDON_KZ", "LONDON_CLOSE",
+                             "NY_KZ", "NY_PM"})
 _TF_LABELS = {"5": "5m", "15": "15m", "60": "1H", "240": "4H",
               "D": "1D", "W": "1W"}
 
@@ -45,11 +48,21 @@ def session_label(session: str) -> str:
 
 
 def timeframe_alert_policy(timeframe: str, candle_close_ms: int) -> tuple[bool, str | None]:
-    """Return whether a closed-bar interval may emit an alert at its close time."""
+    """Apply the configured Moscow time windows to the *event candle close*.
+
+    These are fixed strategy windows for 24/7 crypto, not literal exchange
+    opening hours. Daily Bybit candles close at 03:00 MSK, so a direct 1D
+    event cannot satisfy a London/New York kill-zone rule; 1D remains useful
+    as context for lower-timeframe alerts.
+    """
     interval = str(timeframe)
     if interval not in ALLOWED_ALERT_TIMEFRAMES:
         label = _TF_LABELS.get(interval, interval)
         return False, f"suppressed_timeframe:{label}"
-    if interval == "D" and session_at(candle_close_ms) not in {"LONDON_KZ", "NY_KZ"}:
-        return False, "suppressed_timeframe:1D_outside_kill_zone"
+    session = session_at(candle_close_ms)
+    allowed = (KILL_ZONES if interval in {"15", "60", "D"}
+               else NON_DEAD_ZONES)
+    if session not in allowed:
+        label = _TF_LABELS.get(interval, interval)
+        return False, f"suppressed_session:{label}:{session.lower()}"
     return True, None

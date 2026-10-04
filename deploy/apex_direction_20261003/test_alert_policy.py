@@ -28,20 +28,40 @@ class AlertPolicyTests(unittest.TestCase):
         for timestamp, expected in cases:
             self.assertEqual(session_at(ms(timestamp)), expected, timestamp)
 
-    def test_alert_timeframes_and_daily_kill_zones(self):
-        for tf in ("15", "60", "240"):
-            self.assertEqual(timeframe_alert_policy(tf, ms("2026-10-02T00:00:00")),
+    def test_alert_timeframes_use_the_configured_moscow_windows(self):
+        # 08:00 UTC = 11:00 MSK, the inclusive London KZ boundary.
+        for tf in ("15", "60", "D"):
+            self.assertEqual(timeframe_alert_policy(tf, ms("2026-10-02T08:00:00")),
                              (True, None))
+        # 4H is permitted in every configured session except 20:00–04:00 MSK.
+        self.assertEqual(timeframe_alert_policy("240", ms("2026-10-02T00:00:00")),
+                         (False, "suppressed_session:4H:dead_zone"))
+        self.assertEqual(timeframe_alert_policy("240", ms("2026-10-02T01:00:00")),
+                         (True, None))
+        self.assertEqual(timeframe_alert_policy("240", ms("2026-10-02T16:59:00")),
+                         (True, None))
+        self.assertEqual(timeframe_alert_policy("240", ms("2026-10-02T17:00:00")),
+                         (False, "suppressed_session:4H:dead_zone"))
         self.assertEqual(timeframe_alert_policy("W", ms("2026-10-02T08:00:00")),
                          (False, "suppressed_timeframe:1W"))
         self.assertEqual(timeframe_alert_policy("5", ms("2026-10-02T08:00:00")),
                          (False, "suppressed_timeframe:5m"))
-        self.assertEqual(timeframe_alert_policy("D", ms("2026-10-02T08:00:00")),
+        self.assertEqual(timeframe_alert_policy("15", ms("2026-10-02T07:59:59")),
+                         (False, "suppressed_session:15m:asia"))
+        self.assertEqual(timeframe_alert_policy("15", ms("2026-10-02T09:59:59")),
                          (True, None))
-        self.assertEqual(timeframe_alert_policy("D", ms("2026-10-02T13:00:00")),
+        self.assertEqual(timeframe_alert_policy("15", ms("2026-10-02T10:00:00")),
+                         (False, "suppressed_session:15m:london_close"))
+        self.assertEqual(timeframe_alert_policy("60", ms("2026-10-02T12:59:59")),
+                         (False, "suppressed_session:1H:london_close"))
+        self.assertEqual(timeframe_alert_policy("60", ms("2026-10-02T13:00:00")),
                          (True, None))
-        self.assertEqual(timeframe_alert_policy("D", ms("2026-10-02T07:59:00")),
-                         (False, "suppressed_timeframe:1D_outside_kill_zone"))
+        self.assertEqual(timeframe_alert_policy("60", ms("2026-10-02T14:59:59")),
+                         (True, None))
+        self.assertEqual(timeframe_alert_policy("60", ms("2026-10-02T15:00:00")),
+                         (False, "suppressed_session:1H:ny_pm"))
+        self.assertEqual(timeframe_alert_policy("D", ms("2026-10-02T10:00:00")),
+                         (False, "suppressed_session:1D:london_close"))
 
     def test_bybit_daily_close_moscow_implication(self):
         # Bybit crypto D candles close at 00:00 UTC = 03:00 Moscow; this

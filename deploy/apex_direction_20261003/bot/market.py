@@ -36,11 +36,13 @@ from setup_layers import (specification_progress, review_gate, timeframe_metrics
 from sessions import closed_asia_range
 from alert_policy import (format_msk, session_at, session_label,
                           timeframe_alert_policy)
+from btc_gate import btc_45m_gate
 from level_age import level_alert_text
 from zones import active_fvgs
 from volume_profile import profile_windows
 from sweeps import recent_sweep
 from strong_sweep import strong_sweep_review
+from sweep_gate import confirm_sweep_volume
 from provenance_guard import guarded_quality, verified_zone
 from outcomes import ensure_schema as ensure_outcomes_schema, record_candidate, resolve_due
 from followthrough import (ensure_schema as ensure_followthrough_schema,
@@ -417,6 +419,8 @@ def format_review_alert(bar: dict, findings: list[dict], rule_hits: list[dict],
     lines = [heading, "Статус направления: " + scenario_explanation(scenario), zone_note(scenario)]
     if gate and gate["send"]:
         pattern = (f"{sweep['code']} {sweep['direction']} @ {sweep['level']:g}"
+                   + (f" · объём {sweep['volume_ratio']:.2f}× MA14"
+                      if sweep and sweep.get("volume_ratio") is not None else "")
                    if sweep else "паттерн не подтверждён")
         lines.extend([f"📊 Почему: 4ч/15м согласованы; {gate['count']}/5 ТФ; "
                       f"4ч зона {gate['zone']}; {pattern}.",
@@ -549,7 +553,7 @@ def format_compact_alert(bar: dict, findings: list[dict], tf_findings: dict,
         names = ", ".join(item["name"] for item in tf_findings.get(tf, [])[:2]) or "нет признаков"
         lines.append(f"• {LABELS[tf]}: {direction or 'нет данных'}; {names}; {stamp}")
     lines.extend(btc_lines[:5])
-    lines.extend(session_lines[:2])
+    lines.extend(session_lines[:3])
     lines.extend(spec_lines[:3])
     lines.extend(line for line in spec_lines[3:] if line.startswith(("VP range:", "4ч FVG")))
     flow = micro.get("flow")
@@ -819,6 +823,12 @@ class Engine:
             if quality["send"] and gate and gate_cfg.get("require_sweep", False):
                 side = "BUY" if gate["direction"] == "рост" else "SELL"
                 sweep = recent_sweep(view, bar["symbol"], bar["end_ms"], side)
+                sweep_volume_reason = None
+                if sweep:
+                    sweep_cfg = self.market.get("quality", {}).get("strong_sweep_review", {})
+                    sweep, sweep_volume_reason = confirm_sweep_volume(
+                        sweep, view.bars.get((bar["symbol"], "15"), []),
+                        float(sweep_cfg.get("min_volume_ratio", 2.5)))
                 if not sweep:
                     overview_floor = int(gate_cfg.get("overview_min_aligned_tfs", 0))
                     if overview_floor and gate["count"] >= overview_floor:
@@ -828,7 +838,9 @@ class Engine:
                         quality = {**quality, "reason": "strong_overview_no_sweep"}
                     else:
                         quality = {**quality, "send": False,
-                                   "reason": "setup_no_confirmed_sweep"}
+                                   "reason": (f"setup_{sweep_volume_reason}"
+                                              if sweep_volume_reason else
+                                              "setup_no_confirmed_sweep")}
             if quality["send"] and gate and gate_cfg.get("require_profile", False):
                 atr_4h = timeframe_metrics(
                     view.bars.get((bar["symbol"], "240"), []), "240")["atr"]
@@ -871,11 +883,23 @@ class Engine:
             # strong_sweep_review fallback because both converge here.
             quality = guarded_quality(quality, scenario)
             quality = apply_direction_gate(quality, scenario)
+            close_ms = bar["end_ms"] + 1
+            btc_view = self.candles.snapshot_at("BTCUSDT", self.market["intervals"],
+                                                bar["end_ms"])
+            final_filters = None
             if quality["send"]:
                 timeframe_ok, suppression_reason = timeframe_alert_policy(
-                    bar["interval"], int(bar["end_ms"]) + 1)
+                    bar["interval"], close_ms)
+                final_filters = {"session": session_at(close_ms), "btc": None}
                 if not timeframe_ok:
                     quality = {**quality, "send": False, "reason": suppression_reason}
+                else:
+                    final_filters["btc"] = btc_45m_gate(
+                        bar["symbol"], scenario.get("side"),
+                        btc_view.bars.get(("BTCUSDT", "15"), []), close_ms)
+                    if not final_filters["btc"]["passed"]:
+                        quality = {**quality, "send": False,
+                                   "reason": final_filters["btc"]["reason"]}
             quality_label = ""
             if quality["send"] and self.market.get("quality", {}).get("enabled"):
                 quality_label = ("Отбор: правило пользователя" if quality["reason"] == "user_rule"
@@ -890,8 +914,6 @@ class Engine:
             if gate and quality["send"]:
                 quality_label += (f"\nBTC funding (тикер Bybit): {funding:+.6f}"
                                   if funding is not None else "\nBTC funding: нет данных на момент свечи")
-            btc_view = self.candles.snapshot_at("BTCUSDT", self.market["intervals"],
-                                                bar["end_ms"])
             btc_lines = alt_btc_context(bar["symbol"], bar["end_ms"], view,
                                         btc_view, self.config.get("btc_context", {}))
             spec_lines = specification_progress(
@@ -923,8 +945,18 @@ class Engine:
                         f"касаний {nearest['tests']} [Bybit OHLC]")
                 else:
                     spec_lines.append("4ч FVG (последние 100 свечей): активных нет [Bybit OHLC]")
-            close_ms = bar["end_ms"] + 1
             session_lines = [f"Сессия МСК: {session_label(session_at(close_ms))}"]
+            if quality["send"] and final_filters and final_filters.get("btc"):
+                btc_result = final_filters["btc"]
+                if btc_result["reason"] == "btc_not_applicable":
+                    session_lines.append("BTC-фильтр 45м: не применяется к BTC")
+                elif btc_result["reason"] == "btc_no_data":
+                    session_lines.append("BTC-фильтр 45м: нет точных закрытых данных; пропуск по fail-open")
+                elif btc_result["reason"] == "not_directional":
+                    session_lines.append("BTC-фильтр 45м: нет направления для проверки")
+                else:
+                    session_lines.append(
+                        f"BTC-фильтр 45м: пройден; движение {btc_result['move_pct']:+.2f}%")
             asia = closed_asia_range(view.bars.get((bar["symbol"], "60"), []),
                                      close_ms)
             if asia:
@@ -950,6 +982,8 @@ class Engine:
                       "suppressed_direction" if quality["reason"] == "suppressed_direction:conflict" else
                       "suppressed_provenance" if quality["reason"] == "provenance_unverified" else
                       "suppressed_cooldown" if quality["reason"] == "cooldown" else
+                      "suppressed_session" if quality["reason"].startswith("suppressed_session:") else
+                      "suppressed_btc_gate" if quality["reason"].startswith("suppressed_btc_gate:") else
                       "suppressed_mtf" if quality["reason"].startswith("mtf_") else
                       "suppressed_liquidity" if quality["reason"].startswith("liquidity_") else
                       "suppressed_setup" if quality["reason"].startswith("setup_") else
