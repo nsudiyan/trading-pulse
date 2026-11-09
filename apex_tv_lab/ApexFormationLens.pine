@@ -1,0 +1,934 @@
+//@version=6
+// Price visuals are forced onto the main chart; volume uses this script's pane.
+// TradingView may retain the old pane of an existing instance after this
+// setting changes: remove and add that instance once to apply the new pane.
+indicator("APEX Formation Lens · research", overlay = false, max_labels_count = 500, max_boxes_count = 100, max_lines_count = 50, max_bars_back = 500)
+
+// A chart companion, not the Apex decision engine. The only authoritative
+// Golden/ordinary markers are the saved events pasted into the input below.
+string importedEvents = input.text_area("", "Apex events: paste export for this symbol")
+float nearPct = input.float(0.30, "Near Asia boundary (%)", minval = 0.01, maxval = 5, step = 0.05)
+bool showSessions = input.bool(true, "Shade Tokyo / London / New York / Sydney (UTC)")
+bool showOrderBlocks = input.bool(true, "Show local confirmed order-block candidates")
+int maxBlocksPerSide = input.int(1, "Order-block zones per side", minval = 1, maxval = 2)
+int obSearchBars = input.int(8, "Look back for opposite candle", minval = 2, maxval = 20)
+float obImpulseAtr = input.float(0.5, "Breakout body / ATR minimum", minval = 0.1, maxval = 2.0, step = 0.1)
+int obMaxAge = input.int(120, "Order-block maximum age (chart bars)", minval = 10, maxval = 500)
+bool showContextPanel = input.bool(true, "Show context table")
+string panelMode = input.string("Quick", "Context table detail", options = ["Quick", "Full"])
+bool showSwingMid = input.bool(false, "Show last confirmed 4H swing midpoint")
+bool showVolume = input.bool(true, "Show volume and previous-14-bar average")
+bool showEma = input.bool(true, "Show EMA 20 / 50 on price")
+bool showRsiLine = input.bool(true, "Show RSI line in indicator pane")
+bool showRsiExtremes = input.bool(true, "RSI: mark closed 70 / 30 / 13 crossings")
+float rsiDeepLow = input.float(13.0, "RSI deep-low threshold", minval = 5, maxval = 25, step = 1)
+bool showTrendStrip = input.bool(true, "Show thin EMA 20/50 trend strip below volume")
+bool showPriorDayLevels = input.bool(true, "Show previous-day high / low liquidity references")
+bool showReclaims = input.bool(true, "Show confirmed level reclaim / rejection observations")
+float minSweepAtr = input.float(0.10, "Minimum level excursion (ATR)", minval = 0.05, maxval = 1.0, step = 0.05)
+float invalidationAtr = input.float(0.10, "Invalidation buffer beyond wick (ATR)", minval = 0.05, maxval = 1.0, step = 0.05)
+bool showBtcRelativeStrength = input.bool(true, "Show closed 4-hour return versus BTC")
+string tradingModel = input.string("Intraday", "Analysis model (HTF / MTF / LTF)", options = ["Swing", "Intraday", "Scalp"])
+bool showEma200 = input.bool(true, "Show EMA 200 on price")
+bool showSessionVwap = input.bool(true, "Show UTC daily VWAP on intraday price")
+bool showVwapBands = input.bool(true, "Show one VWAP deviation band pair")
+bool showRsiDivergence = input.bool(true, "Show confirmed RSI divergence")
+float approachAtr = input.float(1.0, "Near zone distance in ATR", minval = 0.25, maxval = 3.0, step = 0.25)
+bool showSupertrend = input.bool(false, "Show Supertrend on price (ATR 10, factor 3)")
+bool showFvg = input.bool(true, "Show one recent unfilled FVG per side")
+float minFvgPct = input.float(0.10, "Minimum FVG gap (%)", minval = 0.01, maxval = 3, step = 0.05)
+bool showStructure = input.bool(true, "Show latest closed BOS / CHoCH")
+bool showMomentumPanel = input.bool(true, "Show MACD and Stoch RSI status in table")
+bool showFibPocket = input.bool(false, "Show confirmed swing 0.618–0.65 retracement zone")
+float highVolumeRatio = input.float(2.0, "High volume threshold (x average)", minval = 1.0, maxval = 10.0, step = 0.25)
+bool showVolumeNode = input.bool(true, "Show compact estimated high-volume price zone")
+int profileBars = input.int(96, "Volume zone: completed chart bars", minval = 24, maxval = 200)
+bool showWeeklyZones = input.bool(true, "Show confirmed 1W support / resistance zones")
+bool showDailyZones = input.bool(true, "Show confirmed 1D support / resistance zones")
+bool show4HZones = input.bool(false, "Show confirmed 4H zones (intraday charts)")
+float zoneAtrPart = input.float(0.15, "Zone half-width as ATR fraction", minval = 0.05, maxval = 0.50, step = 0.05)
+float maxZoneDistancePct = input.float(8.0, "Show zones within (%) of current price", minval = 1.0, maxval = 25.0, step = 0.5)
+
+bool on15m = timeframe.isminutes and timeframe.multiplier == 15
+int chartSeconds = timeframe.in_seconds(timeframe.period)
+bool onIntraday = timeframe.isminutes and chartSeconds <= 3600
+string chartSymbol = str.replace(syminfo.ticker, ".P", "")
+
+// TV EMA is a visual proxy. Apex seeds its EMA with an initial SMA and can
+// have a different feed/warmup; no row below claims exact Apex gate parity.
+f_trend() =>
+    float e20 = ta.ema(close, 20)
+    float e50 = ta.ema(close, 50)
+    float e200 = ta.ema(close, 200)
+    close > e20 and e20 > e50 and e50 > e200 ? 1 :
+      close < e20 and e20 < e50 and e50 < e200 ? -1 : 0
+
+f_trendText(int state) =>
+    na(state) ? "N/A" : state == 1 ? "UP" : state == -1 ? "DOWN" : "MIXED"
+
+f_lastHigh() =>
+    float p = ta.pivothigh(high, 2, 2)
+    ta.valuewhen(not na(p), p, 0)
+
+f_lastLow() =>
+    float p = ta.pivotlow(low, 2, 2)
+    ta.valuewhen(not na(p), p, 0)
+
+f_recentSwingPair() =>
+    float ph = ta.pivothigh(high, 2, 2)
+    float pl = ta.pivotlow(low, 2, 2)
+    float hi = ta.valuewhen(not na(ph), ph, 0)
+    float lo = ta.valuewhen(not na(pl), pl, 0)
+    int hiBar = ta.valuewhen(not na(ph), bar_index[2], 0)
+    int loBar = ta.valuewhen(not na(pl), bar_index[2], 0)
+    [hi[1], lo[1], hiBar[1], loBar[1]]
+
+// A pivot becomes known only after two bars on its right have closed. The
+// pivot's ATR is sampled at the pivot candle, not at today's price. [1] below
+// then makes the requested HTF packet available only from its NEXT bar onward.
+f_resistancePacket() =>
+    float pivot = ta.pivothigh(high, 2, 2)
+    float lastLevel = ta.valuewhen(not na(pivot), pivot, 0)
+    float pivotAtr = ta.valuewhen(not na(pivot), ta.atr(14)[2], 0)
+    int ageBars = ta.barssince(not na(pivot))
+    float halfWidth = math.max(pivotAtr * zoneAtrPart, lastLevel * 0.0005)
+    int barsSinceBreak = ta.barssince(close > lastLevel + halfWidth)
+    bool invalid = not na(barsSinceBreak) and not na(ageBars) and barsSinceBreak <= ageBars
+    [lastLevel[1], pivotAtr[1], ageBars[1], invalid[1]]
+
+f_supportPacket() =>
+    float pivot = ta.pivotlow(low, 2, 2)
+    float lastLevel = ta.valuewhen(not na(pivot), pivot, 0)
+    float pivotAtr = ta.valuewhen(not na(pivot), ta.atr(14)[2], 0)
+    int ageBars = ta.barssince(not na(pivot))
+    float halfWidth = math.max(pivotAtr * zoneAtrPart, lastLevel * 0.0005)
+    int barsSinceBreak = ta.barssince(close < lastLevel - halfWidth)
+    bool invalid = not na(barsSinceBreak) and not na(ageBars) and barsSinceBreak <= ageBars
+    [lastLevel[1], pivotAtr[1], ageBars[1], invalid[1]]
+
+// [1] + lookahead_on means the previous confirmed higher-timeframe bar.
+// It prevents a historical chart from showing an unfinished HTF value early.
+int chartTrendNow = f_trend()
+int chartTrendClosed = barstate.isconfirmed ? chartTrendNow : chartTrendNow[1]
+int trendW = chartSeconds == 604800 ? chartTrendClosed : request.security(syminfo.tickerid, "W", f_trend()[1], lookahead = barmerge.lookahead_on)
+int trendD = chartSeconds == 86400 ? chartTrendClosed : request.security(syminfo.tickerid, "D", f_trend()[1], lookahead = barmerge.lookahead_on)
+int trend4H = chartSeconds == 14400 ? chartTrendClosed : request.security(syminfo.tickerid, "240", f_trend()[1], lookahead = barmerge.lookahead_on)
+int trend1H = chartSeconds == 3600 ? chartTrendClosed : request.security(syminfo.tickerid, "60", f_trend()[1], lookahead = barmerge.lookahead_on)
+// Lower-TF rows are snapshots of one completed lower bar, not a reconstructed
+// intrabar event sequence on a larger chart.
+int trend15Snapshot = request.security(syminfo.tickerid, "15", f_trend()[1], lookahead = barmerge.lookahead_off)
+int trend5Snapshot = request.security(syminfo.tickerid, "5", f_trend()[1], lookahead = barmerge.lookahead_off)
+int raw15 = f_trend()
+int trend15 = on15m ? (barstate.isconfirmed ? raw15 : raw15[1]) : trend15Snapshot
+int trend5 = chartSeconds == 300 ? (barstate.isconfirmed ? raw15 : raw15[1]) : trend5Snapshot
+float priorDayHigh = request.security(syminfo.tickerid, "D", high[1], lookahead = barmerge.lookahead_on)
+float priorDayLow = request.security(syminfo.tickerid, "D", low[1], lookahead = barmerge.lookahead_on)
+float swingHigh4H = request.security(syminfo.tickerid, "240", f_lastHigh()[1], lookahead = barmerge.lookahead_on)
+float swingLow4H = request.security(syminfo.tickerid, "240", f_lastLow()[1], lookahead = barmerge.lookahead_on)
+float swingMid4H = not na(swingHigh4H) and not na(swingLow4H) and swingHigh4H > swingLow4H ?
+  (swingHigh4H + swingLow4H) / 2 : na
+string zoneTf = tradingModel == "Swing" ? "D" : tradingModel == "Intraday" ? "240" : "15"
+int zoneSeconds = tradingModel == "Swing" ? 86400 : tradingModel == "Intraday" ? 14400 : 900
+[fibHigh, fibLow, fibHighBar, fibLowBar] = request.security(syminfo.tickerid, zoneTf, f_recentSwingPair(), lookahead = barmerge.lookahead_on)
+bool fibAnchorsValid = not na(fibHigh) and not na(fibLow) and not na(fibHighBar) and not na(fibLowBar) and fibHigh > fibLow and fibHighBar != fibLowBar
+bool fibUpswing = fibAnchorsValid and fibHighBar > fibLowBar
+float fib618 = fibAnchorsValid ? fibUpswing ? fibHigh - (fibHigh - fibLow) * 0.618 : fibLow + (fibHigh - fibLow) * 0.618 : na
+float fib650 = fibAnchorsValid ? fibUpswing ? fibHigh - (fibHigh - fibLow) * 0.650 : fibLow + (fibHigh - fibLow) * 0.650 : na
+var box fibPocket = na
+if barstate.islast
+    box.delete(fibPocket)
+    float pocketMid = (fib618 + fib650) / 2
+    if showFibPocket and chartSeconds <= zoneSeconds and fibAnchorsValid and close > 0 and math.abs(pocketMid - close) / close * 100 <= maxZoneDistancePct
+        fibPocket := box.new(bar_index - 12, math.max(fib618, fib650), bar_index + 6, math.min(fib618, fib650),
+          border_color = color.new(color.orange, 70), bgcolor = color.new(color.orange, 93),
+          text = "Fib 0.618–0.65 · " + zoneTf, text_color = color.orange,
+          text_size = size.tiny, text_halign = text.align_right, force_overlay = true)
+plot(fibHigh, "Confirmed swing Fib high anchor", display = display.data_window)
+plot(fibLow, "Confirmed swing Fib low anchor", display = display.data_window)
+plot(fib618, "Confirmed swing Fib 0.618", display = display.data_window)
+plot(fib650, "Confirmed swing Fib 0.65", display = display.data_window)
+
+// One current, confirmed pivot-high and pivot-low packet per source TF. Never
+// use request.security() to infer a lower-TF zone from a higher chart TF.
+[wHigh, wHighAtr, wHighAge, wHighInvalid] = request.security(syminfo.tickerid, "W", f_resistancePacket(), lookahead = barmerge.lookahead_on)
+[wLow, wLowAtr, wLowAge, wLowInvalid] = request.security(syminfo.tickerid, "W", f_supportPacket(), lookahead = barmerge.lookahead_on)
+[dHigh, dHighAtr, dHighAge, dHighInvalid] = request.security(syminfo.tickerid, "D", f_resistancePacket(), lookahead = barmerge.lookahead_on)
+[dLow, dLowAtr, dLowAge, dLowInvalid] = request.security(syminfo.tickerid, "D", f_supportPacket(), lookahead = barmerge.lookahead_on)
+[h4High, h4HighAtr, h4HighAge, h4HighInvalid] = request.security(syminfo.tickerid, "240", f_resistancePacket(), lookahead = barmerge.lookahead_on)
+[h4Low, h4LowAtr, h4LowAge, h4LowInvalid] = request.security(syminfo.tickerid, "240", f_supportPacket(), lookahead = barmerge.lookahead_on)
+
+// Diagnostics stay out of the price pane but make each source level and its
+// age inspectable in TradingView's data window.
+plot(wHigh, "1W resistance pivot", display = display.data_window)
+plot(wLow, "1W support pivot", display = display.data_window)
+plot(chartSeconds <= 86400 ? dHigh : na, "1D resistance pivot", display = display.data_window)
+plot(chartSeconds <= 86400 ? dLow : na, "1D support pivot", display = display.data_window)
+plot(wHighAtr, "1W resistance pivot ATR", display = display.data_window)
+plot(chartSeconds <= 86400 ? dHighAtr : na, "1D resistance pivot ATR", display = display.data_window)
+plot(wHighAge, "1W resistance age bars", display = display.data_window)
+plot(chartSeconds <= 86400 ? dHighAge : na, "1D resistance age bars", display = display.data_window)
+
+// A zone is a measured tolerance around a pivot, not actual traded volume or
+// a bot-approved order block. Any CLOSED source-TF candle beyond the outer
+// edge since pivot confirmation permanently invalidates that pivot. Avoid
+// obsolete pivots by source-bar age.
+f_addZone(array<box> drawings, float level, float pivotAtr, int ageBars,
+  int ageLimit, bool invalid, string caption, color tint, int leftTime, int rightTime) =>
+    // The distance cap keeps a far weekly level from shrinking the candles.
+    // It changes only the display; it does not change the pivot calculation.
+    bool closeEnough = not na(close) and close > 0 and not na(level) and math.abs(level - close) / close * 100 <= maxZoneDistancePct
+    bool enoughData = closeEnough and level > 0 and not na(pivotAtr) and pivotAtr > 0 and not na(ageBars) and ageBars <= ageLimit
+    if enoughData and not invalid
+        float halfWidth = math.max(pivotAtr * zoneAtrPart, level * 0.0005)
+        box zone = box.new(left = leftTime, top = level + halfWidth, right = rightTime,
+          bottom = level - halfWidth, xloc = xloc.bar_time, extend = extend.right,
+          border_color = color.new(tint, 35), bgcolor = color.new(tint, 90),
+          text = caption + " · " + str.tostring(level, format.mintick),
+          text_color = color.new(tint, 0), text_size = size.tiny,
+          text_halign = text.align_right, force_overlay = true)
+        array.push(drawings, zone)
+
+var array<box> activeZones = array.new<box>()
+if barstate.islast
+    for oldZone in activeZones
+        box.delete(oldZone)
+    array.clear(activeZones)
+    int leftTime = not na(time[80]) ? time[80] : not na(time[20]) ? time[20] : time
+    int rightTime = na(time_close) ? time : time_close
+    // Weekly zones are violet, daily zones are blue, optional 4H zones amber.
+    if chartSeconds <= 604800 and showWeeklyZones
+        f_addZone(activeZones, wHigh, wHighAtr, wHighAge, 52, wHighInvalid, "1W R", color.rgb(180, 116, 245), leftTime, rightTime)
+        f_addZone(activeZones, wLow, wLowAtr, wLowAge, 52, wLowInvalid, "1W S", color.rgb(180, 116, 245), leftTime, rightTime)
+    if chartSeconds <= 86400 and showDailyZones
+        f_addZone(activeZones, dHigh, dHighAtr, dHighAge, 90, dHighInvalid, "1D R", color.rgb(77, 164, 234), leftTime, rightTime)
+        f_addZone(activeZones, dLow, dLowAtr, dLowAge, 90, dLowInvalid, "1D S", color.rgb(77, 164, 234), leftTime, rightTime)
+    if chartSeconds <= 14400 and show4HZones
+        f_addZone(activeZones, h4High, h4HighAtr, h4HighAge, 120, h4HighInvalid, "4H R", color.rgb(248, 181, 73), leftTime, rightTime)
+        f_addZone(activeZones, h4Low, h4LowAtr, h4LowAge, 120, h4LowInvalid, "4H S", color.rgb(248, 181, 73), leftTime, rightTime)
+plot(array.size(activeZones), "Active HTF boxes", display = display.data_window)
+// Previous-day extremes are public price levels where liquidity might
+// concentrate. They do not reveal resting orders or confirm a stop pool.
+var line priorDayHighGuide = na
+var line priorDayLowGuide = na
+if barstate.islast
+    line.delete(priorDayHighGuide)
+    line.delete(priorDayLowGuide)
+    if showPriorDayLevels and chartSeconds <= 14400 and close > 0
+        if not na(priorDayHigh) and math.abs(priorDayHigh - close) / close * 100 <= maxZoneDistancePct
+            priorDayHighGuide := line.new(bar_index - 20, priorDayHigh, bar_index + 7, priorDayHigh, color = color.new(color.fuchsia, 28), style = line.style_dotted, force_overlay = true)
+        if not na(priorDayLow) and math.abs(priorDayLow - close) / close * 100 <= maxZoneDistancePct
+            priorDayLowGuide := line.new(bar_index - 20, priorDayLow, bar_index + 7, priorDayLow, color = color.new(color.aqua, 35), style = line.style_dotted, force_overlay = true)
+plot(priorDayHigh, "Prior day high · potential liquidity reference", display = display.data_window)
+plot(priorDayLow, "Prior day low · potential liquidity reference", display = display.data_window)
+
+// Local order-block *candidates*, independently implemented. A breakout is
+// accepted only on a closed chart candle: its close crosses the last confirmed
+// 2-left/2-right swing, and its body is at least the chosen ATR fraction.
+// The last opposing candle in the preceding search window supplies the zone.
+// This is price geometry, not proof of an institutional resting order.
+float localPivotHigh = ta.pivothigh(high, 2, 2)
+float localPivotLow = ta.pivotlow(low, 2, 2)
+float priorHigh = ta.valuewhen(not na(localPivotHigh), localPivotHigh, 0)
+float priorLow = ta.valuewhen(not na(localPivotLow), localPivotLow, 0)
+int priorHighBar = ta.valuewhen(not na(localPivotHigh), bar_index[2], 0)
+int priorLowBar = ta.valuewhen(not na(localPivotLow), bar_index[2], 0)
+float localAtr = ta.atr(14)
+bool impulseOk = not na(localAtr) and math.abs(close - open) >= obImpulseAtr * localAtr
+
+// A BOS needs a CLOSE through the wick extreme of a pivot already confirmed
+// by two bars on its right. Every pivot can trigger once only. Compare the
+// previous close to the SAME current pivot level to avoid a false break when
+// the selected pivot changes. CHoCH? remains a simplified direction-change
+// proxy; protected swing structure is not fully modelled here.
+var int lastBrokenHighBar = na
+var int lastBrokenLowBar = na
+bool structuralUp = barstate.isconfirmed and not na(priorHigh) and not na(priorHighBar) and
+  (na(lastBrokenHighBar) or priorHighBar != lastBrokenHighBar) and close[1] <= priorHigh and close > priorHigh
+bool structuralDown = barstate.isconfirmed and not na(priorLow) and not na(priorLowBar) and
+  (na(lastBrokenLowBar) or priorLowBar != lastBrokenLowBar) and close[1] >= priorLow and close < priorLow
+bool bullBreak = structuralUp and impulseOk
+bool bearBreak = structuralDown and impulseOk
+var int structureDirection = 0
+var int lastStructureSide = 0
+var int lastStructureBar = na
+var float lastStructureLevel = na
+var string lastStructureName = ""
+var array<line> structureLines = array.new<line>()
+var array<label> structureLabels = array.new<label>()
+if structuralUp or structuralDown
+    int newSide = structuralUp ? 1 : -1
+    lastStructureName := structureDirection != 0 and newSide != structureDirection ? "CHoCH?" : "BOS"
+    lastStructureSide := newSide
+    lastStructureBar := bar_index
+    lastStructureLevel := structuralUp ? priorHigh : priorLow
+    int pivotBar = structuralUp ? priorHighBar : priorLowBar
+    if structuralUp
+        lastBrokenHighBar := priorHighBar
+    else
+        lastBrokenLowBar := priorLowBar
+    if showStructure
+        color structureTint = lastStructureName == "BOS" ? color.new(color.white, 20) : color.new(color.orange, 10)
+        line breakLine = line.new(pivotBar, lastStructureLevel, bar_index, lastStructureLevel,
+          color = structureTint, width = 1, force_overlay = true)
+        label breakCaption = label.new(bar_index, lastStructureLevel,
+          lastStructureName + (newSide == 1 ? " ↑" : " ↓"),
+          style = label.style_label_left, color = color.new(color.black, 100),
+          textcolor = structureTint, size = size.tiny, force_overlay = true)
+        array.push(structureLines, breakLine)
+        array.push(structureLabels, breakCaption)
+        if array.size(structureLines) > 6
+            line.delete(array.shift(structureLines))
+            label.delete(array.shift(structureLabels))
+    structureDirection := newSide
+plot(lastStructureLevel, "Last closed BOS / CHoCH level · chart timeframe", display = display.data_window)
+
+var array<float> blockTops = array.new<float>()
+var array<float> blockBottoms = array.new<float>()
+var array<int> blockBars = array.new<int>()
+var array<int> blockSides = array.new<int>()
+var array<box> blockDrawings = array.new<box>()
+
+if barstate.isconfirmed
+    // A zone is invalidated by a CLOSED candle beyond its distal edge. Wicks
+    // alone do not invalidate it. Old candidates are pruned from state.
+    int j = array.size(blockTops) - 1
+    while j >= 0
+        int side = array.get(blockSides, j)
+        bool broken = side == 1 ? close < array.get(blockBottoms, j) : close > array.get(blockTops, j)
+        if broken or bar_index - array.get(blockBars, j) > obMaxAge
+            array.remove(blockTops, j)
+            array.remove(blockBottoms, j)
+            array.remove(blockBars, j)
+            array.remove(blockSides, j)
+        j -= 1
+    if bullBreak or bearBreak
+        int offset = na
+        for k = 1 to obSearchBars
+            bool opposing = bullBreak ? close[k] < open[k] : close[k] > open[k]
+            if na(offset) and opposing
+                offset := k
+        if not na(offset)
+            // Bullish block: low to the opposing candle's body high.
+            // Bearish block: body low to high. Markers never use future candles.
+            float top = bullBreak ? math.max(open[offset], close[offset]) : high[offset]
+            float bottom = bullBreak ? low[offset] : math.min(open[offset], close[offset])
+            if top > bottom
+                array.push(blockTops, top)
+                array.push(blockBottoms, bottom)
+                array.push(blockBars, bar_index - offset)
+                array.push(blockSides, bullBreak ? 1 : -1)
+                // Bound historical state even during long chart sessions.
+                if array.size(blockTops) > 32
+                    array.shift(blockTops)
+                    array.shift(blockBottoms)
+                    array.shift(blockBars)
+                    array.shift(blockSides)
+
+int visibleBullBlocks = 0
+int visibleBearBlocks = 0
+if barstate.islast
+    for oldBlock in blockDrawings
+        box.delete(oldBlock)
+    array.clear(blockDrawings)
+    if showOrderBlocks and chartSeconds <= 14400 and array.size(blockTops) > 0
+        int j = array.size(blockTops) - 1
+        while j >= 0
+            int side = array.get(blockSides, j)
+            bool sideRoom = side == 1 ? visibleBullBlocks < maxBlocksPerSide : visibleBearBlocks < maxBlocksPerSide
+            float top = array.get(blockTops, j)
+            float bottom = array.get(blockBottoms, j)
+            float midpoint = (top + bottom) / 2
+            bool nearPrice = close > 0 and math.abs(midpoint - close) / close * 100 <= maxZoneDistancePct
+            if sideRoom and nearPrice
+                color tint = side == 1 ? color.rgb(63, 178, 149) : color.rgb(214, 109, 126)
+                box b = box.new(left = array.get(blockBars, j), top = top, right = bar_index + 1, bottom = bottom,
+                  extend = extend.right, border_color = color.new(tint, 45), bgcolor = color.new(tint, 93),
+                  text = side == 1 ? "OB ↑" : "OB ↓", text_size = size.tiny,
+                  text_color = color.new(tint, 5), text_halign = text.align_right,
+                  force_overlay = true)
+                array.push(blockDrawings, b)
+                visibleBullBlocks += side == 1 ? 1 : 0
+                visibleBearBlocks += side == -1 ? 1 : 0
+            j -= 1
+plot(visibleBullBlocks, "Visible bullish OB candidates", display = display.data_window)
+plot(visibleBearBlocks, "Visible bearish OB candidates", display = display.data_window)
+
+// Three-candle imbalance on the selected chart timeframe. A wick entering
+// the zone marks a test but not a fill; only a close through the far edge
+// removes it. One latest candidate per side prevents a wall of rectangles.
+var float bullFvgTop = na
+var float bullFvgBottom = na
+var float bearFvgTop = na
+var float bearFvgBottom = na
+var int bullFvgBar = na
+var int bearFvgBar = na
+if barstate.isconfirmed
+    if not na(bullFvgBottom) and close < bullFvgBottom
+        bullFvgTop := na
+        bullFvgBottom := na
+    if not na(bearFvgTop) and close > bearFvgTop
+        bearFvgTop := na
+        bearFvgBottom := na
+    bool newBullFvg = not na(high[2]) and low > high[2] and (low - high[2]) / close * 100 >= minFvgPct
+    bool newBearFvg = not na(low[2]) and high < low[2] and (low[2] - high) / close * 100 >= minFvgPct
+    if newBullFvg
+        bullFvgTop := low
+        bullFvgBottom := high[2]
+        bullFvgBar := bar_index
+    if newBearFvg
+        bearFvgTop := low[2]
+        bearFvgBottom := high
+        bearFvgBar := bar_index
+var box bullFvgBox = na
+var box bearFvgBox = na
+if barstate.islast
+    box.delete(bullFvgBox)
+    box.delete(bearFvgBox)
+    bool bullVisible = showFvg and not na(bullFvgTop) and bar_index - bullFvgBar <= 80 and close > 0 and math.abs((bullFvgTop + bullFvgBottom) / 2 - close) / close * 100 <= maxZoneDistancePct
+    bool bearVisible = showFvg and not na(bearFvgTop) and bar_index - bearFvgBar <= 80 and close > 0 and math.abs((bearFvgTop + bearFvgBottom) / 2 - close) / close * 100 <= maxZoneDistancePct
+    if bullVisible
+        bullFvgBox := box.new(bullFvgBar, bullFvgTop, bar_index + 5, bullFvgBottom,
+          border_color = color.new(color.teal, 75), bgcolor = color.new(color.teal, 94),
+          text = "FVG ↑", text_color = color.teal, text_size = size.tiny,
+          text_halign = text.align_right, force_overlay = true)
+    if bearVisible
+        bearFvgBox := box.new(bearFvgBar, bearFvgTop, bar_index + 5, bearFvgBottom,
+          border_color = color.new(color.fuchsia, 75), bgcolor = color.new(color.fuchsia, 94),
+          text = "FVG ↓", text_color = color.fuchsia, text_size = size.tiny,
+          text_halign = text.align_right, force_overlay = true)
+plot(bullFvgTop, "Latest unfilled bullish FVG top", display = display.data_window)
+plot(bullFvgBottom, "Latest unfilled bullish FVG bottom", display = display.data_window)
+plot(bearFvgTop, "Latest unfilled bearish FVG top", display = display.data_window)
+plot(bearFvgBottom, "Latest unfilled bearish FVG bottom", display = display.data_window)
+
+// Two related but different clocks: the bot's Asia range is 01:00–08:00 UTC;
+// the four full market sessions use the user's favorite FX Market Sessions
+// GMT+0 defaults. They are fixed UTC intervals, not DST-aware local hours.
+int dateKey = year(time, "UTC") * 10000 + month(time, "UTC") * 100 + dayofmonth(time, "UTC")
+int utcOpenHour = hour(time, "UTC")
+int utcCloseHour = hour(time_close, "UTC")
+bool asiaBar = on15m and utcOpenHour >= 1 and utcOpenHour < 8
+bool londonBar = onIntraday and utcCloseHour >= 8 and utcCloseHour < 10
+bool nyBar = onIntraday and utcCloseHour >= 13 and utcCloseHour < 15
+bool tokyoSession = onIntraday and utcOpenHour >= 0 and utcOpenHour < 9
+bool londonSession = onIntraday and utcOpenHour >= 8 and utcOpenHour < 17
+bool nySession = onIntraday and utcOpenHour >= 13 and utcOpenHour < 22
+bool sydneySession = onIntraday and (utcOpenHour >= 20 or utcOpenHour < 5)
+var float asiaHigh = na
+var float asiaLow = na
+var int asiaBars = 0
+if barstate.isfirst or dateKey != dateKey[1]
+    asiaHigh := na
+    asiaLow := na
+    asiaBars := 0
+if barstate.isconfirmed and asiaBar
+    asiaHigh := na(asiaHigh) ? high : math.max(asiaHigh, high)
+    asiaLow := na(asiaLow) ? low : math.min(asiaLow, low)
+    asiaBars += 1
+bool asiaReady = asiaBars == 28
+
+// Historical completed Asia ranges remain visible as orientation lines. Each
+// day's two values start only after all 28 constituent 15m bars have closed.
+float asiaHighMTF = chartSeconds < 900 ? request.security(syminfo.tickerid, "15", asiaReady[1] ? asiaHigh[1] : na, lookahead = barmerge.lookahead_on) : chartSeconds > 900 ? request.security(syminfo.tickerid, "15", asiaReady ? asiaHigh : na, lookahead = barmerge.lookahead_off) : asiaReady ? asiaHigh : na
+float asiaLowMTF = chartSeconds < 900 ? request.security(syminfo.tickerid, "15", asiaReady[1] ? asiaLow[1] : na, lookahead = barmerge.lookahead_on) : chartSeconds > 900 ? request.security(syminfo.tickerid, "15", asiaReady ? asiaLow : na, lookahead = barmerge.lookahead_off) : asiaReady ? asiaLow : na
+int asiaDisplayDays = chartSeconds <= 3600 ? 7 : chartSeconds <= 14400 ? 3 : chartSeconds <= 86400 ? 14 : 35
+bool showAsiaHere = on15m or time >= last_bar_time - asiaDisplayDays * 86400000
+plot(showAsiaHere and chartSeconds <= 14400 ? asiaHighMTF : na, "Asia high · confirmed 15m range", color = color.new(color.orange, 0), linewidth = 2, style = plot.style_linebr, force_overlay = true)
+plot(showAsiaHere and chartSeconds <= 14400 ? asiaLowMTF : na, "Asia low · confirmed 15m range", color = color.new(color.orange, 0), linewidth = 2, style = plot.style_linebr, force_overlay = true)
+// Daily/weekly bars cannot show each 15m session without connecting unrelated
+// days. Show only the latest confirmed 15m range as two horizontal guides.
+var line higherAsiaHigh = na
+var line higherAsiaLow = na
+if barstate.islast and chartSeconds > 14400
+    line.delete(higherAsiaHigh)
+    line.delete(higherAsiaLow)
+    if not na(asiaHighMTF) and not na(asiaLowMTF)
+        higherAsiaHigh := line.new(bar_index - 3, asiaHighMTF, bar_index + 3, asiaHighMTF, color = color.orange, width = 2, force_overlay = true)
+        higherAsiaLow := line.new(bar_index - 3, asiaLowMTF, bar_index + 3, asiaLowMTF, color = color.orange, width = 2, force_overlay = true)
+float ema20Chart = ta.ema(close, 20)
+float ema50Chart = ta.ema(close, 50)
+plot(showEma ? ema20Chart : na, "EMA 20 · chart timeframe", color = color.new(color.aqua, 15), linewidth = 2, force_overlay = true)
+plot(showEma ? ema50Chart : na, "EMA 50 · chart timeframe", color = color.new(color.yellow, 30), linewidth = 2, force_overlay = true)
+plot(showEma200 ? ta.ema(close, 200) : na, "EMA 200 · chart timeframe", color = color.new(color.silver, 40), linewidth = 2, force_overlay = true)
+// Bybit crypto day boundaries are UTC; show only on intraday charts. The
+// current candle's live VWAP remains provisional until that candle closes.
+// The built-in VWAP bands use volume-weighted dispersion around the UTC
+// session anchor. They are reference distances, not return probabilities.
+[dailyVwap, vwapUpper, vwapLower] = ta.vwap(hlc3, timeframe.change("D"), 1.0)
+plot(showSessionVwap and chartSeconds < 86400 ? dailyVwap : na, "UTC daily VWAP · hlc3", color = color.new(color.blue, 20), linewidth = 2, force_overlay = true)
+plot(showSessionVwap and showVwapBands and chartSeconds < 86400 ? vwapUpper : na, "UTC VWAP +1 deviation", color = color.new(color.blue, 75), linewidth = 1, force_overlay = true)
+plot(showSessionVwap and showVwapBands and chartSeconds < 86400 ? vwapLower : na, "UTC VWAP -1 deviation", color = color.new(color.blue, 75), linewidth = 1, force_overlay = true)
+[supertrendLine, supertrendDirection] = ta.supertrend(3.0, 10)
+plot(showSupertrend ? supertrendLine : na, "Supertrend · chart timeframe", color = supertrendDirection < 0 ? color.new(color.teal, 25) : color.new(color.red, 25), linewidth = 1, style = plot.style_linebr, force_overlay = true)
+plot(chartSeconds <= 14400 and showSwingMid ? swingMid4H : na, "4H swing midpoint · TV proxy", color = color.new(color.aqua, 30), style = plot.style_linebr, force_overlay = true)
+// One faint color per bar even when sessions overlap. The shorter Apex
+// observation windows receive a slightly stronger tint but never a label
+// or box over the candles.
+color sessionTint = nyBar ? color.new(color.purple, 94) : londonBar ? color.new(color.teal, 94) :
+  nySession ? color.new(color.purple, 98) : londonSession ? color.new(color.teal, 98) :
+  tokyoSession ? color.new(color.orange, 98) : sydneySession ? color.new(color.blue, 98) : na
+bgcolor(showSessions ? sessionTint : na, force_overlay = true)
+
+// This is price geometry only. It does not prove stop orders, order flow,
+// Apex's liquidity gate, CHoCH sequence or a tradable entry.
+float body = math.abs(close - open)
+float lowerWick = math.min(open, close) - low
+float upperWick = high - math.max(open, close)
+bool asiaReclaim = on15m and barstate.isconfirmed and asiaReady and londonBar and body > 0 and
+  low < asiaLow and close > asiaLow and lowerWick > 0 and lowerWick / body >= 0.5 and
+  (asiaLow - low) / asiaLow * 10000 >= 5
+bool asiaReject = on15m and barstate.isconfirmed and asiaReady and londonBar and body > 0 and
+  high > asiaHigh and close < asiaHigh and upperWick > 0 and upperWick / body >= 0.5 and
+  (high - asiaHigh) / asiaHigh * 10000 >= 5
+plotshape(asiaReclaim, title = "Asia low sweep geometry", style = shape.triangleup,
+  location = location.belowbar, color = color.new(color.teal, 0), size = size.tiny, text = "A", force_overlay = true)
+plotshape(asiaReject, title = "Asia high sweep geometry", style = shape.triangledown,
+  location = location.abovebar, color = color.new(color.purple, 0), size = size.tiny, text = "A", force_overlay = true)
+
+// A chart-level observation: wick crosses a previously known level and the
+// candle closes back on its original side. The prior close must also be on
+// that side, so a late recovery after a confirmed break is not mislabelled.
+// It is not proof that stops were filled, nor an Apex bot setup or entry.
+float sweepAtr = ta.atr(14)
+float sweepMin = math.max(syminfo.mintick * 2, sweepAtr * minSweepAtr)
+bool canObserve = showReclaims and chartSeconds >= 900 and chartSeconds <= 14400 and barstate.isconfirmed and not na(sweepAtr)
+f_reclaim(float level, bool valid, bool bullish) =>
+    bool crossed = bullish ? low <= level - sweepMin and close > level and close[1] >= level :
+      high >= level + sweepMin and close < level and close[1] <= level
+    valid and not na(level) and level > 0 and crossed and math.abs(close - level) <= sweepAtr * 2
+
+float observedLevel = na
+string observedName = ""
+int observedSide = 0
+// Prefer the nearest eligible level. PDH/PDL and daily pivots use only
+// completed source candles; 4H pivots are included only on 15m/1H charts.
+if canObserve
+    if f_reclaim(priorDayLow, true, true)
+        observedLevel := priorDayLow
+        observedName := "PDL"
+        observedSide := 1
+    if f_reclaim(priorDayHigh, true, false) and (na(observedLevel) or math.abs(close - priorDayHigh) < math.abs(close - observedLevel))
+        observedLevel := priorDayHigh
+        observedName := "PDH"
+        observedSide := -1
+    if f_reclaim(dLow, not dLowInvalid and dLowAge <= 90, true) and (na(observedLevel) or math.abs(close - dLow) < math.abs(close - observedLevel))
+        observedLevel := dLow
+        observedName := "1D S"
+        observedSide := 1
+    if f_reclaim(dHigh, not dHighInvalid and dHighAge <= 90, false) and (na(observedLevel) or math.abs(close - dHigh) < math.abs(close - observedLevel))
+        observedLevel := dHigh
+        observedName := "1D R"
+        observedSide := -1
+    if chartSeconds <= 3600
+        if f_reclaim(h4Low, not h4LowInvalid and h4LowAge <= 120, true) and (na(observedLevel) or math.abs(close - h4Low) < math.abs(close - observedLevel))
+            observedLevel := h4Low
+            observedName := "4H S"
+            observedSide := 1
+        if f_reclaim(h4High, not h4HighInvalid and h4HighAge <= 120, false) and (na(observedLevel) or math.abs(close - h4High) < math.abs(close - observedLevel))
+            observedLevel := h4High
+            observedName := "4H R"
+            observedSide := -1
+bool recentObservation = bar_index >= last_bar_index - 120
+plotshape(recentObservation and observedSide == 1, title = "Confirmed reclaim observation", style = shape.circle,
+  location = location.belowbar, color = color.new(color.teal, 0), size = size.tiny, text = "R", force_overlay = true)
+plotshape(recentObservation and observedSide == -1, title = "Confirmed rejection observation", style = shape.circle,
+  location = location.abovebar, color = color.new(color.fuchsia, 0), size = size.tiny, text = "R", force_overlay = true)
+plot(observedLevel, "Reclaim / rejection reference level", display = display.data_window)
+
+// Last completed observation only. An invalidation reference is an explicit
+// chart scenario boundary beyond that candle's wick, not a trade order or
+// recommendation. Once a later closed candle breaches it, the line vanishes.
+var float scenarioInvalidation = na
+var int scenarioSide = 0
+var int scenarioBar = na
+var string scenarioName = ""
+if barstate.isconfirmed
+    if observedSide != 0
+        scenarioInvalidation := observedSide == 1 ? low - sweepAtr * invalidationAtr : high + sweepAtr * invalidationAtr
+        scenarioSide := observedSide
+        scenarioBar := bar_index
+        scenarioName := observedName
+    else if scenarioSide != 0 and (bar_index - scenarioBar > 20 or (scenarioSide == 1 and close < scenarioInvalidation) or (scenarioSide == -1 and close > scenarioInvalidation))
+        scenarioInvalidation := na
+        scenarioSide := 0
+var line scenarioGuide = na
+if barstate.islast
+    line.delete(scenarioGuide)
+    if showReclaims and scenarioSide != 0 and not na(scenarioInvalidation)
+        scenarioGuide := line.new(bar_index - math.min(20, bar_index - scenarioBar), scenarioInvalidation,
+          bar_index + 5, scenarioInvalidation, color = color.new(color.red, 25), style = line.style_dashed, force_overlay = true)
+plot(scenarioInvalidation, "Latest observation invalidation reference", display = display.data_window)
+
+// Equal 4-hour CLOSED return comparison on a common USDT quote. This is
+// relative performance, not a signal and not the bot's full RS filter.
+int rsBars = chartSeconds >= 300 and chartSeconds <= 14400 ? math.max(1, int(math.round(14400.0 / chartSeconds))) : 1
+float btcChartClose = request.security("BYBIT:BTCUSDT.P", timeframe.period, close, ignore_invalid_symbol = true)
+float altFourHourReturn = close[rsBars + 1] > 0 ? close[1] / close[rsBars + 1] - 1 : na
+float btcFourHourReturn = btcChartClose[rsBars + 1] > 0 ? btcChartClose[1] / btcChartClose[rsBars + 1] - 1 : na
+bool rsEligible = showBtcRelativeStrength and chartSeconds >= 300 and chartSeconds <= 14400 and syminfo.currency == "USDT" and syminfo.basecurrency != "BTC"
+float rsVsBtcPp = rsEligible and not na(altFourHourReturn) and not na(btcFourHourReturn) ? (altFourHourReturn - btcFourHourReturn) * 100 : na
+plot(rsVsBtcPp, "Closed 4h return minus BTC return · percentage points", display = display.data_window)
+
+float volBaseline = ta.sma(volume[1], 14)
+float liveVolRatio = volBaseline > 0 ? volume / volBaseline : na
+float closedVolRatio = barstate.isconfirmed ? liveVolRatio : liveVolRatio[1]
+// Live candle volume is gray until its close. The blue average uses only the
+// preceding 14 complete candles; gold marks closed volume >= threshold.
+color volumeColor = not barstate.isconfirmed ? color.new(color.gray, 35) :
+  not na(liveVolRatio) and liveVolRatio >= highVolumeRatio ? color.rgb(245, 186, 52) :
+  close >= open ? color.new(color.teal, 15) : color.new(color.red, 20)
+// Keep volume in the bottom 25 units so RSI remains readable in the same pane.
+float volumeScale = ta.highest(volume, 100)
+plot(showVolume and volumeScale > 0 ? math.min(volume / volumeScale * 25, 25) : na, "Volume · relative height", style = plot.style_columns, color = volumeColor)
+plot(showVolume and volumeScale > 0 ? math.min(volBaseline / volumeScale * 25, 25) : na, "Volume MA14 · relative height", color = color.new(color.aqua, 0), linewidth = 2)
+plot(volume, "Bybit volume · raw", display = display.data_window)
+plot(volBaseline, "Volume MA14 · raw", display = display.data_window)
+// The narrow bottom strip tracks only EMA 20 versus EMA 50 on the OPEN chart
+// timeframe. A crossing is a change of this proxy, never a trade instruction.
+int localEmaSide = ema20Chart > ema50Chart ? 1 : ema20Chart < ema50Chart ? -1 : 0
+color trendStripColor = localEmaSide == 1 ? color.new(color.lime, 38) : localEmaSide == -1 ? color.new(color.red, 38) : color.new(color.gray, 65)
+trendStripTop = plot(showTrendStrip ? -2 : na, "EMA trend strip top", color = color.new(color.white, 100))
+trendStripBottom = plot(showTrendStrip ? -6 : na, "EMA trend strip bottom", color = color.new(color.white, 100))
+fill(trendStripTop, trendStripBottom, color = showTrendStrip ? trendStripColor : na, title = "EMA 20/50 direction strip")
+bool emaCrossUpRaw = ta.crossover(ema20Chart, ema50Chart)
+bool emaCrossDownRaw = ta.crossunder(ema20Chart, ema50Chart)
+bool emaTurnUp = barstate.isconfirmed and emaCrossUpRaw
+bool emaTurnDown = barstate.isconfirmed and emaCrossDownRaw
+plotshape(showTrendStrip and emaTurnUp ? -4 : na, title = "EMA 20 crossed above 50 on closed candle", style = shape.triangleup, location = location.absolute, color = color.lime, size = size.tiny)
+plotshape(showTrendStrip and emaTurnDown ? -4 : na, title = "EMA 20 crossed below 50 on closed candle", style = shape.triangledown, location = location.absolute, color = color.red, size = size.tiny)
+
+// Minimal volume-at-price proxy: inspect lower-timeframe OHLCV inside the
+// last N COMPLETED chart bars. Distribute each lower bar's volume uniformly
+// across touched price bins. This estimates traded volume, not resting orders,
+// real liquidation positions, or TradingView's exact Visible Range profile.
+string profileLowerTf = chartSeconds <= 900 ? "1" : chartSeconds <= 3600 ? "5" : chartSeconds <= 14400 ? "15" : chartSeconds <= 86400 ? "60" : "240"
+[profileHighs, profileLows, profileVolumes] = request.security_lower_tf(syminfo.tickerid, profileLowerTf, [high, low, volume])
+var box volumeNodeBox = na
+var float volumeNodePrice = na
+var float volumeNodeQuote = na
+if barstate.islast
+    box.delete(volumeNodeBox)
+    volumeNodeBox := na
+    volumeNodePrice := na
+    volumeNodeQuote := na
+    if showVolumeNode and chartSeconds >= 300 and chartSeconds <= 604800 and bar_index >= profileBars
+        int firstOffset = barstate.isconfirmed ? 0 : 1
+        float rangeLow = na
+        float rangeHigh = na
+        int validSamples = 0
+        for offset = firstOffset to firstOffset + profileBars - 1
+            array<float> highs = profileHighs[offset]
+            array<float> lows = profileLows[offset]
+            array<float> vols = profileVolumes[offset]
+            if not na(highs) and not na(lows) and not na(vols)
+                int sampleCount = math.min(array.size(highs), math.min(array.size(lows), array.size(vols)))
+                if sampleCount > 0
+                    for sample = 0 to sampleCount - 1
+                        float hi = array.get(highs, sample)
+                        float lo = array.get(lows, sample)
+                        float vol = array.get(vols, sample)
+                        if not na(hi) and not na(lo) and not na(vol) and vol > 0
+                            rangeLow := na(rangeLow) ? lo : math.min(rangeLow, lo)
+                            rangeHigh := na(rangeHigh) ? hi : math.max(rangeHigh, hi)
+                            validSamples += 1
+        if validSamples >= 24 and rangeHigh > rangeLow
+            int binCount = 24
+            float binWidth = (rangeHigh - rangeLow) / binCount
+            array<float> bins = array.new_float(binCount, 0.0)
+            for offset = firstOffset to firstOffset + profileBars - 1
+                array<float> highs = profileHighs[offset]
+                array<float> lows = profileLows[offset]
+                array<float> vols = profileVolumes[offset]
+                if not na(highs) and not na(lows) and not na(vols)
+                    int sampleCount = math.min(array.size(highs), math.min(array.size(lows), array.size(vols)))
+                    if sampleCount > 0
+                        for sample = 0 to sampleCount - 1
+                            float hi = array.get(highs, sample)
+                            float lo = array.get(lows, sample)
+                            float vol = array.get(vols, sample)
+                            if not na(hi) and not na(lo) and not na(vol) and vol > 0
+                                int loBin = math.max(0, math.min(binCount - 1, int(math.floor((lo - rangeLow) / binWidth))))
+                                int hiBin = math.max(0, math.min(binCount - 1, int(math.floor((hi - rangeLow) / binWidth))))
+                                float perBin = vol / (hiBin - loBin + 1)
+                                for bin = loBin to hiBin
+                                    array.set(bins, bin, array.get(bins, bin) + perBin)
+            int topBin = 0
+            float topVolume = array.get(bins, 0)
+            for bin = 1 to binCount - 1
+                float binVolume = array.get(bins, bin)
+                if binVolume > topVolume
+                    topBin := bin
+                    topVolume := binVolume
+            float nodeLow = rangeLow + topBin * binWidth
+            float nodeHigh = nodeLow + binWidth
+            volumeNodePrice := (nodeLow + nodeHigh) / 2
+            volumeNodeQuote := topVolume * volumeNodePrice
+            // Limit the visual to one short band near price, never a histogram
+            // over candles. Its price and estimated turnover remain in Data Window.
+            if math.abs(volumeNodePrice - close) / close <= maxZoneDistancePct / 100
+                volumeNodeBox := box.new(bar_index - 14, nodeHigh, bar_index + 4, nodeLow,
+                  border_color = color.new(color.orange, 50), bgcolor = color.new(color.orange, 88),
+                  text = "VOL≈", text_color = color.new(color.orange, 10), text_size = size.tiny, force_overlay = true)
+plot(volumeNodePrice, "Estimated high-volume node · lower-TF OHLCV", display = display.data_window)
+plot(volumeNodeQuote, "Estimated high-volume node turnover · quote proxy", display = display.data_window)
+
+bool nearAsia = on15m and asiaReady and close > 0 and
+  (math.abs(close - asiaHigh) / close * 100 <= nearPct or
+   math.abs(close - asiaLow) / close * 100 <= nearPct)
+
+// Better RSI's supplied formula uses Wilder RMA on gains/losses and fixed
+// 30/50/70 reference levels. Keep it in the table/data window because a
+// 0–100 line on the same scale as the volume histogram would be unreadable.
+float change = ta.change(close)
+float rsiUp = ta.rma(math.max(change, 0), 14)
+float rsiDown = ta.rma(-math.min(change, 0), 14)
+float rsiNow = na(rsiUp) or na(rsiDown) ? na : rsiUp == 0 and rsiDown == 0 ? 50 : rsiDown == 0 ? 100 : rsiUp == 0 ? 0 : 100 - 100 / (1 + rsiUp / rsiDown)
+float closedRsi = barstate.isconfirmed ? rsiNow : rsiNow[1]
+// RSI is sampled at a PRICE pivot. Both observations become known only two
+// candles later; no labels are backdated as if the event were known earlier.
+float divPriceLow = ta.pivotlow(low, 2, 2)
+float divPriceHigh = ta.pivothigh(high, 2, 2)
+float previousDivLow = ta.valuewhen(not na(divPriceLow), divPriceLow, 1)
+float previousDivHigh = ta.valuewhen(not na(divPriceHigh), divPriceHigh, 1)
+float previousRsiLow = ta.valuewhen(not na(divPriceLow), rsiNow[2], 1)
+float previousRsiHigh = ta.valuewhen(not na(divPriceHigh), rsiNow[2], 1)
+bool bullRsiDiv = showRsiDivergence and barstate.isconfirmed and not na(divPriceLow) and not na(previousDivLow) and not na(previousRsiLow) and divPriceLow < previousDivLow and rsiNow[2] > previousRsiLow
+bool bearRsiDiv = showRsiDivergence and barstate.isconfirmed and not na(divPriceHigh) and not na(previousDivHigh) and not na(previousRsiHigh) and divPriceHigh > previousDivHigh and rsiNow[2] < previousRsiHigh
+var int lastRsiDivSide = 0
+var int lastRsiDivBar = na
+if bullRsiDiv or bearRsiDiv
+    lastRsiDivSide := bullRsiDiv ? 1 : -1
+    lastRsiDivBar := bar_index
+plotshape(bullRsiDiv, title = "Confirmed bullish RSI divergence", style = shape.circle, location = location.belowbar, color = color.new(color.purple, 10), size = size.tiny, text = "RSI+", force_overlay = true)
+plotshape(bearRsiDiv, title = "Confirmed bearish RSI divergence", style = shape.circle, location = location.abovebar, color = color.new(color.purple, 10), size = size.tiny, text = "RSI-", force_overlay = true)
+plot(closedRsi, "RSI(14) · Wilder · last closed", display = display.data_window)
+plot(showRsiLine ? closedRsi : na, "RSI(14) · line", color = color.new(color.purple, 0), linewidth = 2)
+// Dots appear on the CONFIRMED threshold-crossing bar only. In particular,
+// red at 13 is an extreme reading, not a mechanical long entry.
+bool rsiHighRaw = ta.crossover(rsiNow, 70)
+bool rsiLowRaw = ta.crossunder(rsiNow, 30)
+bool rsiDeepRaw = ta.crossunder(rsiNow, rsiDeepLow)
+bool rsiCrossHigh = barstate.isconfirmed and rsiHighRaw
+bool rsiCrossLow = barstate.isconfirmed and rsiLowRaw
+bool rsiCrossDeep = barstate.isconfirmed and rsiDeepRaw
+plotshape(showRsiLine and showRsiExtremes and rsiCrossHigh ? rsiNow + 3 : na, title = "RSI crossed above 70 · closed", style = shape.circle, location = location.absolute, color = color.lime, size = size.small)
+plotshape(showRsiLine and showRsiExtremes and rsiCrossLow ? rsiNow - 3 : na, title = "RSI crossed below 30 · closed", style = shape.circle, location = location.absolute, color = color.red, size = size.small)
+plotshape(showRsiLine and showRsiExtremes and rsiCrossDeep ? rsiNow - 3 : na, title = "RSI crossed deep-low threshold · closed", style = shape.circle, location = location.absolute, color = color.red, size = size.large)
+hline(70, "RSI overbought", color = color.new(color.red, 65))
+hline(50, "RSI midpoint", color = color.new(color.gray, 75))
+hline(30, "RSI oversold", color = color.new(color.teal, 65))
+hline(rsiDeepLow, "RSI deep-low reference", color = color.new(color.red, 83))
+
+// Momentum appears as compact text; adding full MACD and Stoch RSI plots to
+// the shared 0-100 RSI/volume pane would make both scales misleading.
+[macdLine, macdSignal, macdHist] = ta.macd(close, 12, 26, 9)
+float rawStochRsi = ta.stoch(rsiNow, rsiNow, rsiNow, 14)
+float stochK = ta.sma(rawStochRsi, 3)
+float stochD = ta.sma(stochK, 3)
+float closedMacdHist = barstate.isconfirmed ? macdHist : macdHist[1]
+float closedStochK = barstate.isconfirmed ? stochK : stochK[1]
+float closedStochD = barstate.isconfirmed ? stochD : stochD[1]
+plot(closedMacdHist, "MACD 12/26/9 · last closed histogram", display = display.data_window)
+plot(closedStochK, "Stoch RSI 14/14/3/3 · K closed", display = display.data_window)
+plot(closedStochD, "Stoch RSI 14/14/3/3 · D closed", display = display.data_window)
+
+// Input schema: SYMBOL|confirmed_ms|reference_price|G/O|BUY/SELL|4H|zone|reason
+// G means the saved strict_alert_confirmed + Telegram ACK, not profitability.
+// O means an ordinary saved dashboard observation, not an executed trade.
+var array<label> importedLabels = array.new<label>()
+int goldenCount = 0
+int ordinaryCount = 0
+if barstate.islast
+    for oldLabel in importedLabels
+        label.delete(oldLabel)
+    array.clear(importedLabels)
+    array<string> rows = str.split(importedEvents, "\n")
+    int cap = math.min(array.size(rows), 200)
+    if cap > 0
+        for i = 0 to cap - 1
+            array<string> fields = str.split(str.trim(array.get(rows, i)), "|")
+            if array.size(fields) >= 8
+                string symbol = str.trim(array.get(fields, 0))
+                float eventMs = str.tonumber(array.get(fields, 1))
+                float eventPrice = str.tonumber(array.get(fields, 2))
+                string tier = str.trim(array.get(fields, 3))
+                string side = str.trim(array.get(fields, 4))
+                bool valid = symbol == chartSymbol and not na(eventMs) and not na(eventPrice) and eventPrice > 0 and
+                  (tier == "G" or tier == "O") and (side == "BUY" or side == "SELL")
+                if valid
+                    goldenCount += tier == "G" ? 1 : 0
+                    ordinaryCount += tier == "O" ? 1 : 0
+                    string title = tier == "G" ? "★ GOLDEN" : "○ ORDINARY"
+                    string details = title + " · " + side + "\nApex saved event, not an entry\n4H: " +
+                      array.get(fields, 5) + " · zone: " + array.get(fields, 6) + "\n" + array.get(fields, 7)
+                    color markerColor = tier == "G" ? color.rgb(245, 186, 52) : color.rgb(75, 169, 229)
+                    label marker = label.new(int(eventMs), eventPrice, title + " " + side,
+                      xloc = xloc.bar_time, yloc = yloc.price,
+                      style = side == "BUY" ? label.style_label_up : label.style_label_down,
+                      color = markerColor, textcolor = color.black, size = size.tiny,
+                      tooltip = details, force_overlay = true)
+                    array.push(importedLabels, marker)
+
+var label currentWatchLabel = na
+var table panel = table.new(position.top_right, 2, 19, frame_color = color.new(color.gray, 70), frame_width = 1, force_overlay = true)
+if barstate.islast
+    color base = color.new(color.rgb(17, 27, 38), 18)
+    color light = color.rgb(225, 234, 241)
+    string sessionText = londonSession and nySession ? "LONDON + NY" :
+      tokyoSession and londonSession ? "TOKYO + LONDON" :
+      nySession and sydneySession ? "NY + SYDNEY" :
+      londonSession ? "LONDON" : nySession ? "NEW YORK" :
+      tokyoSession ? "TOKYO" : sydneySession ? "SYDNEY" : "OTHER"
+    string rsiText = na(closedRsi) ? "N/A" : str.tostring(closedRsi, "#.0") + (closedRsi >= 70 ? " · >70" : closedRsi <= 30 ? " · <30" : closedRsi >= 50 ? " · >50" : " · <50")
+    string blockText = chartSeconds > 14400 ? "chart ≤4H" : str.tostring(visibleBullBlocks) + " bull / " + str.tostring(visibleBearBlocks) + " bear"
+    float distanceToHigh = close > 0 and not na(priorDayHigh) ? math.abs(priorDayHigh - close) / close * 100 : na
+    float distanceToLow = close > 0 and not na(priorDayLow) ? math.abs(priorDayLow - close) / close * 100 : na
+    string nearestText = na(distanceToHigh) or na(distanceToLow) ? "N/A" : distanceToHigh < distanceToLow ? "PDH " + str.tostring(priorDayHigh, format.mintick) + " · " + str.tostring(distanceToHigh, "#.##") + "%" : "PDL " + str.tostring(priorDayLow, format.mintick) + " · " + str.tostring(distanceToLow, "#.##") + "%"
+    string reclaimText = observedSide == 0 ? "none on last close" : (observedSide == 1 ? "reclaim " : "reject ") + observedName
+    string invalidationText = scenarioSide == 0 ? "N/A" : scenarioName + " · " + str.tostring(scenarioInvalidation, format.mintick) + " · " + str.tostring(math.abs(close - scenarioInvalidation) / sweepAtr, "#.##") + " ATR"
+    string rsText = not showBtcRelativeStrength ? "off" : syminfo.basecurrency == "BTC" ? "benchmark" : na(rsVsBtcPp) ? "N/A · 5m–4H USDT" : (rsVsBtcPp > 0 ? "+" : "") + str.tostring(rsVsBtcPp, "#.##") + " pp / 4h"
+    int roleHtf = tradingModel == "Swing" ? trendW : tradingModel == "Intraday" ? trendD : trend4H
+    int roleMtf = tradingModel == "Swing" ? trendD : tradingModel == "Intraday" ? trend4H : trend15
+    int roleLtf = tradingModel == "Swing" ? trend4H : tradingModel == "Intraday" ? trend15 : trend5
+    string roleText = f_trendText(roleHtf) + " / " + f_trendText(roleMtf) + " / " + f_trendText(roleLtf)
+    string structureText = na(lastStructureBar) ? "N/A" : lastStructureName + (lastStructureSide == 1 ? " ↑ " : " ↓ ") + str.tostring(lastStructureLevel, format.mintick)
+    string fvgText = (na(bullFvgTop) ? "–" : "bull " + str.tostring(bullFvgBottom, format.mintick) + "–" + str.tostring(bullFvgTop, format.mintick)) + " / " + (na(bearFvgTop) ? "–" : "bear " + str.tostring(bearFvgBottom, format.mintick) + "–" + str.tostring(bearFvgTop, format.mintick))
+    string momentumText = not showMomentumPanel ? "off" : na(closedMacdHist) or na(closedStochK) or na(closedStochD) ? "N/A" : "MACD " + (closedMacdHist > 0 ? "+" : "−") + " · Stoch " + str.tostring(closedStochK, "#.0") + "/" + str.tostring(closedStochD, "#.0")
+    // A single nearest, still-active chart zone keeps the scenario tied to
+    // visible geometry. Never claim that an OB/FVG is an exchange order.
+    float decisionPrice = barstate.isconfirmed ? close : close[1]
+    float nearestZoneTop = na
+    float nearestZoneBottom = na
+    float nearestZoneGap = na
+    int nearestZoneSide = 0
+    string nearestZoneName = ""
+    if chartSeconds <= 14400 and showOrderBlocks and array.size(blockTops) > 0
+        for z = 0 to array.size(blockTops) - 1
+            float zTop = array.get(blockTops, z)
+            float zBottom = array.get(blockBottoms, z)
+            float zGap = decisionPrice > zTop ? decisionPrice - zTop : decisionPrice < zBottom ? zBottom - decisionPrice : 0.0
+            if na(nearestZoneGap) or zGap < nearestZoneGap
+                nearestZoneTop := zTop
+                nearestZoneBottom := zBottom
+                nearestZoneGap := zGap
+                nearestZoneSide := array.get(blockSides, z)
+                nearestZoneName := "OB"
+    if showFvg and not na(bullFvgTop)
+        float zGap = decisionPrice > bullFvgTop ? decisionPrice - bullFvgTop : decisionPrice < bullFvgBottom ? bullFvgBottom - decisionPrice : 0.0
+        if na(nearestZoneGap) or zGap < nearestZoneGap
+            nearestZoneTop := bullFvgTop
+            nearestZoneBottom := bullFvgBottom
+            nearestZoneGap := zGap
+            nearestZoneSide := 1
+            nearestZoneName := "FVG"
+    if showFvg and not na(bearFvgTop)
+        float zGap = decisionPrice > bearFvgTop ? decisionPrice - bearFvgTop : decisionPrice < bearFvgBottom ? bearFvgBottom - decisionPrice : 0.0
+        if na(nearestZoneGap) or zGap < nearestZoneGap
+            nearestZoneTop := bearFvgTop
+            nearestZoneBottom := bearFvgBottom
+            nearestZoneGap := zGap
+            nearestZoneSide := -1
+            nearestZoneName := "FVG"
+    bool aligned = roleHtf != 0 and roleHtf == roleMtf
+    bool zoneRelevant = aligned and nearestZoneSide == roleHtf and not na(nearestZoneGap)
+    bool inZone = zoneRelevant and nearestZoneGap == 0
+    bool approaching = zoneRelevant and not na(localAtr) and nearestZoneGap <= localAtr * approachAtr
+    bool structureRecent = not na(lastStructureBar) and bar_index - lastStructureBar <= 4 and lastStructureSide == roleHtf
+    bool rsiDivRecent = not na(lastRsiDivBar) and bar_index - lastRsiDivBar <= 8 and lastRsiDivSide == roleHtf
+    string scenarioSeen = not aligned ? "Старшие ТФ расходятся" : not zoneRelevant ? "Зоны по направлению нет" :
+      inZone ? "Цена в " + nearestZoneName + (roleHtf == 1 ? " поддержки" : " сопротивления") :
+      approaching ? "Цена подходит к " + nearestZoneName : "Цена вне ближайшей зоны"
+    string scenarioWait = not aligned ? "Ждём согласия старших ТФ" : not zoneRelevant ? "Ждём формирования зоны" : not approaching ? "Ждём подхода к зоне" :
+      not inZone ? "Ждём касания и закрытия свечи" :
+      not structureRecent ? "Ждём закрытый BOS/CHoCH по направлению" :
+      "Есть структурная реакция; проверь объём и свечу"
+    string scenarioEntry = inZone and structureRecent and aligned ? "ТВХ: только после ручной проверки" : "ТВХ: пока нет"
+    string scenarioRisk = zoneRelevant ? "SL ориентир: " + str.tostring(roleHtf == 1 ? nearestZoneBottom : nearestZoneTop, format.mintick) : "SL: нет подтверждённой зоны"
+    string scenarioTarget = zoneRelevant and roleHtf == 1 and not na(priorDayHigh) and priorDayHigh > decisionPrice ? "TP ориентир: PDH " + str.tostring(priorDayHigh, format.mintick) :
+      zoneRelevant and roleHtf == -1 and not na(priorDayLow) and priorDayLow < decisionPrice ? "TP ориентир: PDL " + str.tostring(priorDayLow, format.mintick) : "TP: цель не определена"
+    string divText = rsiDivRecent ? (roleHtf == 1 ? " · RSI див ↑" : " · RSI див ↓") : ""
+    if showContextPanel and panelMode == "Full"
+        table.cell(panel, 0, 0, "APEX · context", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 1, 0, chartSymbol + " · " + timeframe.period, bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 0, 1, "1W / 1D / 4H", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 1, 1, f_trendText(trendW) + " / " + f_trendText(trendD) + " / " + f_trendText(trend4H), bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 0, 2, "1H / 15m / 5m", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 1, 2, f_trendText(trend1H) + " / " + f_trendText(trend15) + " / " + f_trendText(trend5), bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 0, 3, "Session", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 1, 3, onIntraday ? sessionText : "intraday only", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 0, 4, "Volume / MA14", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 1, 4, na(closedVolRatio) ? "N/A" : str.tostring(closedVolRatio, "#.##") + "×", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 0, 5, "RSI(14)", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 1, 5, rsiText, bgcolor = base, text_color = na(closedRsi) ? light : closedRsi >= 70 ? color.rgb(234, 123, 127) : closedRsi <= 30 ? color.rgb(89, 206, 175) : light, text_size = size.tiny)
+        table.cell(panel, 0, 6, "Local OB", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 1, 6, blockText, bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 0, 7, "Apex imported", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 1, 7, str.tostring(goldenCount) + " G / " + str.tostring(ordinaryCount) + " O", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 0, 8, "Near PDH/PDL", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 1, 8, nearestText, bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 0, 9, "Level event", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 1, 9, reclaimText, bgcolor = base, text_color = observedSide == 1 ? color.teal : observedSide == -1 ? color.fuchsia : light, text_size = size.tiny)
+        table.cell(panel, 0, 10, "Invalidation", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 1, 10, invalidationText, bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 0, 11, "vs BTC", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 1, 11, rsText, bgcolor = base, text_color = na(rsVsBtcPp) ? light : rsVsBtcPp > 0 ? color.teal : color.fuchsia, text_size = size.tiny)
+        table.cell(panel, 0, 12, tradingModel + " H/M/L", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 1, 12, roleText, bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 0, 13, "Structure · chart TF", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 1, 13, structureText, bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 0, 14, "FVG · chart TF", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 1, 14, fvgText, bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 0, 15, "Momentum · chart TF", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 1, 15, momentumText, bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 0, 16, "СЦЕНАРИЙ · ВИДИМ", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 1, 16, scenarioSeen + divText, bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 0, 17, "ЖДЁМ", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 1, 17, scenarioWait, bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 0, 18, "ТВХ / SL / TP", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 1, 18, scenarioEntry + " · " + scenarioRisk + " · " + scenarioTarget, bgcolor = base, text_color = light, text_size = size.tiny)
+    else if showContextPanel
+        table.clear(panel, 0, 0, 1, 18)
+        string zoneTfName = tradingModel == "Swing" ? "1D" : tradingModel == "Intraday" ? "4H" : "15m"
+        string triggerTfName = tradingModel == "Swing" ? "4H" : tradingModel == "Intraday" ? "15m" : "5m"
+        int triggerSeconds = tradingModel == "Swing" ? 14400 : tradingModel == "Intraday" ? 900 : 300
+        bool onTriggerTf = chartSeconds == triggerSeconds
+        bool confirmedReview = onTriggerTf and aligned and inZone and structureRecent and roleLtf == roleHtf and not na(closedVolRatio) and closedVolRatio >= 1.0
+        string biasBrief = not aligned ? "НЕЯСНО" : roleHtf == 1 ? "ИЩЕМ ЛОНГ" : "ИЩЕМ ШОРТ"
+        string nearText = not zoneRelevant ? "нет локальной зоны" : nearestZoneName + " " + str.tostring(nearestZoneBottom, format.mintick) + "–" + str.tostring(nearestZoneTop, format.mintick) + (inZone ? " · В ЗОНЕ" : approaching ? " · БЛИЗКО" : " · ДАЛЕКО")
+        string confirmText = confirmedReview ? "🟢 УСЛОВИЯ ЕСТЬ · проверь свечу" :
+          not onTriggerTf ? "ОТКРОЙ " + triggerTfName + " для подтверждения" :
+          not aligned ? "ЖДЁМ согласия  старших ТФ" :
+          not zoneRelevant ? "ЖДЁМ локальную зону" :
+          not inZone ? "ЖДЁМ цену в зоне" :
+          not structureRecent ? "ЖДЁМ закрытый BOS/CHoCH?" :
+          roleLtf != roleHtf ? "ЖДЁМ направление " + triggerTfName : "ЖДЁМ объём ≥ 1× MA14"
+        string planBrief = confirmedReview ? "ТВХ: ручная проверка · " + scenarioRisk + " · " + scenarioTarget : "ТВХ: нет · SL/TP после подтверждения"
+        table.cell(panel, 0, 0, "APEX · " + tradingModel, bgcolor = base, text_color = color.rgb(245, 186, 52), text_size = size.small)
+        table.cell(panel, 1, 0, chartSymbol + " · " + timeframe.period, bgcolor = base, text_color = light, text_size = size.small)
+        table.cell(panel, 0, 1, "КУДА", bgcolor = base, text_color = light, text_size = size.small)
+        table.cell(panel, 1, 1, biasBrief + " · зону смотри " + zoneTfName, bgcolor = base, text_color = aligned ? roleHtf == 1 ? color.teal : color.rgb(234, 123, 127) : light, text_size = size.small)
+        table.cell(panel, 0, 2, "ЗОНА ЭТОГО ТФ", bgcolor = base, text_color = light, text_size = size.small)
+        table.cell(panel, 1, 2, nearText, bgcolor = base, text_color = light, text_size = size.small)
+        table.cell(panel, 0, 3, "КОГДА", bgcolor = base, text_color = light, text_size = size.small)
+        table.cell(panel, 1, 3, triggerTfName + " · закрытие структуры + объём", bgcolor = base, text_color = light, text_size = size.small)
+        table.cell(panel, 0, 4, "СТАТУС", bgcolor = confirmedReview ? color.new(color.teal, 40) : base, text_color = light, text_size = size.small)
+        table.cell(panel, 1, 4, confirmText, bgcolor = confirmedReview ? color.new(color.teal, 40) : base, text_color = confirmedReview ? color.white : light, text_size = size.small)
+        table.cell(panel, 0, 5, "ПЛАН", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 1, 5, planBrief, bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 0, 6, "APEX", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 1, 6, str.tostring(goldenCount) + " GOLD / " + str.tostring(ordinaryCount) + " обычных", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 0, 7, "ЛЕНТА EMA", bgcolor = base, text_color = light, text_size = size.tiny)
+        table.cell(panel, 1, 7, localEmaSide == 1 ? "🟢 20 выше 50 · рост" : localEmaSide == -1 ? "🔴 20 ниже 50 · спад" : "20 = 50 · без направления", bgcolor = base, text_color = light, text_size = size.tiny)
+        // A single arrow on the latest bar communicates the current watch
+        // state without painting the entire history as trade entries.
+        label.delete(currentWatchLabel)
+        currentWatchLabel := na
+        if onTriggerTf and aligned and approaching
+            string arrowText = confirmedReview ? (roleHtf == 1 ? "▲ УСЛОВИЯ ЛОНГ" : "▼ УСЛОВИЯ ШОРТ") :
+              (roleHtf == 1 ? "▲ ЖДЁМ ЛОНГ" : "▼ ЖДЁМ ШОРТ")
+            currentWatchLabel := label.new(bar_index, roleHtf == 1 ? low : high, arrowText,
+              style = roleHtf == 1 ? label.style_label_up : label.style_label_down,
+              color = confirmedReview ? color.new(color.teal, 15) : color.new(color.orange, 35),
+              textcolor = color.white, size = size.tiny, force_overlay = true)
+    else
+        table.clear(panel, 0, 0, 1, 18)
