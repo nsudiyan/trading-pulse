@@ -1,0 +1,15 @@
+name: Probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe hosts
+        run: |
+          for u in "https://api.bybit.com/v5/market/tickers?category=linear" "https://api.bytick.com/v5/market/tickers?category=linear" "https://api.bybit.nl/v5/market/tickers?category=linear" "https://api.bybit-tr.com/v5/market/tickers?category=linear" "https://api.bybitgeorgia.ge/v5/market/tickers?category=linear" "https://api.bybit.kz/v5/market/tickers?category=linear" "https://api.binance.com/api/v3/ticker/24hr" "https://api.coinalyze.net/v1/ping" ; do
+            code=$(curl -s -o /tmp/out -w '%{http_code}' -m 15 "$u" || echo ERR)
+            echo "HOST $u -> $code :: $(head -c 160 /tmp/out | tr '\n' ' ')"
+          done
