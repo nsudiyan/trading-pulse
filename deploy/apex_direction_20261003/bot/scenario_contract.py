@@ -1,8 +1,9 @@
 """Presentation-only directional scenario. Never an execution signal or new gate."""
 import json
 import math
+from level_age import observe_level_age, timeframe_key
 
-VERSION = "direction-context-v5-bos-4h-zone"
+VERSION = "sweep-choch-v1-level-age-moscow-policy"
 TF_MS = {"240": 14_400_000}
 TREND_SIDE = {"рост": "BULLISH", "снижение": "BEARISH"}
 
@@ -45,25 +46,60 @@ def zone_note(scenario):
     zone = (scenario or {}).get("zone_observation") or {}
     name = zone.get("zone") or "нет сохранённых данных"
     timing = "цена закрытой сигнальной 15м" if zone.get("event_time_verified") else "время исходной цены не подтверждено"
-    return f"Зона 4ч pivot-range: {name}; {timing}. Для направления требуется BOS + тренд закрытой 4ч + соответствующая зона. Это сценарий, не точка входа."
+    return f"Зона 4ч pivot-range: {name}; {timing}. BUY/SELL требует закрытую последовательность sweep → CHoCH, совпадение с трендом 4ч и соответствующую зону. Это сценарий, не точка входа."
 
 
-def classify(findings, contexts, event_end_ms, sweep=None, zone=None):
+def classify(findings, contexts, event_end_ms, sweep=None, zone=None,
+             event_timeframe=None, setup=None):
     result = {"version": VERSION, "side": None, "status": "unconfirmed",
-              "reason": "suppressed_direction:conflict", "entry_confirmed": False,
+              "reason": "suppressed_setup:sweep_choch_required", "entry_confirmed": False,
               "event_end_ms": event_end_ms, "contexts": contexts,
               "zone_observation": zone or zone_observation(None, event_end_ms, None),
-              "zone_is_direction_gate": True}
-    # structure_up/down also includes CHoCH and unclassified first breaks.
-    # The user's matrix is explicitly BOS-based, so do not promote those to
-    # BOS_UP/BOS_DOWN just because the close crossed a pivot.
-    directions = {"BUY" if x["code"] == "structure_up" else "SELL"
-                  for x in findings
-                  if x.get("code") in ("structure_up", "structure_down")
-                  and str(x.get("name", "")).startswith("BOS:")}
-    if len(directions) != 1:
-        return {**result, "status": "suppressed", "reason": "suppressed_direction:conflict"}
-    side = next(iter(directions))
+              "zone_is_direction_gate": True,
+              "setup_sequence": setup if isinstance(setup, dict) else None}
+    if not isinstance(setup, dict) or setup.get("status") != "confirmed":
+        return {**result, "status": "suppressed"}
+    try:
+        side = setup["direction"]
+        setup_tf = str(setup["timeframe"])
+        sweep_data = setup["sweep"]
+        choch = setup["choch"]
+        sweep_end = int(sweep_data["end_ms"])
+        sweep_start = int(sweep_data["start_ms"])
+        choch_event = int(choch["event_ms"])
+        known_ms = int(choch["level_known_ms"])
+        level_price = float(choch["level"])
+        waited = int(setup["bars_waited"])
+        max_wait = int(setup["heuristics"]["max_wait_bars"])
+        sweep_direction = sweep_data["direction"]
+        sweep_extreme = float(sweep_data["swept_extreme"])
+        choch_close = float(choch["close_price"])
+        threshold = float(choch["threshold"])
+        buffer = float(choch["buffer"])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return {**result, "status": "suppressed", "reason": "suppressed_setup:invalid_contract"}
+    valid_side = (side == "BUY" and sweep_direction == "BUY" and
+                  sweep_extreme > 0 and choch_close > threshold > level_price) or (
+                  side == "SELL" and sweep_direction == "SELL" and
+                  sweep_extreme > 0 and choch_close < threshold < level_price)
+    valid_sequence = (valid_side and setup_tf in {"15", "60", "240"} and
+                      (event_timeframe is None or setup_tf == str(event_timeframe)) and
+                      sweep_end < event_end_ms and sweep_start < choch_event and
+                      choch_event == event_end_ms + 1 and
+                      1 <= waited <= max_wait and known_ms <= sweep_start and
+                      math.isfinite(buffer) and buffer > 0)
+    if not valid_sequence:
+        return {**result, "status": "suppressed", "reason": "suppressed_setup:invalid_sequence"}
+    timeframe = timeframe_key(setup_tf)
+    level = observe_level_age(known_ms, event_end_ms, timeframe, level_price)
+    result["level_observation"] = {**level, "kind": "CHoCH"}
+    if level["status"] == "unknown":
+        return {**result, "status": "suppressed",
+                "reason": f"suppressed_stale_level:{timeframe}:unknown"}
+    if not level["is_fresh"]:
+        age = int(level["age_minutes"])
+        return {**result, "status": "suppressed",
+                "reason": f"suppressed_stale_level:{timeframe}:{age}m"}
     ctx = contexts.get("240") or {}
     end = ctx.get("end_ms")
     if not isinstance(end, int) or not 0 <= event_end_ms - end < TF_MS["240"]:
@@ -77,9 +113,11 @@ def classify(findings, contexts, event_end_ms, sweep=None, zone=None):
         return {**result, "status": "suppressed", "reason": "suppressed_direction:conflict"}
     zone_name = observed_zone["zone"]
     if side == "BUY" and context_side == "BULLISH" and zone_name == "discount":
-        return {**result, "side": "BUY", "status": "scenario", "reason": "bos_up_4h_bullish_discount"}
+        return {**result, "side": "BUY", "status": "scenario",
+                "reason": "sweep_choch_buy_4h_bullish_discount"}
     if side == "SELL" and context_side == "BEARISH" and zone_name == "premium":
-        return {**result, "side": "SELL", "status": "scenario", "reason": "bos_down_4h_bearish_premium"}
+        return {**result, "side": "SELL", "status": "scenario",
+                "reason": "sweep_choch_sell_4h_bearish_premium"}
     return {**result, "status": "suppressed", "reason": "suppressed_direction:conflict"}
 
 
@@ -100,22 +138,29 @@ def alert_heading(symbol, scenario, category="linear"):
 
 
 def apply_direction_gate(quality, scenario):
-    """Shared final direction gate for generic and strong-sweep observations."""
+    """Shared final direction/sequence gate for every notification path."""
     if quality.get("send") and (scenario or {}).get("side") not in ("BUY", "SELL"):
-        return {**quality, "send": False, "reason": "suppressed_direction:conflict"}
+        reason = (scenario or {}).get("reason", "suppressed_direction:conflict")
+        if not str(reason).startswith(("suppressed_stale_level:", "suppressed_setup:")):
+            reason = "suppressed_direction:conflict"
+        return {**quality, "send": False, "reason": reason}
     return quality
 
 
 def explanation(scenario):
     code = (scenario or {}).get("reason", "missing")
-    return {"bos_up_4h_bullish_discount": "BOS вверх + бычий тренд закрытой 4ч + discount; сценарий, не вход",
-            "bos_down_4h_bearish_premium": "BOS вниз + медвежий тренд закрытой 4ч + premium; сценарий, не вход",
-            "suppressed_direction:conflict": "BUY/SELL подавлен: BOS, закрытая 4ч или зона не совпали с матрицей",
+    if str(code).startswith("suppressed_setup:"):
+        return "BUY/SELL подавлен: нет валидной последовательности sweep → более поздний CHoCH"
+    if str(code).startswith("suppressed_stale_level:"):
+        return "BUY/SELL подавлен: уровень CHoCH устарел или время подтверждения уровня неизвестно"
+    return {"sweep_choch_buy_4h_bullish_discount": "Sweep вниз → более поздний CHoCH вверх + бычий тренд закрытой 4ч + discount; сценарий, не вход",
+            "sweep_choch_sell_4h_bearish_premium": "Sweep вверх → более поздний CHoCH вниз + медвежий тренд закрытой 4ч + premium; сценарий, не вход",
+            "suppressed_direction:conflict": "BUY/SELL подавлен: направление последовательности, закрытая 4ч или зона не совпали с матрицей",
             "conflicting_triggers": "события дают противоположные направления",
             "no_directional_trigger": "направленный триггер не подтверждён",
             "missing_or_stale_240": "нет свежей закрытой 4ч свечи",
             "non_directional_240": "4ч контекст не имеет направления",
-            "trigger_conflicts_240": "событие противоречит 4ч контексту"}.get(code, "направление подавлено матрицей BOS/4ч/зона")
+            "trigger_conflicts_240": "событие противоречит 4ч контексту"}.get(code, "направление подавлено матрицей sweep/CHoCH/4ч/зона")
 
 
 def ensure_schema(db):

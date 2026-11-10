@@ -20,8 +20,8 @@ items remain `NO-TRADE`. `entry_confirmed=false` is unchanged: a direction label
 is a market observation, not an entry, stop, target, fill, or PnL claim.
 
 The dashboard/API direction is read from the same immutable scenario contract.
-New contracts use `direction-context-v5-bos-4h-zone`; historical v1-v4 records
-and outcome rows are not rewritten. v4/v5 invalid provenance remains excluded
+New contracts use `direction-context-v6-level-age-moscow-policy`; historical
+v1-v5 records and outcome rows are not rewritten. v4-v6 invalid provenance remains excluded
 by the API while pre-v4 legacy history remains available with its unknown-data
 label.
 

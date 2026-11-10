@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 from quality import finding_family
-from setup_layers import (ORDER, TF_MS, prior_volume_ratio, quote_volume_24h,
+from setup_layers import (ORDER, TF_MS, quote_volume_24h,
                           timeframe_metrics, asof_series, zone_snapshot)
 from sweeps import asia_range_sweep, equal_level_sweep
+from sweep_gate import sweep_activity_ratio
 
 
 def strong_sweep_review(view, symbol: str, end_ms: int, findings: list[dict],
@@ -24,9 +25,9 @@ def strong_sweep_review(view, symbol: str, end_ms: int, findings: list[dict],
     sweep = equal_level_sweep(bars) or asia_range_sweep(bars, hourly)
     if not sweep or sweep["end_ms"] != end_ms:
         return rejected("no_current_sweep")
-    ratio = prior_volume_ratio(bars)
+    ratio = sweep_activity_ratio(bars, category)
     if ratio is None or ratio < float(config.get("min_volume_ratio", 2.5)):
-        return rejected("sweep_volume_unconfirmed")
+        return rejected("sweep_activity_unconfirmed")
     quote = quote_volume_24h(bars, category=category, symbol=symbol)
     if quote is None or quote < float(config.get("min_quote_turnover_24h", 50_000_000)):
         return rejected("sweep_liquidity_unconfirmed")
@@ -56,7 +57,8 @@ def strong_sweep_review(view, symbol: str, end_ms: int, findings: list[dict],
                 if (family := finding_family(finding["code"], finding.get("source", "")))}
     if len(families) < int(config.get("min_independent_families", 3)):
         return rejected("sweep_insufficient_families")
-    sweep = {**sweep, "volume_ratio": ratio}
+    sweep = {**sweep, "volume_ratio": ratio,
+             "volume_basis": "contract_volume" if category == "inverse" else "quote_turnover"}
     return {"send": True, "reason": "strong_sweep_review", "direction": direction,
             "sweep": sweep, "quote_24h": quote, **snapshot,
             "swing_high": frames["240"]["swing_high"],

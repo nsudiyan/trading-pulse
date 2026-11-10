@@ -3,11 +3,17 @@ const $ = (id) => document.getElementById(id);
 const number = new Intl.NumberFormat('ru-RU', {maximumFractionDigits: 2});
 const money = new Intl.NumberFormat('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2});
 
-function utc(value) {
+function mskFull(value) {
   if (value == null) return '—';
   const date = typeof value === 'number' ? new Date(value) : new Date(value);
   if (Number.isNaN(date.getTime())) return '—';
-  return new Intl.DateTimeFormat('ru-RU', {timeZone: 'UTC', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'}).format(date) + ' UTC';
+  return new Intl.DateTimeFormat('ru-RU', {timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'}).format(date) + ' МСК';
+}
+function msk(value) {
+  if (value == null) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat('ru-RU', {timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'}).format(date) + ' МСК';
 }
 function pct(value, signed = true) {
   if (value == null || !Number.isFinite(Number(value))) return '—';
@@ -23,6 +29,21 @@ function text(tag, value, className = '') {
 function statusName(status) {
   return ({complete: '72ч завершены', observing: 'Наблюдается', data_gap: 'Нет данных', waiting_next_bar: 'Ожидаем свечу', legacy_unmeasured: 'Архив · без расчёта'})[status] || 'Нет данных';
 }
+function movementLabels(signal) {
+  const movement = signal.movement || {};
+  const side = signal.scenario?.side;
+  if (side === 'BUY' || side === 'SELL') {
+    return [
+      `MFE по сценарию ${pct(movement.mfe_pct)}`,
+      `MAE против сценария ${pct(movement.mae_pct)}`,
+    ];
+  }
+  // Legacy reviews have no reliable direction: show only the raw price path.
+  return [
+    `Рост цены ${pct(movement.max_up_pct)}`,
+    `Падение цены ${pct(movement.max_down_pct)}`,
+  ];
+}
 function displayStatus(signal) {
   // Presentation only: never overwrite the legacy research path_status.
   if (!signal.movement) return signal.path_status === 'legacy_unmeasured' ? 'legacy_unmeasured' : 'data_gap';
@@ -36,13 +57,14 @@ function matchesStatus(signal, filter) {
 function price(value) {return value == null ? '—' : new Intl.NumberFormat('ru-RU', {maximumSignificantDigits: 10}).format(Number(value));}
 
 function renderStats(data) {
-  const s = data.stats || {};
+  const s = data.strategy_stats || data.stats || {};
+  const allTime = data.stats || {};
   $('stat-sent').textContent = number.format(s.sent || 0);
-  $('stat-sent-note').textContent = `${number.format(s.measured || 0)} с расчётом · ${number.format(s.legacy_unmeasured || 0)} старых обзоров без расчёта`;
+  $('stat-sent-note').textContent = `${number.format(s.measured || 0)} в выборке · всего в истории ${number.format(allTime.sent || 0)}; старая логика не входит в средние`;
   $('stat-complete').textContent = number.format(s.complete || 0);
   $('stat-mfe').textContent = s.complete ? pct(s.avg_mfe_pct) : '—';
   $('stat-mae').textContent = s.complete ? pct(s.avg_mae_pct) : '—';
-  $('updated-at').textContent = utc(data.generated_at_utc);
+  $('updated-at').textContent = mskFull(data.generated_at_utc);
 }
 
 function filtered() {
@@ -73,12 +95,13 @@ function renderList() {
     top.append(text('span', signal.symbol, 'card-symbol'));
     const side = signal.scenario?.side;
     top.append(text('span', side || 'БЕЗ НАПРАВЛЕНИЯ', 'side-badge ' + (side === 'SELL' ? 'sell' : side ? '' : 'overview')));
-    card.append(top, text('div', utc(signal.sent_utc), 'card-time'));
+    card.append(top, text('div', mskFull(signal.sent_utc), 'card-time'));
     const bottom = text('div', '', 'card-bottom');
     bottom.append(text('span', statusName(displayStatus(signal)), 'status-badge ' + displayStatus(signal)));
     const outcome = text('span', '', 'card-outcome');
-    outcome.append(text('span', `Рост ${pct(signal.movement?.max_up_pct)}`, 'positive'));
-    outcome.append(text('span', `Падение ${pct(signal.movement?.max_down_pct)}`, 'negative'));
+    const [favorable, adverse] = movementLabels(signal);
+    outcome.append(text('span', favorable, 'positive'));
+    outcome.append(text('span', adverse, 'negative'));
     bottom.append(outcome); card.append(bottom);
     card.addEventListener('click', () => {state.selected = signal.id; renderList();});
     list.append(card);
@@ -101,7 +124,7 @@ function renderPortfolio(model) {
   $('portfolio-return').className = hasData ? (model.return_pct >= 0 ? 'positive' : 'negative') : '';
   $('portfolio-drawdown').className = hasData ? 'negative' : '';
   $('portfolio-period').textContent = hasData
-    ? `${utc(model.curve[0].at_ms)} — ${utc(model.curve.at(-1).at_ms)}` : 'Ожидаем первый измеренный сигнал';
+    ? `${mskFull(model.curve[0].at_ms)} — ${mskFull(model.curve.at(-1).at_ms)}` : 'Ожидаем первый измеренный сигнал';
   $('portfolio-rule').textContent = `Старт: ${number.format(model?.initial_usdt ?? 1000)} USDT · ${number.format(model?.fixed_notional_usdt ?? 100)} USDT на алерт · максимум ${model?.max_concurrent ?? 10} одновременно · удержание 72 часа · без комиссий и проскальзывания. В модели: ${model?.admitted ?? 0}; ожидают свечу: ${model?.pending ?? 0}; пропуски данных: ${model?.excluded_data_gaps ?? 0}; отклонено по лимиту: ${model?.skipped_capacity ?? 0}.`;
   const host = $('portfolio-chart');
   host.replaceChildren();
@@ -127,11 +150,11 @@ function renderPortfolio(model) {
   const ddPath = curve.map((p, i) => `${i ? 'L' : 'M'} ${x(p).toFixed(1)} ${yDD(p.drawdown_pct).toFixed(1)}`).join(' ');
   svg.append(svgNode('path', {d: equityPath, fill: 'none', stroke: model.pnl_usdt >= 0 ? '#44e5cf' : '#ff797f', 'stroke-width': 3, 'stroke-linejoin': 'round'}));
   svg.append(svgNode('path', {d: ddPath, fill: 'none', stroke: '#ff797f', 'stroke-width': 2, 'stroke-linejoin': 'round'}));
-  for (const [y, label, color] of [[28, `ПОРТФЕЛЬ · ${money.format(model.equity_usdt)} USDT`, '#c8d9e9'], [220, `ПРОСАДКА · ${pct(model.max_drawdown_pct)}`, '#ff9fa5'], [323, utc(curve[0].at_ms), '#8297b2']]) {
+  for (const [y, label, color] of [[28, `ПОРТФЕЛЬ · ${money.format(model.equity_usdt)} USDT`, '#c8d9e9'], [220, `ПРОСАДКА · ${pct(model.max_drawdown_pct)}`, '#ff9fa5'], [323, mskFull(curve[0].at_ms), '#8297b2']]) {
     const t = svgNode('text', {x: 65, y, fill: color, 'font-size': 11}); t.textContent = label; svg.append(t);
   }
   const endLabel = svgNode('text', {x: 920, y: 323, 'text-anchor': 'end', fill: '#8297b2', 'font-size': 11});
-  endLabel.textContent = utc(curve.at(-1).at_ms); svg.append(endLabel);
+  endLabel.textContent = mskFull(curve.at(-1).at_ms); svg.append(endLabel);
   host.append(svg);
 }
 function renderChannel(data) {
@@ -148,7 +171,7 @@ function renderChannel(data) {
     const card = text('article', '', 'channel-card');
     const heading = text('div', '', 'channel-card-head');
     heading.append(text('strong', names[post.category] || names.other),
-                   text('time', utc(post.sent_utc)));
+                   text('time', mskFull(post.sent_utc)));
     const body = text('pre', post.text, 'channel-card-body');
     const link = text('a', `Открыть в Telegram · #${post.message_id}`, 'channel-link');
     link.href = post.url;
@@ -210,7 +233,7 @@ function renderDetail(signal) {
     detail.append(empty); return;
   }
   if (!signal.movement) {
-    const title = text('div', `${signal.symbol} · обзор · ${utc(signal.sent_utc)}`, 'detail-title');
+    const title = text('div', `${signal.symbol} · обзор · ${mskFull(signal.sent_utc)}`, 'detail-title');
     const note = text('p', 'Это сообщение действительно отправлено в Telegram до запуска учёта исходов. Направление и цена отсчёта не были сохранены, поэтому доходность, просадка и 72-часовой результат для него не рассчитываются.', 'legacy-note');
     const archived = text('details', '', 'alert-details');
     archived.open = true;
@@ -221,16 +244,31 @@ function renderDetail(signal) {
   const top = text('div', '', 'detail-top');
   const titleBlock = text('div', '');
   const side = signal.scenario?.side;
+  const chain = signal.scenario?.setup_sequence;
+  const chainConfirmed = chain?.status === 'confirmed';
   const directionTitle = side === 'BUY' ? `📈 BUY ${signal.symbol} [LINEAR]` :
                          side === 'SELL' ? `📉 SELL ${signal.symbol} [LINEAR]` :
                          `🔎 ${signal.symbol} [LINEAR] · NO-TRADE`;
+  const setupTitle = chainConfirmed ? 'Sweep → CHoCH · сценарий для проверки' :
+                     signal.setup_type === 'strong_sweep_review' ? 'Исторический strong sweep' :
+                     'Исторический свечной обзор';
   titleBlock.append(text('div', directionTitle, 'detail-title'),
-                    text('div', `${signal.setup_type === 'strong_sweep_review' ? 'Сильный sweep' : 'Свечной обзор'} · Отправлено ${utc(signal.sent_utc)}`, 'detail-sub'));
+                    text('div', `${setupTitle} · Отправлено ${mskFull(signal.sent_utc)}`, 'detail-sub'));
   top.append(titleBlock, text('div', statusName(displayStatus(signal)), 'detail-chip')); detail.append(top);
   const movement = signal.movement;
   detail.append(text('p', `Направление: ${signal.scenario?.explanation || signal.scenario?.reason || 'нет данных'}. NO-TRADE: это не подтверждённая точка входа.`, 'legacy-note'));
   const zone = signal.scenario?.zone_observation;
-  detail.append(text('p', `Зона 4ч pivot-range: ${zone?.zone || 'нет сохранённых данных'}. ${zone?.event_time_verified ? 'Цена закрытой сигнальной 15м.' : 'Время исходной цены не подтверждено.'} Для направления требуется BOS + тренд закрытой 4ч + соответствующая зона. Это сценарий, не точка входа.`, 'legacy-note'));
+  detail.append(text('p', `Зона 4ч pivot-range: ${zone?.zone || 'нет сохранённых данных'}. ${zone?.event_time_verified ? 'Цена закрытой сигнальной свечи.' : 'Время исходной цены не подтверждено.'} Это контекст, не самостоятельный триггер.`, 'legacy-note'));
+  if (chainConfirmed) {
+    const sweep = chain.sweep || {};
+    const choch = chain.choch || {};
+    detail.append(text('p', `Подтверждённая последовательность: ${sweep.code || 'sweep'} (${sweep.direction}) → CHoCH ${chain.direction}. Уровень sweep ${price(sweep.level)}; CHoCH ${price(choch.level)} с буфером ${price(choch.buffer)}; подтверждение через ${chain.bars_waited}/${chain.heuristics?.max_wait_bars ?? '—'} закрытых свечей. Прокол, объём и закрытие — наблюдаемые прокси, не доказательство исполнения стопов.`, 'legacy-note'));
+    detail.append(text('p', `Новая модель: обязательны sweep → более поздний CHoCH, тренд 4ч и подтверждённая зона.`, 'legacy-note'));
+  } else if (signal.scenario?.version !== 'sweep-choch-v1-level-age-moscow-policy' && side) {
+    detail.append(text('p', `Исторический ${side} создан по прежней версии до обязательной последовательности sweep → CHoCH. Не смешивай его с новой выборкой и не считай доказательством качества новой модели.`, 'legacy-note'));
+  } else {
+    detail.append(text('p', `NO-TRADE: подтверждённой последовательности sweep → более поздний CHoCH нет.`, 'legacy-note'));
+  }
   drawChart(detail, {...signal, curve: movement.curve || [], mfe_pct: movement.max_up_pct, mae_pct: movement.max_down_pct});
   const metrics = text('div', '', 'detail-metrics');
   for (const [name, value, cls] of [['Макс. рост от отсчёта', pct(movement.max_up_pct), 'positive'], ['Макс. падение от отсчёта', pct(movement.max_down_pct), 'negative'], ['Последнее закрытие от отсчёта', pct(movement.return_pct), 'neutral']]) {
@@ -238,14 +276,25 @@ function renderDetail(signal) {
   }
   detail.append(metrics);
   const facts = text('div', '', 'detail-facts');
-  fact(facts, 'Отсчёт: open первой полной 15м после отправки', `${price(movement.anchor_price)} · ${utc(movement.anchor_start_ms)}`);
-  fact(facts, 'Источник / статус', `${movement.source} · ${movement.timeframe} · ${movement.status}`);
-  fact(facts, 'Происхождение зоны', zone?.source ? `${zone.source} · ${zone.status} · ${zone.asof_end_ms == null ? 'время источника неизвестно' : utc(zone.asof_end_ms + 1)}` : 'Нет сохранённых данных; историческая зона не восстановлена задним числом');
-  if (zone?.source_route) {
-    fact(facts, 'Канал / цена зоны', `${zone.source_route} · ${price(zone.observation_price)} · ${zone.asof_end_ms == null ? 'время неизвестно' : utc(zone.asof_end_ms + 1)}`);
-    fact(facts, 'Геометрия 4ч', zone.geometry ? `${price(zone.geometry.swing_low)} — ${price(zone.geometry.swing_high)}; середина ${price(zone.geometry.swing_mid)}; ${zone.geometry_end_ms == null ? 'время неизвестно' : utc(zone.geometry_end_ms + 1)}` : 'Нет данных');
+  const eventMs = signal.scenario?.baseline?.event_ms;
+  fact(facts, 'Закрытие сигнальной свечи', signal.scenario?.event_time_msk || msk(eventMs));
+  const sessionNames = {ASIA: 'Азия', LONDON_KZ: 'London KZ', LONDON_CLOSE: 'London Close', NY_KZ: 'New York KZ', NY_PM: 'New York PM', DEAD_ZONE: 'вне активных окон'};
+  fact(facts, 'Сессия в момент сигнала', sessionNames[signal.scenario?.session_msk] || '—');
+  const level = signal.scenario?.level_observation;
+  if (level) {
+    const freshness = level.status === 'fresh' || level.status === 'stale'
+      ? `${level.age_text || 'возраст вычислен'} · ${level.status === 'fresh' ? 'допущен фильтром' : 'устарел'}`
+      : 'Время подтверждения уровня неизвестно';
+    fact(facts, `${level.kind || 'BOS'} ${level.timeframe || ''} · уровень / возраст`, `${price(level.level_price)} · ${freshness}`);
   }
-  fact(facts, 'Последняя закрытая свеча', movement.last_closed_ms == null ? 'Нет данных' : utc(movement.last_closed_ms + 1));
+  fact(facts, 'Отсчёт: open первой полной 15м после отправки', `${price(movement.anchor_price)} · ${mskFull(movement.anchor_start_ms)}`);
+  fact(facts, 'Источник / статус', `${movement.source} · ${movement.timeframe} · ${movement.status}`);
+  fact(facts, 'Происхождение зоны', zone?.source ? `${zone.source} · ${zone.status} · ${zone.asof_end_ms == null ? 'время источника неизвестно' : mskFull(zone.asof_end_ms + 1)}` : 'Нет сохранённых данных; историческая зона не восстановлена задним числом');
+  if (zone?.source_route) {
+    fact(facts, 'Канал / цена зоны', `${zone.source_route} · ${price(zone.observation_price)} · ${zone.asof_end_ms == null ? 'время неизвестно' : mskFull(zone.asof_end_ms + 1)}`);
+    fact(facts, 'Геометрия 4ч', zone.geometry ? `${price(zone.geometry.swing_low)} — ${price(zone.geometry.swing_high)}; середина ${price(zone.geometry.swing_mid)}; ${zone.geometry_end_ms == null ? 'время неизвестно' : mskFull(zone.geometry_end_ms + 1)}` : 'Нет данных');
+  }
+  fact(facts, 'Последняя закрытая свеча', movement.last_closed_ms == null ? 'Нет данных' : mskFull(movement.last_closed_ms + 1));
   fact(facts, 'По направлению сценария: MFE / MAE', `${pct(movement.mfe_pct)} / ${pct(movement.mae_pct)}`);
   fact(facts, 'Что измеряем', 'Изменение от фиксированной цены, не PnL и не просадка от локального пика. Исполнение не моделируется.');
   detail.append(facts);
@@ -255,10 +304,10 @@ function renderDetail(signal) {
     if (excursions.status !== 'measured') {
       detail.append(text('p', excursions.status === 'not_directional' ? 'Нейтральное наблюдение: направленные MFE/MAE не считаются.' : 'Baseline сигнала не сохранён. История не реконструируется.', 'legacy-note'));
     } else {
-      detail.append(text('p', `Baseline: ${price(excursions.baseline.price)} · событие ${utc(excursions.baseline.event_ms)}. Только целые закрытые 15м после события; не исполнение, не PnL и не peak-to-trough просадка.`, 'legacy-note'));
+      detail.append(text('p', `Baseline: ${price(excursions.baseline.price)} · событие ${mskFull(excursions.baseline.event_ms)}. Только целые закрытые 15м после события; не исполнение, не PnL и не peak-to-trough просадка.`, 'legacy-note'));
       for (const h of excursions.horizons) {
         const box = text('div', '', 'detail-facts');
-        fact(box, `${h.hours}ч · ${h.status}`, `${utc(h.window_start_ms)} — ${utc(h.window_end_ms)}; свечей ${h.observed_bars}/${h.full_window_bars}`);
+        fact(box, `${h.hours}ч · ${h.status}`, `${mskFull(h.window_start_ms)} — ${mskFull(h.window_end_ms)}; свечей ${h.observed_bars}/${h.full_window_bars}`);
         fact(box, 'MFE · максимум по направлению', `${pct(h.mfe_pct)} · цена ${price(h.mfe_price)}`);
         fact(box, 'MAE · максимум против направления', `${pct(h.mae_pct)} · цена ${price(h.mae_price)}`);
         detail.append(box);
